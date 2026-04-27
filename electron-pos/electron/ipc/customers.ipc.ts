@@ -219,7 +219,15 @@ export function registerCustomersIPC() {
         INSERT INTO payments (id, customer_id, amount, payment_date, collected_by_id, notes, created_at, synced)
         VALUES (?, ?, ?, ?, ?, ?, ?, 0)
       `).run(paymentId, id, amount, now, collectedById, data.notes || '', now);
-      createOutboxEntry('payments', 'INSERT', paymentId, { id: paymentId, customer_id: id, amount, created_at: now });
+      createOutboxEntry('payments', 'INSERT', paymentId, {
+        id: paymentId,
+        customer_id: id,
+        amount,
+        payment_date: now,
+        collected_by_id: collectedById,
+        notes: data.notes || '',
+        created_at: now
+      });
 
       // 3. INSERT ledger_entries
       const ledgerId = crypto.randomUUID();
@@ -227,7 +235,17 @@ export function registerCustomersIPC() {
         INSERT INTO ledger_entries (id, customer_id, payment_id, entry_type, amount, balance_after, description, entry_date, created_at, synced)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
       `).run(ledgerId, id, paymentId, 'PAYMENT_RECEIVED', amount, balanceAfter, 'Payment Received', now, now);
-      createOutboxEntry('ledger_entries', 'INSERT', ledgerId, { id: ledgerId, customer_id: id, entry_type: 'PAYMENT_RECEIVED', amount, created_at: now });
+      createOutboxEntry('ledger_entries', 'INSERT', ledgerId, {
+        id: ledgerId,
+        customer_id: id,
+        payment_id: paymentId,
+        entry_type: 'PAYMENT_RECEIVED',
+        amount,
+        balance_after: balanceAfter,
+        description: 'Payment Received',
+        entry_date: now,
+        created_at: now
+      });
 
       // 4. UPDATE cash_register
       addCashIn(amount);

@@ -69,7 +69,16 @@ function registerExpensesIPC() {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
       `).run(expenseId, code, shift?.id || null, expenseDate, data.category, data.description, amount, createdById, now, now);
             (0, outboxHelper_1.createOutboxEntry)('expenses', 'INSERT', expenseId, {
-                id: expenseId, code, shift_id: shift?.id || null, expense_date: expenseDate, category: data.category, amount, created_at: now
+                id: expenseId,
+                code,
+                shift_id: shift?.id || null,
+                expense_date: expenseDate,
+                category: data.category,
+                description: data.description,
+                amount,
+                created_by_id: createdById,
+                created_at: now,
+                updated_at: now
             });
             // UPDATE cash_register
             (0, cashRegister_1.addCashOut)(amount, shift?.shift_date || (0, businessDay_1.getActiveBusinessDate)(new Date(now)), shift?.id || null);

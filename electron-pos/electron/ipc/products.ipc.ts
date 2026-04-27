@@ -125,6 +125,10 @@ export function registerProductsIPC() {
             quantity: initialStock,
             stock_before: 0,
             stock_after: initialStock,
+            reference_id: null,
+            supplier: null,
+            notes: 'Opening stock',
+            created_by_id: data.userId || getCurrentUser()?.id || 'system',
             created_at: now
           });
         }
@@ -234,7 +238,16 @@ export function registerProductsIPC() {
         VALUES (?, ?, 'STOCK_IN', ?, ?, ?, ?, ?, ?, ?, 0)
       `).run(movId, id, quantity, stockBefore, stockAfter, data.supplier || null, data.notes || '', createdById, now);
       createOutboxEntry('stock_movements', 'INSERT', movId, {
-        id: movId, product_id: id, movement_type: 'STOCK_IN', quantity, supplier: data.supplier, created_at: now
+        id: movId,
+        product_id: id,
+        movement_type: 'STOCK_IN',
+        quantity,
+        stock_before: stockBefore,
+        stock_after: stockAfter,
+        supplier: data.supplier || null,
+        notes: data.notes || '',
+        created_by_id: createdById,
+        created_at: now
       });
 
       return { success: true };

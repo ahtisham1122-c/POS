@@ -165,7 +165,17 @@ function handleStockMutation(productId, quantityDiff, movementType, data) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `).run(movId, productId, movementType, Math.abs(quantityDiff), stockBefore, stockAfter, data.supplier || null, data.notes || '', data.referenceId || null, data.userId || 'system', now);
         (0, outboxHelper_1.createOutboxEntry)('stock_movements', 'INSERT', movId, {
-            id: movId, product_id: productId, movement_type: movementType, quantity: Math.abs(quantityDiff), supplier: data.supplier, created_at: now
+            id: movId,
+            product_id: productId,
+            movement_type: movementType,
+            quantity: Math.abs(quantityDiff),
+            stock_before: stockBefore,
+            stock_after: stockAfter,
+            supplier: data.supplier || null,
+            notes: data.notes || '',
+            reference_id: data.referenceId || null,
+            created_by_id: data.userId || 'system',
+            created_at: now
         });
         if (movementType === 'ADJUSTMENT') {
             (0, auditLog_1.logAudit)({

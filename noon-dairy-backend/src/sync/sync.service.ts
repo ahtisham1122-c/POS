@@ -132,6 +132,87 @@ export class SyncService {
     return this.normalizeEnumValues(modelName, data);
   }
 
+  private async ensureUserExists(userId: string | null | undefined, tx: Prisma.TransactionClient) {
+    if (!userId) return;
+    const existing = await tx.user.findUnique({ where: { id: userId } });
+    if (existing) return;
+
+    await tx.user.create({
+      data: {
+        id: userId,
+        name: `Synced User ${userId.slice(0, 8)}`,
+        username: `synced-${userId}`,
+        passwordHash: 'external-sync-user',
+        role: 'CASHIER',
+        isActive: false
+      }
+    });
+  }
+
+  private async ensureProductExists(data: Record<string, any>, tx: Prisma.TransactionClient) {
+    const productId = data.productId || data.id;
+    if (!productId) return;
+    const existing = await tx.product.findUnique({ where: { id: productId } });
+    if (existing) return;
+
+    const name = String(data.productName || data.name || `Synced Product ${String(productId).slice(0, 8)}`);
+    const unit = String(data.unit || 'unit');
+    const price = Number(data.unitPrice || data.sellingPrice || 0);
+    const cost = Number(data.costPrice || 0);
+
+    await tx.product.create({
+      data: {
+        id: productId,
+        code: `SYNC-${String(productId).slice(0, 18)}`,
+        name,
+        category: 'OTHER',
+        unit,
+        sellingPrice: Number.isFinite(price) ? price : 0,
+        costPrice: Number.isFinite(cost) ? cost : 0,
+        stock: 0,
+        lowStockThreshold: 0,
+        taxExempt: false,
+        emoji: 'PKG',
+        isActive: false
+      }
+    });
+  }
+
+  private async ensureCustomerExists(customerId: string | null | undefined, tx: Prisma.TransactionClient) {
+    if (!customerId) return;
+    const existing = await tx.customer.findUnique({ where: { id: customerId } });
+    if (existing) return;
+
+    await tx.customer.create({
+      data: {
+        id: customerId,
+        code: `SYNC-CUST-${String(customerId).slice(0, 12)}`,
+        name: `Synced Customer ${String(customerId).slice(0, 8)}`,
+        currentBalance: 0,
+        isActive: false
+      }
+    });
+  }
+
+  private async ensureSyncDependencies(modelName: string, data: Record<string, any>, tx: Prisma.TransactionClient) {
+    if (modelName === 'sale') {
+      await this.ensureUserExists(data.cashierId, tx);
+      await this.ensureCustomerExists(data.customerId, tx);
+    }
+
+    if (modelName === 'saleItem') {
+      await this.ensureProductExists(data, tx);
+    }
+
+    if (modelName === 'stockMovement') {
+      await this.ensureProductExists(data, tx);
+    }
+
+    if (modelName === 'ledgerEntry' || modelName === 'payment' || modelName === 'splitPayment') {
+      await this.ensureCustomerExists(data.customerId, tx);
+    }
+  }
+
   async processOperation(op: any, tx?: Prisma.TransactionClient) {
     const { table, operation, recordId, payload, deviceId, timestamp } = op;
     const db = tx || this.prisma;
@@ -150,6 +231,15 @@ export class SyncService {
         where: { id: recordId }
       });
 
+      if (modelName === 'sale' && normalizedPayload.transactionId) {
+        const existingByTransaction = await this.prisma.sale.findUnique({
+          where: { transactionId: normalizedPayload.transactionId }
+        });
+        if (existingByTransaction && existingByTransaction.id !== recordId) {
+          return { success: true, action: 'skipped', reason: 'Duplicate transaction ID' };
+        }
+      }
+
       // 2. Insert Logic (Idempotent)
       if (operation === 'INSERT') {
         if (existingRecord) {
@@ -161,6 +251,7 @@ export class SyncService {
         } else {
           // Transform payload string dates to Date objects where appropriate
           const data = { ...normalizedPayload };
+          await this.ensureSyncDependencies(modelName, data, db as Prisma.TransactionClient);
           
           await model.create({ data });
           
@@ -191,6 +282,7 @@ export class SyncService {
 
         if (!existingRecord) {
            // Treating as upsert if missing but update preferred
+           await this.ensureSyncDependencies(modelName, normalizedPayload, db as Prisma.TransactionClient);
            await model.create({ data: normalizedPayload });
            return { success: true, action: 'created' };
         }

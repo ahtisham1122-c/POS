@@ -609,7 +609,21 @@ export function registerSalesIPC() {
             item.discountType, item.discountValue, item.discountAmount, item.lineTotal, now
           );
           
-          createOutboxEntry('sale_items', 'INSERT', itemId, { ...item, id: itemId, sale_id: saleId, created_at: now });
+          createOutboxEntry('sale_items', 'INSERT', itemId, {
+            id: itemId,
+            sale_id: saleId,
+            product_id: item.productId,
+            product_name: item.productName,
+            unit: item.unit,
+            quantity: item.quantity,
+            unit_price: item.sellingPrice,
+            cost_price: item.costPrice || 0,
+            discount_type: item.discountType,
+            discount_value: item.discountValue,
+            discount_amount: item.discountAmount,
+            line_total: item.lineTotal,
+            created_at: now
+          });
 
           // 3. Stock management
           const currentStockObj: any = getStock.get(item.productId);
@@ -629,7 +643,12 @@ export function registerSalesIPC() {
             );
             createOutboxEntry('stock_movements', 'INSERT', movId, {
               id: movId, product_id: item.productId, movement_type: 'STOCK_OUT',
-              quantity: item.quantity, created_at: now
+              quantity: item.quantity,
+              stock_before: currentStock,
+              stock_after: currentStock - item.quantity,
+              reference_id: saleId,
+              created_by_id: cashierId,
+              created_at: now
             });
           }
         }
@@ -694,7 +713,15 @@ export function registerSalesIPC() {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `).run(ledgerId, data.customerId, saleId, 'SALE_CREDIT', balanceDue, newBalance, `Credit Sale #${billNumber}`, now, now);
         createOutboxEntry('ledger_entries', 'INSERT', ledgerId, {
-          id: ledgerId, customer_id: data.customerId, sale_id: saleId, entry_type: 'SALE_CREDIT', amount: balanceDue, created_at: now
+          id: ledgerId,
+          customer_id: data.customerId,
+          sale_id: saleId,
+          entry_type: 'SALE_CREDIT',
+          amount: balanceDue,
+          balance_after: newBalance,
+          description: `Credit Sale #${billNumber}`,
+          entry_date: now,
+          created_at: now
         });
       }
 
