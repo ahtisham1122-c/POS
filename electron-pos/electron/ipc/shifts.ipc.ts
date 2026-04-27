@@ -190,6 +190,7 @@ export function registerShiftsIPC() {
 
         createOutboxEntry('cash_register', 'UPDATE', register.id, {
           id: register.id,
+          shift_id: shift.id,
           date: shift.shift_date,
           closing_balance: closingCash,
           is_closed_for_day: 1,

@@ -203,6 +203,8 @@ export function registerSuppliersIPC() {
           entry_type: 'MILK_COLLECTION',
           amount: totalAmount,
           balance_after: newBalance,
+          description: `${shift} milk collection ${quantity} kg @ Rs. ${rate}`,
+          entry_date: now,
           created_at: now
         });
 
@@ -246,6 +248,8 @@ export function registerSuppliersIPC() {
             stock_after: stockAfter,
             reference_id: collectionId,
             supplier: supplier.name,
+            notes: `${shift} collection from ${supplier.name}`,
+            created_by_id: userId,
             created_at: now
           });
         }
@@ -310,6 +314,8 @@ export function registerSuppliersIPC() {
           entry_type: 'PAYMENT',
           amount,
           balance_after: balanceAfter,
+          description: `Paid supplier Rs. ${amount}`,
+          entry_date: now,
           created_at: now
         });
 

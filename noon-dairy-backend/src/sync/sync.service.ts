@@ -116,6 +116,48 @@ export class SyncService {
     return data;
   }
 
+  private normalizeDateOnlyFields(modelName: string, data: Record<string, any>) {
+    const dateOnlyFields: Record<string, string[]> = {
+      shift: ['shiftDate'],
+      cashRegister: ['date'],
+      dailyRate: ['date'],
+      expense: ['expenseDate'],
+      milkCollection: ['collectionDate'],
+      receiptAuditSession: ['auditDate']
+    };
+
+    for (const field of dateOnlyFields[modelName] || []) {
+      if (typeof data[field] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data[field])) {
+        data[field] = new Date(`${data[field]}T00:00:00.000Z`);
+      }
+    }
+
+    return data;
+  }
+
+  private normalizeBooleanFields(modelName: string, data: Record<string, any>) {
+    const booleanFields: Record<string, string[]> = {
+      user: ['isActive'],
+      product: ['taxExempt', 'isActive'],
+      customer: ['isActive'],
+      sale: ['taxEnabled'],
+      cashRegister: ['isClosedForDay'],
+      supplier: ['isActive'],
+      return: ['restockItems'],
+      saleVoid: ['restockedItems']
+    };
+
+    for (const field of booleanFields[modelName] || []) {
+      if (data[field] === 0 || data[field] === 1) {
+        data[field] = data[field] === 1;
+      } else if (typeof data[field] === 'string' && ['true', 'false', '0', '1'].includes(data[field].toLowerCase())) {
+        data[field] = data[field] === '1' || data[field].toLowerCase() === 'true';
+      }
+    }
+
+    return data;
+  }
+
   private sanitizePayload(modelName: string, payload: Record<string, any>) {
     const allowedFields = this.modelFields.get(modelName);
     if (!allowedFields) return payload;
@@ -129,7 +171,10 @@ export class SyncService {
       }
     }
 
-    return this.normalizeEnumValues(modelName, data);
+    this.normalizeEnumValues(modelName, data);
+    this.normalizeDateOnlyFields(modelName, data);
+    this.normalizeBooleanFields(modelName, data);
+    return data;
   }
 
   private async ensureUserExists(userId: string | null | undefined, tx: Prisma.TransactionClient) {
@@ -194,22 +239,59 @@ export class SyncService {
     });
   }
 
+  private async ensureSupplierExists(supplierId: string | null | undefined, tx: Prisma.TransactionClient) {
+    if (!supplierId) return;
+    const existing = await tx.supplier.findUnique({ where: { id: supplierId } });
+    if (existing) return;
+
+    await tx.supplier.create({
+      data: {
+        id: supplierId,
+        code: `SYNC-SUP-${String(supplierId).slice(0, 12)}`,
+        name: `Synced Supplier ${String(supplierId).slice(0, 8)}`,
+        currentBalance: 0,
+        isActive: false
+      }
+    });
+  }
+
   private async ensureSyncDependencies(modelName: string, data: Record<string, any>, tx: Prisma.TransactionClient) {
     if (modelName === 'sale') {
       await this.ensureUserExists(data.cashierId, tx);
       await this.ensureCustomerExists(data.customerId, tx);
     }
 
+    if (modelName === 'shift') {
+      await this.ensureUserExists(data.openedById, tx);
+      await this.ensureUserExists(data.closedById, tx);
+    }
+
     if (modelName === 'saleItem') {
       await this.ensureProductExists(data, tx);
     }
 
+    if (modelName === 'return') {
+      await this.ensureUserExists(data.cashierId, tx);
+      await this.ensureCustomerExists(data.customerId, tx);
+    }
+
     if (modelName === 'stockMovement') {
       await this.ensureProductExists(data, tx);
+      await this.ensureUserExists(data.createdById, tx);
     }
 
     if (modelName === 'ledgerEntry' || modelName === 'payment' || modelName === 'splitPayment') {
       await this.ensureCustomerExists(data.customerId, tx);
+      await this.ensureUserExists(data.collectedById || data.receivedById, tx);
+    }
+
+    if (modelName === 'milkCollection' || modelName === 'supplierPayment' || modelName === 'supplierLedgerEntry') {
+      await this.ensureSupplierExists(data.supplierId, tx);
+      await this.ensureUserExists(data.createdById || data.paidById, tx);
+    }
+
+    if (modelName === 'receiptAuditSession') {
+      await this.ensureUserExists(data.countedById, tx);
     }
   }
 

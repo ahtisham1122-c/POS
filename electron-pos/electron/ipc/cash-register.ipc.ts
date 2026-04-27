@@ -100,6 +100,8 @@ export function registerCashRegisterIPC() {
 
       createOutboxEntry('cash_register', 'UPDATE', row.id, {
         id: row.id,
+        shift_id: openShift?.id || row.shift_id || null,
+        date,
         closing_balance: physicalCash,
         is_closed_for_day: 1,
         updated_at: now

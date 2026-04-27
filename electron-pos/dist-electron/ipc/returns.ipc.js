@@ -164,7 +164,10 @@ function registerReturnsIPC() {
                         return_id: returnId,
                         sale_item_id: saleItem.id,
                         product_id: saleItem.product_id,
+                        product_name: saleItem.product_name,
+                        unit: saleItem.unit,
                         quantity: qty,
+                        unit_price: saleItem.unit_price,
                         line_total: lineTotal,
                         created_at: now
                     });
@@ -188,6 +191,8 @@ function registerReturnsIPC() {
                             stock_before: stockBefore,
                             stock_after: stockAfter,
                             reference_id: returnId,
+                            notes: `Return ${returnNumber} for bill ${sale.bill_number}`,
+                            created_by_id: cashierId,
                             created_at: now
                         });
                     }
@@ -228,6 +233,8 @@ function registerReturnsIPC() {
                         entry_type: 'RETURN_CREDIT_ADJUSTMENT',
                         amount: refundAmount,
                         balance_after: balanceAfter,
+                        description: `Return ${returnNumber} against bill ${sale.bill_number}`,
+                        entry_date: now,
                         created_at: now
                     });
                 }
