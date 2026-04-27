@@ -4,7 +4,7 @@ import * as crypto from 'crypto';
 import { createOutboxEntry } from '../sync/outboxHelper';
 import { getCurrentUser } from './auth.ipc';
 import { getCashRegisterExpected } from '../database/cashRegister';
-import { getBusinessDate } from '../database/businessDay';
+import { formatLocalDate, getActiveBusinessDate, shouldWarnBeforeOpeningShift } from '../database/businessDay';
 import { performBackup } from '../sync/backup';
 
 function getLatestReceiptAudit(date: string) {
@@ -39,10 +39,10 @@ export function registerShiftsIPC() {
       WHERE s.shift_date = ?
       ORDER BY s.opened_at DESC
       LIMIT 1
-    `).get(getBusinessDate()) || null;
+    `).get(getActiveBusinessDate()) || null;
   });
 
-  ipcMain.handle('shifts:open', (_event, data: { openingCash: number; notes?: string }) => {
+  ipcMain.handle('shifts:open', (_event, data: { openingCash: number; notes?: string; confirmAfterMidnightOpen?: boolean }) => {
     try {
       return db.transaction(() => {
         const existingOpen = db.prepare("SELECT id FROM shifts WHERE status = 'OPEN' LIMIT 1").get() as any;
@@ -51,7 +51,15 @@ export function registerShiftsIPC() {
         }
 
         const now = new Date().toISOString();
-        const date = getBusinessDate();
+        const nowDate = new Date();
+        const date = formatLocalDate(nowDate);
+        if (shouldWarnBeforeOpeningShift(nowDate) && !data?.confirmAfterMidnightOpen) {
+          return {
+            success: false,
+            requiresPreviousShiftConfirmation: true,
+            error: "A shift from yesterday may still be open. Do you want to close yesterday's shift first before opening a new one?"
+          };
+        }
         const user = getCurrentUser();
         const openedById = user?.id || 'system';
         const openingCash = Number(data?.openingCash || 0);
@@ -60,16 +68,17 @@ export function registerShiftsIPC() {
         }
         const shiftId = crypto.randomUUID();
 
-        const existingRegister = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(date) as any;
+        const existingRegister = db.prepare('SELECT * FROM cash_register WHERE date = ? AND is_closed_for_day = 0').get(date) as any;
         if (!existingRegister) {
           const registerId = crypto.randomUUID();
           db.prepare(`
-            INSERT INTO cash_register (id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
-            VALUES (?, ?, ?, 0, 0, ?, 0, ?, 0)
-          `).run(registerId, date, openingCash, openingCash, now);
+            INSERT INTO cash_register (id, shift_id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
+            VALUES (?, ?, ?, ?, 0, 0, ?, 0, ?, 0)
+          `).run(registerId, shiftId, date, openingCash, openingCash, now);
 
           createOutboxEntry('cash_register', 'INSERT', registerId, {
             id: registerId,
+            shift_id: shiftId,
             date,
             opening_balance: openingCash,
             cash_in: 0,
@@ -77,6 +86,14 @@ export function registerShiftsIPC() {
             closing_balance: openingCash,
             is_closed_for_day: 0,
             created_at: now
+          });
+        } else if (!existingRegister.shift_id) {
+          db.prepare('UPDATE cash_register SET shift_id = ?, synced = 0 WHERE id = ?').run(shiftId, existingRegister.id);
+          createOutboxEntry('cash_register', 'UPDATE', existingRegister.id, {
+            id: existingRegister.id,
+            shift_id: shiftId,
+            date,
+            updated_at: now
           });
         }
 
@@ -122,13 +139,13 @@ export function registerShiftsIPC() {
 
         const now = new Date().toISOString();
         const closedById = getCurrentUser()?.id || 'system';
-        const expectedCash = getCashRegisterExpected(shift.shift_date).expectedCash;
+        const expectedCash = getCashRegisterExpected(shift.shift_date, shift.id).expectedCash;
         const closingCash = Number(data?.closingCash || 0);
         if (!Number.isFinite(closingCash) || closingCash < 0) {
           return { success: false, error: 'Closing cash must be zero or more' };
         }
         const variance = Number((closingCash - expectedCash).toFixed(2));
-        const register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(shift.shift_date) as any;
+        const register = db.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(shift.id, shift.shift_date) as any;
         if (!register) {
           return { success: false, error: 'Cash register was not opened for this shift date' };
         }

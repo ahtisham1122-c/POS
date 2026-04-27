@@ -230,7 +230,7 @@ export function registerCustomersIPC() {
       createOutboxEntry('ledger_entries', 'INSERT', ledgerId, { id: ledgerId, customer_id: id, entry_type: 'PAYMENT_RECEIVED', amount, created_at: now });
 
       // 4. UPDATE cash_register
-      addCashIn(amount, now.split('T')[0]);
+      addCashIn(amount);
 
       return { success: true };
     });

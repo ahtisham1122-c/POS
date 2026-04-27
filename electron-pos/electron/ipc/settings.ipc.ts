@@ -35,6 +35,11 @@ export function registerSettingsIPC() {
       }
       if (payload.ramadan24Hour !== undefined) {
         payload.ramadan24Hour = String(String(payload.ramadan24Hour).toLowerCase() === 'true');
+        payload['24_hour_mode'] = payload.ramadan24Hour;
+      }
+      if (payload['24_hour_mode'] !== undefined) {
+        payload['24_hour_mode'] = String(String(payload['24_hour_mode']).toLowerCase() === 'true');
+        payload.ramadan24Hour = payload['24_hour_mode'];
       }
       const now = new Date().toISOString();
       const beforeSettings = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;

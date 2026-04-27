@@ -510,6 +510,10 @@ export default function POS() {
         setIsSubmitting(false);
         return;
       }
+
+      if (result?.lateSaleNote) {
+        addAlert(result.lateSaleNote);
+      }
       
       const billNo = result?.billNumber || "BILL-" + Math.floor(Math.random() * 10000);
       const savedReceipt = result?.saleId ? await window.electronAPI?.sales?.getReceipt(result.saleId) : null;

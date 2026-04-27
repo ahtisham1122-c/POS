@@ -160,9 +160,10 @@ function registerSalesIPC() {
         SELECT s.*, COALESCE(c.name, 'Walk-in') as customer_name
         FROM sales s
         LEFT JOIN customers c ON c.id = s.customer_id
-        WHERE s.sale_date LIKE ?
+        LEFT JOIN shifts sh ON sh.id = s.shift_id
+        WHERE sh.shift_date = ? OR (s.shift_id IS NULL AND s.sale_date LIKE ?)
         ORDER BY s.sale_date DESC
-      `).all(`${date}%`);
+      `).all(date, `${date}%`);
         }
         return db_1.default.prepare(`
       SELECT s.*, COALESCE(c.name, 'Walk-in') as customer_name
@@ -199,7 +200,12 @@ function registerSalesIPC() {
                     throw new Error('Void reason is required');
                 if (reason.length < 5)
                     throw new Error('Void reason must be at least 5 characters');
-                const sale = db_1.default.prepare('SELECT * FROM sales WHERE id = ?').get(input.saleId);
+                const sale = db_1.default.prepare(`
+          SELECT sales.*, shifts.shift_date
+          FROM sales
+          LEFT JOIN shifts ON shifts.id = sales.shift_id
+          WHERE sales.id = ?
+        `).get(input.saleId);
                 if (!sale)
                     throw new Error('Sale was not found');
                 if (sale.status === 'CANCELLED')
@@ -253,7 +259,7 @@ function registerSalesIPC() {
                     }
                 }
                 if (cashReversed > 0) {
-                    (0, cashRegister_1.addCashOut)(cashReversed, now.split('T')[0]);
+                    (0, cashRegister_1.addCashOut)(cashReversed, sale.shift_date || (0, businessDay_1.getBusinessDate)(new Date(now)), sale.shift_id || null);
                 }
                 if (sale.customer_id && creditReversed > 0) {
                     const customer = db_1.default.prepare('SELECT current_balance FROM customers WHERE id = ?').get(sale.customer_id);
@@ -287,13 +293,14 @@ function registerSalesIPC() {
                 }
                 db_1.default.prepare(`
           INSERT INTO sale_voids (
-            id, sale_id, bill_number, voided_by_id, voided_at, reason,
+            id, sale_id, shift_id, bill_number, voided_by_id, voided_at, reason,
             cash_reversed, credit_reversed, restocked_items, created_at, synced
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-        `).run(voidId, sale.id, sale.bill_number, manager.id, now, reason, cashReversed, creditReversed, restockItems ? 1 : 0, now);
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        `).run(voidId, sale.id, sale.shift_id || null, sale.bill_number, manager.id, now, reason, cashReversed, creditReversed, restockItems ? 1 : 0, now);
                 (0, outboxHelper_1.createOutboxEntry)('sale_voids', 'INSERT', voidId, {
                     id: voidId,
                     sale_id: sale.id,
+                    shift_id: sale.shift_id || null,
                     bill_number: sale.bill_number,
                     voided_by_id: manager.id,
                     voided_at: now,
@@ -352,7 +359,6 @@ function registerSalesIPC() {
             if (!['CASH', 'ONLINE', 'CREDIT', 'SPLIT'].includes(paymentType)) {
                 throw new Error('Invalid payment type');
             }
-            const saleDate = (0, businessDay_1.getBusinessDate)(new Date(now));
             const openShift = db_1.default.prepare(`
         SELECT *
         FROM shifts
@@ -363,10 +369,9 @@ function registerSalesIPC() {
             if (!openShift) {
                 throw new Error('Please open a shift before making sales');
             }
-            if (openShift.shift_date !== saleDate) {
-                throw new Error('The open shift is from another day. Please close it before making today sales.');
-            }
-            const cashRegister = db_1.default.prepare('SELECT * FROM cash_register WHERE date = ?').get(saleDate);
+            const saleDate = openShift.shift_date;
+            const lateSaleNote = (0, businessDay_1.getLateSaleNote)(openShift, new Date(now));
+            const cashRegister = db_1.default.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(openShift.id, saleDate);
             if (!cashRegister) {
                 throw new Error('Please open the cash register before making sales');
             }
@@ -495,15 +500,15 @@ function registerSalesIPC() {
             // 1. INSERT into sales table
             db_1.default.prepare(`
         INSERT INTO sales (
-          id, transaction_id, bill_number, sale_date, customer_id, cashier_id, payment_type,
+          id, transaction_id, shift_id, bill_number, sale_date, customer_id, cashier_id, payment_type,
           subtotal, discount_type, discount_value, discount_amount, tax_enabled, tax_label, tax_rate, taxable_amount, tax_amount, grand_total, 
           amount_paid, cash_tendered, change_returned, balance_due, status, created_at, synced
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-      `).run(saleId, transactionId, billNumber, now, data.customerId || null, cashierId, paymentType, subtotal, discount.discountType, discount.discountValue, discount.discountAmount, tax.taxEnabled ? 1 : 0, taxLabel, taxRate, tax.taxableAmount, tax.taxAmount, grandTotal, amountPaid, cashTendered, changeReturned, balanceDue, 'COMPLETED', now);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `).run(saleId, transactionId, openShift.id, billNumber, now, data.customerId || null, cashierId, paymentType, subtotal, discount.discountType, discount.discountValue, discount.discountAmount, tax.taxEnabled ? 1 : 0, taxLabel, taxRate, tax.taxableAmount, tax.taxAmount, grandTotal, amountPaid, cashTendered, changeReturned, balanceDue, 'COMPLETED', now);
             // Create sync outbox entry for sale
             (0, outboxHelper_1.createOutboxEntry)('sales', 'INSERT', saleId, {
                 id: saleId, transaction_id: transactionId, bill_number: billNumber, sale_date: now, customer_id: data.customerId || null,
-                cashier_id: cashierId, payment_type: paymentType, subtotal,
+                shift_id: openShift.id, cashier_id: cashierId, payment_type: paymentType, subtotal,
                 discount_type: discount.discountType, discount_value: discount.discountValue, discount_amount: discount.discountAmount,
                 tax_enabled: tax.taxEnabled ? 1 : 0,
                 tax_label: taxLabel,
@@ -609,7 +614,7 @@ function registerSalesIPC() {
             }
             // 6. Cash Register Logic
             if (cashPaid > 0) {
-                (0, cashRegister_1.addCashIn)(Number(cashPaid), saleDate);
+                (0, cashRegister_1.addCashIn)(Number(cashPaid), saleDate, openShift.id);
             }
             if (totalDiscountGiven > 0) {
                 (0, auditLog_1.logAudit)({
@@ -636,7 +641,8 @@ function registerSalesIPC() {
                 cashPaid,
                 onlinePaid,
                 cashTendered,
-                changeReturned
+                changeReturned,
+                lateSaleNote
             };
         });
         try {

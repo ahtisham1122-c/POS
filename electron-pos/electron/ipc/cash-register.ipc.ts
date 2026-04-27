@@ -4,15 +4,18 @@ import * as crypto from 'crypto';
 import { createOutboxEntry } from '../sync/outboxHelper';
 import { getCurrentUser } from './auth.ipc';
 import { getCashRegisterExpected } from '../database/cashRegister';
-import { getBusinessDate } from '../database/businessDay';
+import { formatLocalDate, getActiveBusinessDate, getOpenShift } from '../database/businessDay';
 import { performBackup } from '../sync/backup';
 
 export function registerCashRegisterIPC() {
   ipcMain.handle('cashRegister:getToday', () => {
-    const { register, openingCash, cashIn, cashOut, expectedCash } = getCashRegisterExpected(getBusinessDate());
+    const openShift = getOpenShift();
+    const date = openShift?.shift_date || getActiveBusinessDate();
+    const { register, openingCash, cashIn, cashOut, expectedCash } = getCashRegisterExpected(date, openShift?.id);
     if (!register) return null;
     return {
       ...register,
+      shift_id: register.shift_id || openShift?.id || null,
       opening_cash: openingCash,
       cash_in_total: cashIn,
       cash_out_total: cashOut,
@@ -23,19 +26,23 @@ export function registerCashRegisterIPC() {
   ipcMain.handle('cashRegister:open', (_event, data: any) => {
     try {
       const now = new Date().toISOString();
-      const date = getBusinessDate();
-      const existing = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(date) as any;
+      const openShift = getOpenShift();
+      const date = openShift?.shift_date || formatLocalDate(new Date());
+      const existing = openShift
+        ? db.prepare('SELECT * FROM cash_register WHERE shift_id = ?').get(openShift.id) as any
+        : db.prepare('SELECT * FROM cash_register WHERE date = ? AND is_closed_for_day = 0').get(date) as any;
       if (existing) return { success: false, error: 'Cash register is already opened for today' };
 
       const id = crypto.randomUUID();
       const openingBalance = Number(data?.openingBalance || 0);
       db.prepare(`
-        INSERT INTO cash_register (id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
-        VALUES (?, ?, ?, 0, 0, ?, 0, ?, 0)
-      `).run(id, date, openingBalance, openingBalance, now);
+        INSERT INTO cash_register (id, shift_id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
+        VALUES (?, ?, ?, ?, 0, 0, ?, 0, ?, 0)
+      `).run(id, openShift?.id || null, date, openingBalance, openingBalance, now);
 
       createOutboxEntry('cash_register', 'INSERT', id, {
         id,
+        shift_id: openShift?.id || null,
         date,
         opening_balance: openingBalance,
         cash_in: 0,
@@ -53,8 +60,11 @@ export function registerCashRegisterIPC() {
   ipcMain.handle('cashRegister:close', (_event, data: { closingBalance: number }) => {
     try {
       const now = new Date().toISOString();
-      const date = getBusinessDate();
-      const row = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(date) as any;
+      const openShift = getOpenShift();
+      const date = openShift?.shift_date || getActiveBusinessDate();
+      const row = openShift
+        ? db.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(openShift.id, date) as any
+        : db.prepare('SELECT * FROM cash_register WHERE date = ? ORDER BY created_at DESC LIMIT 1').get(date) as any;
       if (!row) return { success: false, error: 'Cash register is not opened for today' };
       if (Number(row.is_closed_for_day) === 1) return { success: false, error: 'Cash register is already closed' };
 
@@ -79,9 +89,8 @@ export function registerCashRegisterIPC() {
         return { success: false, error: 'Please enter a valid counted cash amount' };
       }
 
-      const { expectedCash } = getCashRegisterExpected(date);
+      const { expectedCash } = getCashRegisterExpected(date, openShift?.id);
       const variance = Number((physicalCash - expectedCash).toFixed(2));
-      const openShift = db.prepare("SELECT * FROM shifts WHERE status = 'OPEN' ORDER BY opened_at DESC LIMIT 1").get() as any;
 
       db.prepare(`
         UPDATE cash_register

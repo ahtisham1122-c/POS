@@ -44,6 +44,7 @@ const outboxHelper_1 = require("../sync/outboxHelper");
 const cashRegister_1 = require("../database/cashRegister");
 const auth_ipc_1 = require("./auth.ipc");
 const auditLog_1 = require("../audit/auditLog");
+const businessDay_1 = require("../database/businessDay");
 function nextReturnNumber() {
     const count = db_1.default.prepare('SELECT COUNT(*) as count FROM returns').get();
     return `RET-${String(Number(count?.count || 0) + 1).padStart(4, '0')}`;
@@ -117,6 +118,7 @@ function registerReturnsIPC() {
                 const now = new Date().toISOString();
                 const approver = (0, auth_ipc_1.requireManagerApproval)(input.managerPin, 'processing a refund');
                 const cashierId = (0, auth_ipc_1.requireCurrentUser)().id;
+                const actionShift = (0, businessDay_1.getOpenShift)();
                 const sale = db_1.default.prepare('SELECT * FROM sales WHERE id = ?').get(input.saleId);
                 if (!sale)
                     throw new Error('Original sale was not found');
@@ -194,7 +196,7 @@ function registerReturnsIPC() {
                 if (refundAmount <= 0)
                     throw new Error('Refund amount must be greater than zero');
                 if (input.refundMethod === 'CASH') {
-                    (0, cashRegister_1.addCashOut)(refundAmount, now.split('T')[0]);
+                    (0, cashRegister_1.addCashOut)(refundAmount, actionShift?.shift_date || (0, businessDay_1.getActiveBusinessDate)(new Date(now)), actionShift?.id || null);
                 }
                 if (input.refundMethod === 'CREDIT_ADJUSTMENT') {
                     if (!sale.customer_id)
@@ -231,15 +233,16 @@ function registerReturnsIPC() {
                 }
                 db_1.default.prepare(`
           INSERT INTO returns (
-            id, return_number, sale_id, bill_number, customer_id, cashier_id,
+            id, return_number, sale_id, shift_id, bill_number, customer_id, cashier_id,
             return_date, refund_method, refund_amount, reason, restock_items,
             status, created_at, synced
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, 0)
-        `).run(returnId, returnNumber, sale.id, sale.bill_number, sale.customer_id || null, cashierId, now, input.refundMethod, refundAmount, input.reason.trim(), restockItems ? 1 : 0, now);
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, 0)
+        `).run(returnId, returnNumber, sale.id, actionShift?.id || sale.shift_id || null, sale.bill_number, sale.customer_id || null, cashierId, now, input.refundMethod, refundAmount, input.reason.trim(), restockItems ? 1 : 0, now);
                 (0, outboxHelper_1.createOutboxEntry)('returns', 'INSERT', returnId, {
                     id: returnId,
                     return_number: returnNumber,
                     sale_id: sale.id,
+                    shift_id: actionShift?.id || sale.shift_id || null,
                     bill_number: sale.bill_number,
                     customer_id: sale.customer_id || null,
                     cashier_id: cashierId,

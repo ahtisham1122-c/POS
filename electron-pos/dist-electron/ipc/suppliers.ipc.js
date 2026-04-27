@@ -277,7 +277,7 @@ function registerSuppliersIPC() {
                     balance_after: balanceAfter,
                     created_at: now
                 });
-                (0, cashRegister_1.addCashOut)(amount, now.split('T')[0]);
+                (0, cashRegister_1.addCashOut)(amount);
                 return { success: true, paymentId, balanceAfter };
             })();
         }

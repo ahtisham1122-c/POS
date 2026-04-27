@@ -47,11 +47,14 @@ const businessDay_1 = require("../database/businessDay");
 const backup_1 = require("../sync/backup");
 function registerCashRegisterIPC() {
     electron_1.ipcMain.handle('cashRegister:getToday', () => {
-        const { register, openingCash, cashIn, cashOut, expectedCash } = (0, cashRegister_1.getCashRegisterExpected)((0, businessDay_1.getBusinessDate)());
+        const openShift = (0, businessDay_1.getOpenShift)();
+        const date = openShift?.shift_date || (0, businessDay_1.getActiveBusinessDate)();
+        const { register, openingCash, cashIn, cashOut, expectedCash } = (0, cashRegister_1.getCashRegisterExpected)(date, openShift?.id);
         if (!register)
             return null;
         return {
             ...register,
+            shift_id: register.shift_id || openShift?.id || null,
             opening_cash: openingCash,
             cash_in_total: cashIn,
             cash_out_total: cashOut,
@@ -61,18 +64,22 @@ function registerCashRegisterIPC() {
     electron_1.ipcMain.handle('cashRegister:open', (_event, data) => {
         try {
             const now = new Date().toISOString();
-            const date = (0, businessDay_1.getBusinessDate)();
-            const existing = db_1.default.prepare('SELECT * FROM cash_register WHERE date = ?').get(date);
+            const openShift = (0, businessDay_1.getOpenShift)();
+            const date = openShift?.shift_date || (0, businessDay_1.formatLocalDate)(new Date());
+            const existing = openShift
+                ? db_1.default.prepare('SELECT * FROM cash_register WHERE shift_id = ?').get(openShift.id)
+                : db_1.default.prepare('SELECT * FROM cash_register WHERE date = ? AND is_closed_for_day = 0').get(date);
             if (existing)
                 return { success: false, error: 'Cash register is already opened for today' };
             const id = crypto.randomUUID();
             const openingBalance = Number(data?.openingBalance || 0);
             db_1.default.prepare(`
-        INSERT INTO cash_register (id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
-        VALUES (?, ?, ?, 0, 0, ?, 0, ?, 0)
-      `).run(id, date, openingBalance, openingBalance, now);
+        INSERT INTO cash_register (id, shift_id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
+        VALUES (?, ?, ?, ?, 0, 0, ?, 0, ?, 0)
+      `).run(id, openShift?.id || null, date, openingBalance, openingBalance, now);
             (0, outboxHelper_1.createOutboxEntry)('cash_register', 'INSERT', id, {
                 id,
+                shift_id: openShift?.id || null,
                 date,
                 opening_balance: openingBalance,
                 cash_in: 0,
@@ -90,8 +97,11 @@ function registerCashRegisterIPC() {
     electron_1.ipcMain.handle('cashRegister:close', (_event, data) => {
         try {
             const now = new Date().toISOString();
-            const date = (0, businessDay_1.getBusinessDate)();
-            const row = db_1.default.prepare('SELECT * FROM cash_register WHERE date = ?').get(date);
+            const openShift = (0, businessDay_1.getOpenShift)();
+            const date = openShift?.shift_date || (0, businessDay_1.getActiveBusinessDate)();
+            const row = openShift
+                ? db_1.default.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(openShift.id, date)
+                : db_1.default.prepare('SELECT * FROM cash_register WHERE date = ? ORDER BY created_at DESC LIMIT 1').get(date);
             if (!row)
                 return { success: false, error: 'Cash register is not opened for today' };
             if (Number(row.is_closed_for_day) === 1)
@@ -114,9 +124,8 @@ function registerCashRegisterIPC() {
             if (!Number.isFinite(physicalCash) || physicalCash < 0) {
                 return { success: false, error: 'Please enter a valid counted cash amount' };
             }
-            const { expectedCash } = (0, cashRegister_1.getCashRegisterExpected)(date);
+            const { expectedCash } = (0, cashRegister_1.getCashRegisterExpected)(date, openShift?.id);
             const variance = Number((physicalCash - expectedCash).toFixed(2));
-            const openShift = db_1.default.prepare("SELECT * FROM shifts WHERE status = 'OPEN' ORDER BY opened_at DESC LIMIT 1").get();
             db_1.default.prepare(`
         UPDATE cash_register
         SET closing_balance = ?, is_closed_for_day = 1, synced = 0

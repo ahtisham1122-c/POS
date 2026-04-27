@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { createOutboxEntry } from '../sync/outboxHelper';
 import { addCashOut, adjustCashOut } from '../database/cashRegister';
 import { getCurrentUser } from './auth.ipc';
+import { getActiveBusinessDate, getOpenShift } from '../database/businessDay';
 
 export function registerExpensesIPC() {
   ipcMain.handle('expenses:getAll', (_event, filters?: any) => {
@@ -22,19 +23,20 @@ export function registerExpensesIPC() {
       const expenseDate = data.date ? `${data.date}T00:00:00.000Z` : now;
       const amount = Number(data.amount || 0);
       const createdById = data.userId || getCurrentUser()?.id || 'system';
+      const shift = getOpenShift();
       if (amount <= 0) throw new Error('Expense amount must be greater than zero');
 
       // INSERT expense
       db.prepare(`
-        INSERT INTO expenses (id, code, expense_date, category, description, amount, created_by_id, created_at, updated_at, synced)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-      `).run(expenseId, code, expenseDate, data.category, data.description, amount, createdById, now, now);
+        INSERT INTO expenses (id, code, shift_id, expense_date, category, description, amount, created_by_id, created_at, updated_at, synced)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `).run(expenseId, code, shift?.id || null, expenseDate, data.category, data.description, amount, createdById, now, now);
       createOutboxEntry('expenses', 'INSERT', expenseId, {
-        id: expenseId, code, expense_date: expenseDate, category: data.category, amount, created_at: now
+        id: expenseId, code, shift_id: shift?.id || null, expense_date: expenseDate, category: data.category, amount, created_at: now
       });
 
       // UPDATE cash_register
-      addCashOut(amount, expenseDate.split('T')[0]);
+      addCashOut(amount, shift?.shift_date || getActiveBusinessDate(new Date(now)), shift?.id || null);
 
       return { success: true };
     });
@@ -73,7 +75,7 @@ export function registerExpensesIPC() {
         updated_at: now
       });
       const difference = nextAmount - oldAmount;
-      adjustCashOut(difference, String(oldExpense.expense_date).split('T')[0]);
+      adjustCashOut(difference, oldExpense.shift_id ? undefined : String(oldExpense.expense_date).split('T')[0], oldExpense.shift_id || null);
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message };
@@ -86,7 +88,7 @@ export function registerExpensesIPC() {
       if (!oldExpense) return { success: false, error: 'Expense not found' };
       db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
       createOutboxEntry('expenses', 'DELETE', id, { id });
-      adjustCashOut(-Number(oldExpense.amount || 0), String(oldExpense.expense_date).split('T')[0]);
+      adjustCashOut(-Number(oldExpense.amount || 0), oldExpense.shift_id ? undefined : String(oldExpense.expense_date).split('T')[0], oldExpense.shift_id || null);
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message };

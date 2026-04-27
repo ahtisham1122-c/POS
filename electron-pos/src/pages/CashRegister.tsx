@@ -75,9 +75,18 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
   const handleOpenRegister = async () => {
     try {
       const existingShift = await window.electronAPI?.shifts?.getCurrent();
-      const res = existingShift
+      let res = existingShift
         ? await window.electronAPI?.cashRegister?.open({ openingBalance: Number(openingBalance) })
         : await window.electronAPI?.shifts?.open({ openingCash: Number(openingBalance), notes: "Opened from cash register screen" });
+      if (res?.requiresPreviousShiftConfirmation) {
+        const proceed = window.confirm(res.error || "A shift from yesterday may still be open. Do you want to open a new shift?");
+        if (!proceed) return;
+        res = await window.electronAPI?.shifts?.open({
+          openingCash: Number(openingBalance),
+          notes: "Opened after midnight with confirmation",
+          confirmAfterMidnightOpen: true
+        });
+      }
       if (res?.success) {
         loadRegister();
         loadHistory();
@@ -96,6 +105,22 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
         openingCash: Number(registerData?.opening_balance || 0),
         notes: "Shift opened for existing cash register"
       });
+      if (res?.requiresPreviousShiftConfirmation) {
+        const proceed = window.confirm(res.error || "A shift from yesterday may still be open. Do you want to open a new shift?");
+        if (!proceed) return;
+        const confirmed = await window.electronAPI?.shifts?.open({
+          openingCash: Number(registerData?.opening_balance || 0),
+          notes: "Shift opened for existing cash register after midnight with confirmation",
+          confirmAfterMidnightOpen: true
+        });
+        if (confirmed?.success) {
+          await loadRegister();
+          alert("Shift opened. Sales can now be made.");
+          return;
+        }
+        alert(confirmed?.error || "Failed to open shift");
+        return;
+      }
       if (res?.success) {
         await loadRegister();
         alert("Shift opened. Sales can now be made.");
@@ -307,6 +332,7 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
                     ["Cashier", zReport.cashierName],
                     ["Shift Open", zReport.shiftOpenTime ? format(new Date(zReport.shiftOpenTime), "dd MMM yyyy hh:mm a") : "-"],
                     ["Shift Close", zReport.shiftCloseTime ? format(new Date(zReport.shiftCloseTime), "dd MMM yyyy hh:mm a") : "-"],
+                    ["Total Hours Open", `${Number(zReport.shiftHours || 0).toFixed(2)} hours`],
                     ["Bills Count", zReport.totalSalesCount],
                     ["Gross Sales", toMoney(zReport.grossSalesAmount)],
                     ["Discounts", `- ${toMoney(zReport.totalDiscounts)}`],

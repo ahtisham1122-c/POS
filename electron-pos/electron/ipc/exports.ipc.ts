@@ -19,6 +19,35 @@ function escapeHtml(value: unknown) {
     .replace(/"/g, '&quot;');
 }
 
+function getShiftScope(date: string) {
+  const shift = db.prepare(`
+    SELECT *
+    FROM shifts
+    WHERE shift_date = ?
+    ORDER BY opened_at DESC
+    LIMIT 1
+  `).get(date) as any;
+  return { date, shiftId: shift?.id || null };
+}
+
+function saleScope(alias: string, scope: { date: string; shiftId: string | null }) {
+  if (scope.shiftId) {
+    return `(${alias}.shift_id = ? OR (${alias}.shift_id IS NULL AND substr(${alias}.sale_date, 1, 10) = ?))`;
+  }
+  return `substr(${alias}.sale_date, 1, 10) = ?`;
+}
+
+function tableScope(alias: string, column: string, scope: { date: string; shiftId: string | null }) {
+  if (scope.shiftId) {
+    return `(${alias}.shift_id = ? OR (${alias}.shift_id IS NULL AND substr(${alias}.${column}, 1, 10) = ?))`;
+  }
+  return `substr(${alias}.${column}, 1, 10) = ?`;
+}
+
+function scopeParams(scope: { date: string; shiftId: string | null }) {
+  return scope.shiftId ? [scope.shiftId, scope.date] : [scope.date];
+}
+
 function htmlTable(title: string, rows: any[], columns: Array<{ key: string; label: string }>) {
   return `
     <!doctype html>
@@ -57,12 +86,13 @@ function getReport(type: ExportType, params: any = {}) {
   const endDate = params.endDate || date;
 
   if (type === 'daily-sales') {
+    const scope = getShiftScope(date);
     const rows = db.prepare(`
-      SELECT bill_number, sale_date, payment_type, subtotal, discount_amount, tax_amount, grand_total, amount_paid, balance_due, status
-      FROM sales
-      WHERE substr(sale_date, 1, 10) = ?
+      SELECT s.bill_number, s.sale_date, s.payment_type, s.subtotal, s.discount_amount, s.tax_amount, s.grand_total, s.amount_paid, s.balance_due, s.status
+      FROM sales s
+      WHERE ${saleScope('s', scope)}
       ORDER BY sale_date ASC
-    `).all(date) as any[];
+    `).all(...scopeParams(scope)) as any[];
     return {
       title: `Daily Sales Report - ${date}`,
       rows: rows.map((row) => ({
@@ -93,20 +123,23 @@ function getReport(type: ExportType, params: any = {}) {
   }
 
   if (type === 'z-report') {
+    const scope = getShiftScope(date);
+    const saleWhere = saleScope('s', scope);
+    const saleParams = scopeParams(scope);
     const sales = db.prepare(`
       SELECT COUNT(*) as count, COALESCE(SUM(grand_total), 0) as gross, COALESCE(SUM(discount_amount), 0) as discounts, COALESCE(SUM(balance_due), 0) as khata
-      FROM sales WHERE substr(sale_date, 1, 10) = ? AND status != 'CANCELLED'
-    `).get(date) as any;
+      FROM sales s WHERE ${saleWhere} AND s.status != 'CANCELLED'
+    `).get(...saleParams) as any;
     const tenders = db.prepare(`
       SELECT
         COALESCE(SUM(CASE WHEN sp.method = 'CASH' THEN sp.amount ELSE 0 END), 0) as cash,
         COALESCE(SUM(CASE WHEN sp.method = 'ONLINE' THEN sp.amount ELSE 0 END), 0) as online
       FROM split_payments sp JOIN sales s ON s.id = sp.sale_id
-      WHERE substr(s.sale_date, 1, 10) = ? AND s.status != 'CANCELLED'
-    `).get(date) as any;
-    const refunds = db.prepare(`SELECT COALESCE(SUM(refund_amount), 0) as total FROM returns WHERE substr(return_date, 1, 10) = ?`).get(date) as any;
-    const voids = db.prepare(`SELECT COUNT(*) as count FROM sale_voids WHERE substr(voided_at, 1, 10) = ?`).get(date) as any;
-    const { register, openingCash, cashIn, cashOut, expectedCash } = getCashRegisterExpected(date);
+      WHERE ${saleWhere} AND s.status != 'CANCELLED'
+    `).get(...saleParams) as any;
+    const refunds = db.prepare(`SELECT COALESCE(SUM(refund_amount), 0) as total FROM returns r WHERE ${tableScope('r', 'return_date', scope)}`).get(...scopeParams(scope)) as any;
+    const voids = db.prepare(`SELECT COUNT(*) as count FROM sale_voids v WHERE ${tableScope('v', 'voided_at', scope)}`).get(...scopeParams(scope)) as any;
+    const { register, openingCash, cashIn, cashOut, expectedCash } = getCashRegisterExpected(date, scope.shiftId);
     const counted = Number(register?.closing_balance || 0);
     const rows = [
       { item: 'Opening Cash', value: money(openingCash) },

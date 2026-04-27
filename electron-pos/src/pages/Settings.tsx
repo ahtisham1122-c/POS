@@ -21,6 +21,7 @@ type PosConfigState = {
   taxLabel: string;
   shopDayStartHour: string;
   ramadan24Hour: string;
+  "24_hour_mode"?: string;
   APP_API_URL?: string;
   SYNC_DEVICE_SECRET?: string;
 };
@@ -101,6 +102,7 @@ export default function Settings() {
     taxLabel: "GST",
     shopDayStartHour: "5",
     ramadan24Hour: "false",
+    "24_hour_mode": "false",
     APP_API_URL: "",
     SYNC_DEVICE_SECRET: ""
   });
@@ -125,6 +127,9 @@ export default function Settings() {
       if (settings && settings.length > 0) {
         const config: any = {};
         settings.forEach((s: any) => config[s.key] = s.value);
+        if (config["24_hour_mode"] && !config.ramadan24Hour) {
+          config.ramadan24Hour = config["24_hour_mode"];
+        }
         setPosConfig(prev => ({ ...prev, ...config }));
         setShopConfig(prev => ({
           ...prev,
@@ -217,7 +222,10 @@ export default function Settings() {
   const handleSavePosConfig = async () => {
     try {
       setIsLoading(true);
-      await window.electronAPI?.settings?.update(posConfig);
+      await window.electronAPI?.settings?.update({
+        ...posConfig,
+        "24_hour_mode": posConfig.ramadan24Hour
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -510,7 +518,7 @@ export default function Settings() {
                 <div className="md:col-span-2 rounded-xl border border-surface-4 bg-surface-3/80 p-4 space-y-4">
                   <div>
                     <h3 className="font-bold text-text-primary">Shop Timing & Business Day</h3>
-                    <p className="text-xs text-text-secondary mt-1">Normal routine: sales from midnight to 4:59 AM count in the previous shop day. Ramadan mode uses normal calendar dates for 24-hour service.</p>
+                    <p className="text-xs text-text-secondary mt-1">Reports follow the open shift. Late-night sales stay with the shift that was opened for that business day.</p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -527,14 +535,14 @@ export default function Settings() {
                     </div>
                     <div className="flex justify-between items-center bg-surface-2 p-3 rounded border border-surface-4">
                       <div>
-                        <label className="text-sm font-bold text-text-primary">Ramadan 24-hour mode</label>
-                        <p className="text-xs text-text-secondary mt-1">Use midnight-to-midnight reports during Ramadan.</p>
+                        <label className="text-sm font-bold text-text-primary">24 Hour Mode</label>
+                        <p className="text-xs text-text-secondary mt-1">For Ramadan: keep the open shift running until owner or manager closes it.</p>
                       </div>
                       <input
                         type="checkbox"
                         className="w-5 h-5 accent-primary"
                         checked={posConfig.ramadan24Hour === "true"}
-                        onChange={e => setPosConfig(prev => ({ ...prev, ramadan24Hour: String(e.target.checked) }))}
+                        onChange={e => setPosConfig(prev => ({ ...prev, ramadan24Hour: String(e.target.checked), "24_hour_mode": String(e.target.checked) }))}
                       />
                     </div>
                   </div>

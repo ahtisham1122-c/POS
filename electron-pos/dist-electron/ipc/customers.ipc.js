@@ -234,7 +234,7 @@ function registerCustomersIPC() {
       `).run(ledgerId, id, paymentId, 'PAYMENT_RECEIVED', amount, balanceAfter, 'Payment Received', now, now);
             (0, outboxHelper_1.createOutboxEntry)('ledger_entries', 'INSERT', ledgerId, { id: ledgerId, customer_id: id, entry_type: 'PAYMENT_RECEIVED', amount, created_at: now });
             // 4. UPDATE cash_register
-            (0, cashRegister_1.addCashIn)(amount, now.split('T')[0]);
+            (0, cashRegister_1.addCashIn)(amount);
             return { success: true };
         });
         try {

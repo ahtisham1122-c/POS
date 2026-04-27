@@ -313,7 +313,7 @@ export function registerSuppliersIPC() {
           created_at: now
         });
 
-        addCashOut(amount, now.split('T')[0]);
+        addCashOut(amount);
 
         return { success: true, paymentId, balanceAfter };
       })();

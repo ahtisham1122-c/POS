@@ -307,6 +307,96 @@ export function runMigrations() {
           if (!auditNames.has('previous_hash')) db.exec(`ALTER TABLE audit_logs ADD COLUMN previous_hash TEXT`);
           if (!auditNames.has('entry_hash')) db.exec(`ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT`);
         }
+      },
+      {
+        version: 14,
+        up: () => {
+          log.info('Running migration v14: Linking sales and cash drawers to shifts');
+          const saleColumns = db.prepare(`PRAGMA table_info(sales)`).all() as Array<{ name: string }>;
+          const saleNames = new Set(saleColumns.map((column) => column.name));
+          if (!saleNames.has('shift_id')) db.exec(`ALTER TABLE sales ADD COLUMN shift_id TEXT`);
+
+          const returnColumns = db.prepare(`PRAGMA table_info(returns)`).all() as Array<{ name: string }>;
+          const returnNames = new Set(returnColumns.map((column) => column.name));
+          if (!returnNames.has('shift_id')) db.exec(`ALTER TABLE returns ADD COLUMN shift_id TEXT`);
+
+          const voidColumns = db.prepare(`PRAGMA table_info(sale_voids)`).all() as Array<{ name: string }>;
+          const voidNames = new Set(voidColumns.map((column) => column.name));
+          if (!voidNames.has('shift_id')) db.exec(`ALTER TABLE sale_voids ADD COLUMN shift_id TEXT`);
+
+          const expenseColumns = db.prepare(`PRAGMA table_info(expenses)`).all() as Array<{ name: string }>;
+          const expenseNames = new Set(expenseColumns.map((column) => column.name));
+          if (!expenseNames.has('shift_id')) db.exec(`ALTER TABLE expenses ADD COLUMN shift_id TEXT`);
+
+          const cashColumns = db.prepare(`PRAGMA table_info(cash_register)`).all() as Array<{ name: string }>;
+          const cashNames = new Set(cashColumns.map((column) => column.name));
+          if (!cashNames.has('shift_id')) db.exec(`ALTER TABLE cash_register ADD COLUMN shift_id TEXT`);
+
+          db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_sales_shift ON sales(shift_id);
+            CREATE INDEX IF NOT EXISTS idx_returns_shift ON returns(shift_id);
+            CREATE INDEX IF NOT EXISTS idx_sale_voids_shift ON sale_voids(shift_id);
+            CREATE INDEX IF NOT EXISTS idx_expenses_shift ON expenses(shift_id);
+            CREATE INDEX IF NOT EXISTS idx_cash_register_shift ON cash_register(shift_id);
+            CREATE INDEX IF NOT EXISTS idx_cash_register_date ON cash_register(date);
+          `);
+
+          db.exec(`
+            UPDATE sales
+            SET shift_id = (
+              SELECT s.id
+              FROM shifts s
+              WHERE s.shift_date = substr(sales.sale_date, 1, 10)
+              ORDER BY s.opened_at DESC
+              LIMIT 1
+            )
+            WHERE shift_id IS NULL
+          `);
+
+          db.exec(`
+            UPDATE returns
+            SET shift_id = (
+              SELECT sales.shift_id
+              FROM sales
+              WHERE sales.id = returns.sale_id
+              LIMIT 1
+            )
+            WHERE shift_id IS NULL
+          `);
+
+          db.exec(`
+            UPDATE sale_voids
+            SET shift_id = (
+              SELECT sales.shift_id
+              FROM sales
+              WHERE sales.id = sale_voids.sale_id
+              LIMIT 1
+            )
+            WHERE shift_id IS NULL
+          `);
+
+          db.exec(`
+            UPDATE cash_register
+            SET shift_id = (
+              SELECT s.id
+              FROM shifts s
+              WHERE s.shift_date = cash_register.date
+              ORDER BY s.opened_at DESC
+              LIMIT 1
+            )
+            WHERE shift_id IS NULL
+          `);
+
+          const now = new Date().toISOString();
+          const setting = db.prepare(`
+            INSERT INTO settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO NOTHING
+          `);
+          setting.run('shopDayStartHour', '5', now);
+          setting.run('ramadan24Hour', 'false', now);
+          setting.run('24_hour_mode', 'false', now);
+        }
       }
     ];
 

@@ -75,7 +75,7 @@ function registerShiftsIPC() {
       WHERE s.shift_date = ?
       ORDER BY s.opened_at DESC
       LIMIT 1
-    `).get((0, businessDay_1.getBusinessDate)()) || null;
+    `).get((0, businessDay_1.getActiveBusinessDate)()) || null;
     });
     electron_1.ipcMain.handle('shifts:open', (_event, data) => {
         try {
@@ -85,7 +85,15 @@ function registerShiftsIPC() {
                     return { success: false, error: 'A shift is already open' };
                 }
                 const now = new Date().toISOString();
-                const date = (0, businessDay_1.getBusinessDate)();
+                const nowDate = new Date();
+                const date = (0, businessDay_1.formatLocalDate)(nowDate);
+                if ((0, businessDay_1.shouldWarnBeforeOpeningShift)(nowDate) && !data?.confirmAfterMidnightOpen) {
+                    return {
+                        success: false,
+                        requiresPreviousShiftConfirmation: true,
+                        error: "A shift from yesterday may still be open. Do you want to close yesterday's shift first before opening a new one?"
+                    };
+                }
                 const user = (0, auth_ipc_1.getCurrentUser)();
                 const openedById = user?.id || 'system';
                 const openingCash = Number(data?.openingCash || 0);
@@ -93,15 +101,16 @@ function registerShiftsIPC() {
                     return { success: false, error: 'Opening cash must be zero or more' };
                 }
                 const shiftId = crypto.randomUUID();
-                const existingRegister = db_1.default.prepare('SELECT * FROM cash_register WHERE date = ?').get(date);
+                const existingRegister = db_1.default.prepare('SELECT * FROM cash_register WHERE date = ? AND is_closed_for_day = 0').get(date);
                 if (!existingRegister) {
                     const registerId = crypto.randomUUID();
                     db_1.default.prepare(`
-            INSERT INTO cash_register (id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
-            VALUES (?, ?, ?, 0, 0, ?, 0, ?, 0)
-          `).run(registerId, date, openingCash, openingCash, now);
+            INSERT INTO cash_register (id, shift_id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
+            VALUES (?, ?, ?, ?, 0, 0, ?, 0, ?, 0)
+          `).run(registerId, shiftId, date, openingCash, openingCash, now);
                     (0, outboxHelper_1.createOutboxEntry)('cash_register', 'INSERT', registerId, {
                         id: registerId,
+                        shift_id: shiftId,
                         date,
                         opening_balance: openingCash,
                         cash_in: 0,
@@ -109,6 +118,15 @@ function registerShiftsIPC() {
                         closing_balance: openingCash,
                         is_closed_for_day: 0,
                         created_at: now
+                    });
+                }
+                else if (!existingRegister.shift_id) {
+                    db_1.default.prepare('UPDATE cash_register SET shift_id = ?, synced = 0 WHERE id = ?').run(shiftId, existingRegister.id);
+                    (0, outboxHelper_1.createOutboxEntry)('cash_register', 'UPDATE', existingRegister.id, {
+                        id: existingRegister.id,
+                        shift_id: shiftId,
+                        date,
+                        updated_at: now
                     });
                 }
                 db_1.default.prepare(`
@@ -150,13 +168,13 @@ function registerShiftsIPC() {
                 }
                 const now = new Date().toISOString();
                 const closedById = (0, auth_ipc_1.getCurrentUser)()?.id || 'system';
-                const expectedCash = (0, cashRegister_1.getCashRegisterExpected)(shift.shift_date).expectedCash;
+                const expectedCash = (0, cashRegister_1.getCashRegisterExpected)(shift.shift_date, shift.id).expectedCash;
                 const closingCash = Number(data?.closingCash || 0);
                 if (!Number.isFinite(closingCash) || closingCash < 0) {
                     return { success: false, error: 'Closing cash must be zero or more' };
                 }
                 const variance = Number((closingCash - expectedCash).toFixed(2));
-                const register = db_1.default.prepare('SELECT * FROM cash_register WHERE date = ?').get(shift.shift_date);
+                const register = db_1.default.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(shift.id, shift.shift_date);
                 if (!register) {
                     return { success: false, error: 'Cash register was not opened for this shift date' };
                 }

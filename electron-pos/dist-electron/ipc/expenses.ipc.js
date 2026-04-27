@@ -43,6 +43,7 @@ const crypto = __importStar(require("crypto"));
 const outboxHelper_1 = require("../sync/outboxHelper");
 const cashRegister_1 = require("../database/cashRegister");
 const auth_ipc_1 = require("./auth.ipc");
+const businessDay_1 = require("../database/businessDay");
 function registerExpensesIPC() {
     electron_1.ipcMain.handle('expenses:getAll', (_event, filters) => {
         const date = filters?.date?.trim();
@@ -59,18 +60,19 @@ function registerExpensesIPC() {
             const expenseDate = data.date ? `${data.date}T00:00:00.000Z` : now;
             const amount = Number(data.amount || 0);
             const createdById = data.userId || (0, auth_ipc_1.getCurrentUser)()?.id || 'system';
+            const shift = (0, businessDay_1.getOpenShift)();
             if (amount <= 0)
                 throw new Error('Expense amount must be greater than zero');
             // INSERT expense
             db_1.default.prepare(`
-        INSERT INTO expenses (id, code, expense_date, category, description, amount, created_by_id, created_at, updated_at, synced)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-      `).run(expenseId, code, expenseDate, data.category, data.description, amount, createdById, now, now);
+        INSERT INTO expenses (id, code, shift_id, expense_date, category, description, amount, created_by_id, created_at, updated_at, synced)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `).run(expenseId, code, shift?.id || null, expenseDate, data.category, data.description, amount, createdById, now, now);
             (0, outboxHelper_1.createOutboxEntry)('expenses', 'INSERT', expenseId, {
-                id: expenseId, code, expense_date: expenseDate, category: data.category, amount, created_at: now
+                id: expenseId, code, shift_id: shift?.id || null, expense_date: expenseDate, category: data.category, amount, created_at: now
             });
             // UPDATE cash_register
-            (0, cashRegister_1.addCashOut)(amount, expenseDate.split('T')[0]);
+            (0, cashRegister_1.addCashOut)(amount, shift?.shift_date || (0, businessDay_1.getActiveBusinessDate)(new Date(now)), shift?.id || null);
             return { success: true };
         });
         try {
@@ -103,7 +105,7 @@ function registerExpensesIPC() {
                 updated_at: now
             });
             const difference = nextAmount - oldAmount;
-            (0, cashRegister_1.adjustCashOut)(difference, String(oldExpense.expense_date).split('T')[0]);
+            (0, cashRegister_1.adjustCashOut)(difference, oldExpense.shift_id ? undefined : String(oldExpense.expense_date).split('T')[0], oldExpense.shift_id || null);
             return { success: true };
         }
         catch (e) {
@@ -117,7 +119,7 @@ function registerExpensesIPC() {
                 return { success: false, error: 'Expense not found' };
             db_1.default.prepare('DELETE FROM expenses WHERE id = ?').run(id);
             (0, outboxHelper_1.createOutboxEntry)('expenses', 'DELETE', id, { id });
-            (0, cashRegister_1.adjustCashOut)(-Number(oldExpense.amount || 0), String(oldExpense.expense_date).split('T')[0]);
+            (0, cashRegister_1.adjustCashOut)(-Number(oldExpense.amount || 0), oldExpense.shift_id ? undefined : String(oldExpense.expense_date).split('T')[0], oldExpense.shift_id || null);
             return { success: true };
         }
         catch (e) {

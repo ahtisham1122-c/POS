@@ -16,12 +16,19 @@ function normalizeBillNumber(value: string) {
 
 function buildAudit(input: AuditInput) {
   const date = input.date;
+  const shift = db.prepare(`
+    SELECT id
+    FROM shifts
+    WHERE shift_date = ?
+    ORDER BY opened_at DESC
+    LIMIT 1
+  `).get(date) as any;
   const sales = db.prepare(`
     SELECT id, bill_number, grand_total, payment_type, status, sale_date
     FROM sales
-    WHERE sale_date LIKE ?
+    WHERE ${shift?.id ? `(shift_id = ? OR (shift_id IS NULL AND sale_date LIKE ?))` : `sale_date LIKE ?`}
     ORDER BY sale_date ASC
-  `).all(`${date}%`) as any[];
+  `).all(...(shift?.id ? [shift.id, `${date}%`] : [`${date}%`])) as any[];
 
   const salesByBill = new Map(sales.map((sale) => [sale.bill_number.toUpperCase(), sale]));
   const expectedAmount = sales.reduce((sum, sale) => sum + Number(sale.grand_total || 0), 0);

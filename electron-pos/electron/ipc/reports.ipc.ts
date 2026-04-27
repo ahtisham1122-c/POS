@@ -2,24 +2,50 @@ import { ipcMain } from 'electron';
 import db from '../database/db';
 import { createOutboxEntry } from '../sync/outboxHelper';
 import { getCashRegisterExpected } from '../database/cashRegister';
-import { getBusinessDate } from '../database/businessDay';
+import { getActiveBusinessDate, getBusinessDate } from '../database/businessDay';
+
+function getShiftScope(reportDate: string) {
+  const shift = db.prepare(`
+    SELECT s.*, opener.name as cashier_name, closer.name as closed_by_name
+    FROM shifts s
+    LEFT JOIN users opener ON opener.id = s.opened_by_id
+    LEFT JOIN users closer ON closer.id = s.closed_by_id
+    WHERE s.shift_date = ?
+    ORDER BY s.opened_at DESC
+    LIMIT 1
+  `).get(reportDate) as any;
+
+  return { date: reportDate, shift, shiftId: shift?.id || null };
+}
+
+function saleScope(alias: string, scope: { date: string; shiftId: string | null }) {
+  if (scope.shiftId) {
+    return `(${alias}.shift_id = ? OR (${alias}.shift_id IS NULL AND substr(${alias}.sale_date, 1, 10) = ?))`;
+  }
+  return `substr(${alias}.sale_date, 1, 10) = ?`;
+}
+
+function scopeParams(scope: { date: string; shiftId: string | null }) {
+  return scope.shiftId ? [scope.shiftId, scope.date] : [scope.date];
+}
+
+function shiftTableScope(alias: string, dateColumn: string, scope: { date: string; shiftId: string | null }) {
+  if (scope.shiftId) {
+    return `(${alias}.shift_id = ? OR (${alias}.shift_id IS NULL AND substr(${alias}.${dateColumn}, 1, 10) = ?))`;
+  }
+  return `substr(${alias}.${dateColumn}, 1, 10) = ?`;
+}
 
 export function registerReportsIPC() {
   ipcMain.handle('reports:getZReport', (_event, date: string) => {
     const reportDate = date || getBusinessDate();
-    const dateLike = `${reportDate}%`;
-
-    const shift = db.prepare(`
-      SELECT s.*, opener.name as cashier_name, closer.name as closed_by_name
-      FROM shifts s
-      LEFT JOIN users opener ON opener.id = s.opened_by_id
-      LEFT JOIN users closer ON closer.id = s.closed_by_id
-      WHERE s.shift_date = ?
-      ORDER BY s.opened_at DESC
-      LIMIT 1
-    `).get(reportDate) as any;
-
-    const register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(reportDate) as any;
+    const scope = getShiftScope(reportDate);
+    const shift = scope.shift;
+    const saleWhere = saleScope('s', scope);
+    const saleParams = scopeParams(scope);
+    const register = scope.shiftId
+      ? db.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(scope.shiftId, reportDate) as any
+      : db.prepare('SELECT * FROM cash_register WHERE date = ? ORDER BY created_at DESC LIMIT 1').get(reportDate) as any;
 
     const saleStats = db.prepare(`
       SELECT
@@ -27,16 +53,16 @@ export function registerReportsIPC() {
         COALESCE(SUM(grand_total), 0) as grossSales,
         COALESCE(SUM(discount_amount), 0) as orderDiscounts,
         COALESCE(SUM(balance_due), 0) as khataSales
-      FROM sales
-      WHERE sale_date LIKE ? AND status != 'CANCELLED'
-    `).get(dateLike) as any;
+      FROM sales s
+      WHERE ${saleWhere} AND s.status != 'CANCELLED'
+    `).get(...saleParams) as any;
 
     const itemDiscountStats = db.prepare(`
       SELECT COALESCE(SUM(si.discount_amount), 0) as itemDiscounts
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
-      WHERE s.sale_date LIKE ? AND s.status != 'CANCELLED'
-    `).get(dateLike) as any;
+      WHERE ${saleWhere} AND s.status != 'CANCELLED'
+    `).get(...saleParams) as any;
 
     const tenderStats = db.prepare(`
       SELECT
@@ -45,34 +71,34 @@ export function registerReportsIPC() {
         COALESCE(SUM(CASE WHEN sp.method = 'KHATA' THEN sp.amount ELSE 0 END), 0) as khataTender
       FROM split_payments sp
       JOIN sales s ON s.id = sp.sale_id
-      WHERE s.sale_date LIKE ? AND s.status != 'CANCELLED'
-    `).get(dateLike) as any;
+      WHERE ${saleWhere} AND s.status != 'CANCELLED'
+    `).get(...saleParams) as any;
 
     const refundStats = db.prepare(`
       SELECT
         COUNT(*) as refundCount,
         COALESCE(SUM(refund_amount), 0) as totalRefunds,
         COALESCE(SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END), 0) as cashRefunds
-      FROM returns
-      WHERE return_date LIKE ? AND status = 'COMPLETED'
-    `).get(dateLike) as any;
+      FROM returns r
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED'
+    `).get(...scopeParams(scope)) as any;
 
     const voidStats = db.prepare(`
       SELECT
         COUNT(*) as voidCount,
         COALESCE(SUM(cash_reversed), 0) as voidCash,
         COALESCE(SUM(credit_reversed), 0) as voidCredit
-      FROM sale_voids
-      WHERE voided_at LIKE ?
-    `).get(dateLike) as any;
+      FROM sale_voids v
+      WHERE ${shiftTableScope('v', 'voided_at', scope)}
+    `).get(...scopeParams(scope)) as any;
 
     const expenseStats = db.prepare(`
       SELECT COALESCE(SUM(amount), 0) as expenses
-      FROM expenses
-      WHERE expense_date LIKE ?
-    `).get(dateLike) as any;
+      FROM expenses e
+      WHERE ${shiftTableScope('e', 'expense_date', scope)}
+    `).get(...scopeParams(scope)) as any;
 
-    const drawer = getCashRegisterExpected(reportDate);
+    const drawer = getCashRegisterExpected(reportDate, scope.shiftId);
     const openingCash = Number(shift?.opening_cash ?? drawer.openingCash);
     const cashSales = Number(tenderStats?.cashSales || 0);
     const cashRefunds = Number(refundStats?.cashRefunds || 0);
@@ -106,34 +132,39 @@ export function registerReportsIPC() {
       closedByName: shift?.closed_by_name || null,
       shiftOpenTime: shift?.opened_at || register?.created_at || null,
       shiftCloseTime: shift?.closed_at || null,
+      shiftHours: shift?.opened_at
+        ? Number(((new Date(shift?.closed_at || new Date().toISOString()).getTime() - new Date(shift.opened_at).getTime()) / 3600000).toFixed(2))
+        : 0,
       status: isClosed ? 'CLOSED' : 'OPEN'
     };
   });
 
   ipcMain.handle('reports:getDailySummary', (_event, date: string) => {
-    // Basic aggregation from SQLite directly - very fast
-    const sales = db.prepare(`SELECT SUM(grand_total) as total, SUM(amount_paid) as collected FROM sales WHERE sale_date LIKE ? AND status = 'COMPLETED'`).get(`${date}%`) as any;
+    const scope = getShiftScope(date || getBusinessDate());
+    const saleWhere = saleScope('s', scope);
+    const saleParams = scopeParams(scope);
+    const sales = db.prepare(`SELECT SUM(grand_total) as total, SUM(amount_paid) as collected FROM sales s WHERE ${saleWhere} AND s.status = 'COMPLETED'`).get(...saleParams) as any;
     const tenders = db.prepare(`
       SELECT
         COALESCE(SUM(CASE WHEN sp.method = 'CASH' THEN sp.amount ELSE 0 END), 0) as cashCollected,
         COALESCE(SUM(CASE WHEN sp.method = 'ONLINE' THEN sp.amount ELSE 0 END), 0) as onlineCollected
       FROM split_payments sp
       JOIN sales s ON s.id = sp.sale_id
-      WHERE s.sale_date LIKE ? AND s.status = 'COMPLETED'
-    `).get(`${date}%`) as any;
+      WHERE ${saleWhere} AND s.status = 'COMPLETED'
+    `).get(...saleParams) as any;
     const returns = db.prepare(`
       SELECT
         SUM(refund_amount) as total,
         SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END) as cashRefunds
-      FROM returns
-      WHERE return_date LIKE ? AND status = 'COMPLETED'
-    `).get(`${date}%`) as any;
-    const expenses = db.prepare('SELECT SUM(amount) as total FROM expenses WHERE expense_date LIKE ?').get(`${date}%`) as any;
+      FROM returns r
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED'
+    `).get(...scopeParams(scope)) as any;
+    const expenses = db.prepare(`SELECT SUM(amount) as total FROM expenses e WHERE ${shiftTableScope('e', 'expense_date', scope)}`).get(...scopeParams(scope)) as any;
     const refundTotal = returns?.total || 0;
     const cashRefunds = returns?.cashRefunds || 0;
     
     return {
-      date,
+      date: scope.date,
       totalSales: (sales?.total || 0) - refundTotal,
       grossSales: sales?.total || 0,
       totalRefunds: refundTotal,
@@ -146,51 +177,54 @@ export function registerReportsIPC() {
   });
 
   ipcMain.handle('reports:getEndOfDay', (_event, date: string) => {
+    const scope = getShiftScope(date || getBusinessDate());
+    const saleWhere = saleScope('s', scope);
+    const saleParams = scopeParams(scope);
     const saleStats = db.prepare(`
       SELECT 
         COUNT(*) as bills, 
         SUM(grand_total) as totalSales, 
         SUM(amount_paid) as paidSales, 
         SUM(balance_due) as creditSales 
-      FROM sales WHERE sale_date LIKE ? AND status = 'COMPLETED'
-    `).get(`${date}%`) as any;
+      FROM sales s WHERE ${saleWhere} AND s.status = 'COMPLETED'
+    `).get(...saleParams) as any;
 
     const milkStats = db.prepare(`
       SELECT SUM(si.quantity) as qty
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
-      WHERE si.product_name LIKE '%milk%' AND si.created_at LIKE ? AND s.status = 'COMPLETED'
-    `).get(`${date}%`) as any;
+      WHERE si.product_name LIKE '%milk%' AND ${saleWhere} AND s.status = 'COMPLETED'
+    `).get(...saleParams) as any;
 
     const yogurtStats = db.prepare(`
       SELECT SUM(si.quantity) as qty
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
-      WHERE si.product_name LIKE '%yogurt%' AND si.created_at LIKE ? AND s.status = 'COMPLETED'
-    `).get(`${date}%`) as any;
+      WHERE si.product_name LIKE '%yogurt%' AND ${saleWhere} AND s.status = 'COMPLETED'
+    `).get(...saleParams) as any;
 
     const expenseStats = db.prepare(`
-      SELECT SUM(amount) as total FROM expenses WHERE expense_date LIKE ?
-    `).get(`${date}%`) as any;
+      SELECT SUM(amount) as total FROM expenses e WHERE ${shiftTableScope('e', 'expense_date', scope)}
+    `).get(...scopeParams(scope)) as any;
 
     const returnStats = db.prepare(`
       SELECT
         COUNT(*) as count,
         SUM(refund_amount) as total,
         SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END) as cashRefunds
-      FROM returns
-      WHERE return_date LIKE ? AND status = 'COMPLETED'
-    `).get(`${date}%`) as any;
+      FROM returns r
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED'
+    `).get(...scopeParams(scope)) as any;
 
-    const drawer = getCashRegisterExpected(date);
+    const drawer = getCashRegisterExpected(scope.date, scope.shiftId);
     const tenderStats = db.prepare(`
       SELECT
         COALESCE(SUM(CASE WHEN sp.method = 'CASH' THEN sp.amount ELSE 0 END), 0) as cashSales,
         COALESCE(SUM(CASE WHEN sp.method = 'ONLINE' THEN sp.amount ELSE 0 END), 0) as onlineSales
       FROM split_payments sp
       JOIN sales s ON s.id = sp.sale_id
-      WHERE s.sale_date LIKE ? AND s.status = 'COMPLETED'
-    `).get(`${date}%`) as any;
+      WHERE ${saleWhere} AND s.status = 'COMPLETED'
+    `).get(...saleParams) as any;
 
     return {
       bills: saleStats?.bills || 0,
@@ -213,7 +247,10 @@ export function registerReportsIPC() {
       return db.transaction(() => {
         const { date, physicalCash } = data;
         const now = new Date().toISOString();
-        const register = db.prepare('SELECT * FROM cash_register WHERE date = ?').get(date) as any;
+        const scope = getShiftScope(date || getActiveBusinessDate());
+        const register = scope.shiftId
+          ? db.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(scope.shiftId, scope.date) as any
+          : db.prepare('SELECT * FROM cash_register WHERE date = ? ORDER BY created_at DESC LIMIT 1').get(scope.date) as any;
 
         if (!register) {
           return { success: false, error: 'Cash register is not opened for this date' };
@@ -228,7 +265,7 @@ export function registerReportsIPC() {
           return { success: false, error: 'Please enter a valid counted cash amount' };
         }
 
-        const expectedCash = getCashRegisterExpected(date).expectedCash;
+        const expectedCash = getCashRegisterExpected(scope.date, scope.shiftId).expectedCash;
         const difference = Number((countedCash - expectedCash).toFixed(2));
       
         db.prepare(`
@@ -239,7 +276,8 @@ export function registerReportsIPC() {
       
         createOutboxEntry('cash_register', 'UPDATE', register.id, {
           id: register.id,
-          date,
+          shift_id: scope.shiftId,
+          date: scope.date,
           closing_balance: countedCash,
           expected_cash: expectedCash,
           cash_difference: difference,
@@ -258,12 +296,13 @@ export function registerReportsIPC() {
     const safeDays = Number.isFinite(days) && days > 0 ? Math.min(days, 90) : 7;
     return db.prepare(`
       SELECT
-        substr(sale_date, 1, 10) as date,
+        COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) as date,
         COUNT(*) as orders,
-        COALESCE(SUM(grand_total), 0) as total
-      FROM sales
-      WHERE sale_date >= datetime('now', ?) AND status = 'COMPLETED'
-      GROUP BY substr(sale_date, 1, 10)
+        COALESCE(SUM(s.grand_total), 0) as total
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE s.sale_date >= datetime('now', ?) AND s.status = 'COMPLETED'
+      GROUP BY COALESCE(sh.shift_date, substr(s.sale_date, 1, 10))
       ORDER BY date ASC
     `).all(`-${safeDays} day`);
   });
@@ -299,24 +338,32 @@ export function registerReportsIPC() {
         COALESCE(SUM(grand_total), 0) as revenue,
         COALESCE(SUM(amount_paid), 0) as paidSales,
         COALESCE(SUM(balance_due), 0) as creditSales
-      FROM sales 
-      WHERE substr(sale_date, 1, 10) >= ? AND substr(sale_date, 1, 10) <= ? AND status = 'COMPLETED'
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) <= ?
+        AND s.status = 'COMPLETED'
     `).get(startDate, endDate) as any;
 
     const returnStats = db.prepare(`
       SELECT
         COALESCE(SUM(refund_amount), 0) as refunds,
         COALESCE(SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END), 0) as cashRefunds
-      FROM returns
-      WHERE status = 'COMPLETED'
-      AND substr(return_date, 1, 10) >= ? AND substr(return_date, 1, 10) <= ?
+      FROM returns r
+      LEFT JOIN shifts sh ON sh.id = r.shift_id
+      WHERE r.status = 'COMPLETED'
+      AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) >= ?
+      AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) <= ?
     `).get(startDate, endDate) as any;
 
     const cogsStats = db.prepare(`
       SELECT COALESCE(SUM(si.quantity * si.cost_price), 0) as cogs
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
-      WHERE substr(s.sale_date, 1, 10) >= ? AND substr(s.sale_date, 1, 10) <= ? AND s.status = 'COMPLETED'
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) <= ?
+        AND s.status = 'COMPLETED'
     `).get(startDate, endDate) as any;
 
     const expenseStats = db.prepare(`
@@ -336,7 +383,10 @@ export function registerReportsIPC() {
         COALESCE(SUM(CASE WHEN sp.method = 'ONLINE' THEN sp.amount ELSE 0 END), 0) as onlineSales
       FROM split_payments sp
       JOIN sales s ON s.id = sp.sale_id
-      WHERE substr(s.sale_date, 1, 10) >= ? AND substr(s.sale_date, 1, 10) <= ? AND s.status = 'COMPLETED'
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) <= ?
+        AND s.status = 'COMPLETED'
     `).get(startDate, endDate) as any;
 
     const refunds = returnStats.refunds;
@@ -365,46 +415,50 @@ export function registerReportsIPC() {
     // year format 'YYYY'
     return db.prepare(`
       SELECT 
-        substr(sale_date, 1, 7) as month,
-        COUNT(id) as bills,
-        COALESCE(SUM(grand_total), 0) as revenue
-      FROM sales
-      WHERE substr(sale_date, 1, 4) = ? AND status = 'COMPLETED'
-      GROUP BY substr(sale_date, 1, 7)
+        substr(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)), 1, 7) as month,
+        COUNT(s.id) as bills,
+        COALESCE(SUM(s.grand_total), 0) as revenue
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE substr(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)), 1, 4) = ? AND s.status = 'COMPLETED'
+      GROUP BY substr(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)), 1, 7)
       ORDER BY month ASC
     `).all(year);
   });
 
   ipcMain.handle('reports:getDashboardStats', () => {
-    const today = getBusinessDate();
+    const today = getActiveBusinessDate();
+    const scope = getShiftScope(today);
+    const saleWhere = saleScope('s', scope);
+    const saleParams = scopeParams(scope);
     
     const todaySales = db.prepare(`
       SELECT 
         COUNT(*) as bills, 
         COALESCE(SUM(grand_total), 0) as revenue,
         COALESCE(SUM(amount_paid), 0) as paidCollected
-      FROM sales WHERE sale_date LIKE ? AND status = 'COMPLETED'
-    `).get(`${today}%`) as any;
+      FROM sales s WHERE ${saleWhere} AND s.status = 'COMPLETED'
+    `).get(...saleParams) as any;
     const todayTenders = db.prepare(`
       SELECT
         COALESCE(SUM(CASE WHEN sp.method = 'CASH' THEN sp.amount ELSE 0 END), 0) as cashCollected,
         COALESCE(SUM(CASE WHEN sp.method = 'ONLINE' THEN sp.amount ELSE 0 END), 0) as onlineCollected
       FROM split_payments sp
       JOIN sales s ON s.id = sp.sale_id
-      WHERE s.sale_date LIKE ? AND s.status = 'COMPLETED'
-    `).get(`${today}%`) as any;
+      WHERE ${saleWhere} AND s.status = 'COMPLETED'
+    `).get(...saleParams) as any;
 
     const todayReturns = db.prepare(`
       SELECT
         COALESCE(SUM(refund_amount), 0) as total,
         COALESCE(SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END), 0) as cashRefunds
-      FROM returns
-      WHERE return_date LIKE ? AND status = 'COMPLETED'
-    `).get(`${today}%`) as any;
+      FROM returns r
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED'
+    `).get(...scopeParams(scope)) as any;
 
     const todayExpenses = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE expense_date LIKE ?
-    `).get(`${today}%`) as any;
+      SELECT COALESCE(SUM(amount), 0) as total FROM expenses e WHERE ${shiftTableScope('e', 'expense_date', scope)}
+    `).get(...scopeParams(scope)) as any;
 
     const outstandingDues = db.prepare(`
       SELECT COALESCE(SUM(current_balance), 0) as total, COUNT(*) as count 
@@ -433,11 +487,11 @@ export function registerReportsIPC() {
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON s.id = si.sale_id
-      WHERE si.created_at LIKE ? AND s.status = 'COMPLETED'
+      WHERE ${saleWhere} AND s.status = 'COMPLETED'
       GROUP BY si.product_id 
       ORDER BY rev DESC 
       LIMIT 5
-    `).all(`${today}%`);
+    `).all(...saleParams);
 
     const lowStock = db.prepare(`
       SELECT name, emoji, stock, low_stock_threshold 

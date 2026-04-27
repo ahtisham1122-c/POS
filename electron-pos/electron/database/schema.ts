@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE TABLE IF NOT EXISTS sales (
   id TEXT PRIMARY KEY,
   transaction_id TEXT UNIQUE,
+  shift_id TEXT,
   bill_number TEXT UNIQUE NOT NULL,
   sale_date TEXT NOT NULL,
   customer_id TEXT,
@@ -83,7 +84,8 @@ CREATE TABLE IF NOT EXISTS sales (
   status TEXT DEFAULT 'COMPLETED',
   notes TEXT,
   created_at TEXT NOT NULL,
-  synced INTEGER DEFAULT 0
+  synced INTEGER DEFAULT 0,
+  FOREIGN KEY (shift_id) REFERENCES shifts(id)
 );
 
 CREATE TABLE IF NOT EXISTS sale_items (
@@ -107,6 +109,7 @@ CREATE TABLE IF NOT EXISTS sale_items (
 CREATE TABLE IF NOT EXISTS sale_voids (
   id TEXT PRIMARY KEY,
   sale_id TEXT NOT NULL UNIQUE,
+  shift_id TEXT,
   bill_number TEXT NOT NULL,
   voided_by_id TEXT NOT NULL,
   voided_at TEXT NOT NULL,
@@ -116,13 +119,15 @@ CREATE TABLE IF NOT EXISTS sale_voids (
   restocked_items INTEGER DEFAULT 1,
   created_at TEXT NOT NULL,
   synced INTEGER DEFAULT 0,
-  FOREIGN KEY (sale_id) REFERENCES sales(id)
+  FOREIGN KEY (sale_id) REFERENCES sales(id),
+  FOREIGN KEY (shift_id) REFERENCES shifts(id)
 );
 
 CREATE TABLE IF NOT EXISTS returns (
   id TEXT PRIMARY KEY,
   return_number TEXT UNIQUE NOT NULL,
   sale_id TEXT NOT NULL,
+  shift_id TEXT,
   bill_number TEXT NOT NULL,
   customer_id TEXT,
   cashier_id TEXT NOT NULL,
@@ -134,7 +139,8 @@ CREATE TABLE IF NOT EXISTS returns (
   status TEXT DEFAULT 'COMPLETED',
   created_at TEXT NOT NULL,
   synced INTEGER DEFAULT 0,
-  FOREIGN KEY (sale_id) REFERENCES sales(id)
+  FOREIGN KEY (sale_id) REFERENCES sales(id),
+  FOREIGN KEY (shift_id) REFERENCES shifts(id)
 );
 
 CREATE TABLE IF NOT EXISTS return_items (
@@ -270,6 +276,7 @@ CREATE TABLE IF NOT EXISTS supplier_ledger_entries (
 CREATE TABLE IF NOT EXISTS expenses (
   id TEXT PRIMARY KEY,
   code TEXT UNIQUE NOT NULL,
+  shift_id TEXT,
   expense_date TEXT NOT NULL,
   category TEXT NOT NULL,
   description TEXT NOT NULL,
@@ -277,19 +284,22 @@ CREATE TABLE IF NOT EXISTS expenses (
   created_by_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  synced INTEGER DEFAULT 0
+  synced INTEGER DEFAULT 0,
+  FOREIGN KEY (shift_id) REFERENCES shifts(id)
 );
 
 CREATE TABLE IF NOT EXISTS cash_register (
   id TEXT PRIMARY KEY,
-  date TEXT UNIQUE NOT NULL,
+  shift_id TEXT UNIQUE,
+  date TEXT NOT NULL,
   opening_balance REAL DEFAULT 0,
   cash_in REAL DEFAULT 0,
   cash_out REAL DEFAULT 0,
   closing_balance REAL DEFAULT 0,
   is_closed_for_day INTEGER DEFAULT 0,
   created_at TEXT NOT NULL,
-  synced INTEGER DEFAULT 0
+  synced INTEGER DEFAULT 0,
+  FOREIGN KEY (shift_id) REFERENCES shifts(id)
 );
 
 CREATE TABLE IF NOT EXISTS shifts (
@@ -353,20 +363,26 @@ CREATE TABLE IF NOT EXISTS sync_outbox (
 
 CREATE INDEX IF NOT EXISTS idx_sync_outbox_status ON sync_outbox(status);
 CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(sale_date);
+CREATE INDEX IF NOT EXISTS idx_sales_shift ON sales(shift_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
 CREATE INDEX IF NOT EXISTS idx_sale_voids_sale ON sale_voids(sale_id);
+CREATE INDEX IF NOT EXISTS idx_sale_voids_shift ON sale_voids(shift_id);
 CREATE INDEX IF NOT EXISTS idx_sale_voids_date ON sale_voids(voided_at);
 CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id);
+CREATE INDEX IF NOT EXISTS idx_returns_shift ON returns(shift_id);
 CREATE INDEX IF NOT EXISTS idx_returns_date ON returns(return_date);
 CREATE INDEX IF NOT EXISTS idx_receipt_audit_date ON receipt_audit_sessions(audit_date);
 CREATE INDEX IF NOT EXISTS idx_shifts_date ON shifts(shift_date);
 CREATE INDEX IF NOT EXISTS idx_shifts_status ON shifts(status);
+CREATE INDEX IF NOT EXISTS idx_cash_register_shift ON cash_register(shift_id);
+CREATE INDEX IF NOT EXISTS idx_cash_register_date ON cash_register(date);
 CREATE INDEX IF NOT EXISTS idx_suppliers_active ON suppliers(is_active);
 CREATE INDEX IF NOT EXISTS idx_milk_collections_date ON milk_collections(collection_date);
 CREATE INDEX IF NOT EXISTS idx_supplier_ledger_supplier ON supplier_ledger_entries(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_customer ON ledger_entries(customer_id);
 CREATE INDEX IF NOT EXISTS idx_split_payments_sale ON split_payments(sale_id);
 CREATE INDEX IF NOT EXISTS idx_stock_product ON stock_movements(product_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_shift ON expenses(shift_id);
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
@@ -462,22 +478,24 @@ export function initializeDatabase() {
       ['taxRate', '0'],
       ['discountApprovalLimit', '100'],
       ['shopDayStartHour', '5'],
-      ['ramadan24Hour', 'false']
+      ['ramadan24Hour', 'false'],
+      ['24_hour_mode', 'false']
     ];
     const insertSetting = db.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)");
     defaultSettings.forEach(([key, val]) => insertSetting.run(key, val, now));
   }
 
-  const forceSetting = db.prepare(`
+  const ensureSetting = db.prepare(`
     INSERT INTO settings (key, value, updated_at)
     VALUES (?, ?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    ON CONFLICT(key) DO NOTHING
   `);
   const nowForSettings = new Date().toISOString();
-  forceSetting.run('shopDayStartHour', '5', nowForSettings);
-  forceSetting.run('ramadan24Hour', 'false', nowForSettings);
-  forceSetting.run('APP_API_URL', 'https://mngkltbsnpyouaerykzo.supabase.co/rest/v1', nowForSettings);
-  forceSetting.run('SYNC_DEVICE_SECRET', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1uZ2tsdGJzbnB5b3VhZXJ5a3pvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyNzAxOTIsImV4cCI6MjA5Mjg0NjE5Mn0.5Ms9js_weCom4vY-SHhqQWlynb-TSmaOJ1WB9ZYI5Aw', nowForSettings);
+  ensureSetting.run('shopDayStartHour', '5', nowForSettings);
+  ensureSetting.run('ramadan24Hour', 'false', nowForSettings);
+  ensureSetting.run('24_hour_mode', 'false', nowForSettings);
+  ensureSetting.run('APP_API_URL', 'https://mngkltbsnpyouaerykzo.supabase.co/rest/v1', nowForSettings);
+  ensureSetting.run('SYNC_DEVICE_SECRET', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1uZ2tsdGJzbnB5b3VhZXJ5a3pvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyNzAxOTIsImV4cCI6MjA5Mjg0NjE5Mn0.5Ms9js_weCom4vY-SHhqQWlynb-TSmaOJ1WB9ZYI5Aw', nowForSettings);
 
   // Seed default categories/products
   const productCount = (db.prepare('SELECT COUNT(*) as count FROM products').get() as any).count;

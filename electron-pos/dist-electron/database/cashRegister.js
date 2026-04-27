@@ -47,10 +47,18 @@ const crypto = __importStar(require("crypto"));
 const outboxHelper_1 = require("../sync/outboxHelper");
 const businessDay_1 = require("./businessDay");
 function getTodayDate() {
-    return (0, businessDay_1.getBusinessDate)();
+    return (0, businessDay_1.getActiveBusinessDate)();
 }
-function getCashRegisterExpected(date = getTodayDate()) {
-    const register = db_1.default.prepare('SELECT * FROM cash_register WHERE date = ?').get(date);
+function getRegister(date, shiftId) {
+    if (shiftId) {
+        const byShift = db_1.default.prepare('SELECT * FROM cash_register WHERE shift_id = ?').get(shiftId);
+        if (byShift)
+            return byShift;
+    }
+    return db_1.default.prepare('SELECT * FROM cash_register WHERE date = ? ORDER BY created_at DESC LIMIT 1').get(date);
+}
+function getCashRegisterExpected(date = getTodayDate(), shiftId) {
+    const register = getRegister(date, shiftId);
     const openingCash = Number(register?.opening_balance || 0);
     const cashIn = Number(register?.cash_in || 0);
     const cashOut = Number(register?.cash_out || 0);
@@ -63,8 +71,10 @@ function getCashRegisterExpected(date = getTodayDate()) {
         expectedCash
     };
 }
-function ensureOpenCashRegister(date = getTodayDate()) {
-    const existing = db_1.default.prepare('SELECT * FROM cash_register WHERE date = ?').get(date);
+function ensureOpenCashRegister(date = getTodayDate(), shiftId) {
+    const activeShift = shiftId ? null : (0, businessDay_1.getOpenShift)();
+    const resolvedShiftId = shiftId || activeShift?.id || null;
+    const existing = getRegister(date, resolvedShiftId);
     if (existing) {
         if (Number(existing.is_closed_for_day) === 1) {
             throw new Error('Cash register is already closed for today');
@@ -74,11 +84,12 @@ function ensureOpenCashRegister(date = getTodayDate()) {
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
     db_1.default.prepare(`
-    INSERT INTO cash_register (id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
-    VALUES (?, ?, 0, 0, 0, 0, 0, ?, 0)
-  `).run(id, date, now);
+    INSERT INTO cash_register (id, shift_id, date, opening_balance, cash_in, cash_out, closing_balance, is_closed_for_day, created_at, synced)
+    VALUES (?, ?, ?, 0, 0, 0, 0, 0, ?, 0)
+  `).run(id, resolvedShiftId, date, now);
     (0, outboxHelper_1.createOutboxEntry)('cash_register', 'INSERT', id, {
         id,
+        shift_id: resolvedShiftId,
         date,
         opening_balance: 0,
         cash_in: 0,
@@ -89,31 +100,33 @@ function ensureOpenCashRegister(date = getTodayDate()) {
     });
     return db_1.default.prepare('SELECT * FROM cash_register WHERE id = ?').get(id);
 }
-function addCashIn(amount, date = getTodayDate()) {
+function addCashIn(amount, date = getTodayDate(), shiftId) {
     if (amount <= 0)
         return;
-    const register = ensureOpenCashRegister(date);
+    const register = ensureOpenCashRegister(date, shiftId);
     const nextCashIn = Number(register.cash_in || 0) + amount;
     db_1.default.prepare('UPDATE cash_register SET cash_in = ?, synced = 0 WHERE id = ?').run(nextCashIn, register.id);
     (0, outboxHelper_1.createOutboxEntry)('cash_register', 'UPDATE', register.id, {
         id: register.id,
+        shift_id: register.shift_id || shiftId || null,
         cash_in: nextCashIn,
         date
     });
 }
-function addCashOut(amount, date = getTodayDate()) {
+function addCashOut(amount, date = getTodayDate(), shiftId) {
     if (amount <= 0)
         return;
-    adjustCashOut(amount, date);
+    adjustCashOut(amount, date, shiftId);
 }
-function adjustCashOut(delta, date = getTodayDate()) {
+function adjustCashOut(delta, date = getTodayDate(), shiftId) {
     if (delta === 0)
         return;
-    const register = ensureOpenCashRegister(date);
+    const register = ensureOpenCashRegister(date, shiftId);
     const nextCashOut = Math.max(0, Number(register.cash_out || 0) + delta);
     db_1.default.prepare('UPDATE cash_register SET cash_out = ?, synced = 0 WHERE id = ?').run(nextCashOut, register.id);
     (0, outboxHelper_1.createOutboxEntry)('cash_register', 'UPDATE', register.id, {
         id: register.id,
+        shift_id: register.shift_id || shiftId || null,
         cash_out: nextCashOut,
         date
     });

@@ -57,7 +57,7 @@ export interface ElectronAPI {
     getAll: (filters?: any) => Promise<any[]>;
     getOne: (id: string) => Promise<any>;
     getReceipt: (id: string) => Promise<any>;
-    create: (data: any) => Promise<{ success: boolean; duplicate?: boolean; saleId?: string; transactionId?: string; billNumber?: string; subtotal?: number; discountAmount?: number; taxAmount?: number; taxRate?: number; taxLabel?: string; grandTotal?: number; amountPaid?: number; balanceDue?: number; cashPaid?: number; onlinePaid?: number; cashTendered?: number; changeReturned?: number; error?: string }>;
+    create: (data: any) => Promise<{ success: boolean; duplicate?: boolean; saleId?: string; transactionId?: string; billNumber?: string; subtotal?: number; discountAmount?: number; taxAmount?: number; taxRate?: number; taxLabel?: string; grandTotal?: number; amountPaid?: number; balanceDue?: number; cashPaid?: number; onlinePaid?: number; cashTendered?: number; changeReturned?: number; lateSaleNote?: string | null; error?: string }>;
     void: (data: { saleId: string; reason: string; restockItems?: boolean; managerPin?: string }) => Promise<{ success: boolean; voidId?: string; billNumber?: string; cashReversed?: number; creditReversed?: number; restockedItems?: boolean; error?: string }>;
     hold: (data: any) => Promise<{ success: boolean; holdId?: string; error?: string }>;
     getHeld: () => Promise<any[]>;
@@ -107,7 +107,7 @@ export interface ElectronAPI {
   shifts: {
     getCurrent: () => Promise<any | null>;
     getToday: () => Promise<any | null>;
-    open: (data: any) => Promise<{ success: boolean; shiftId?: string; error?: string }>;
+    open: (data: any) => Promise<{ success: boolean; shiftId?: string; requiresPreviousShiftConfirmation?: boolean; error?: string }>;
     close: (data: any) => Promise<{ success: boolean; expectedCash?: number; closingCash?: number; variance?: number; requiresReceiptAudit?: boolean; error?: string }>;
     getHistory: (limit?: number) => Promise<any[]>;
   };
@@ -126,7 +126,7 @@ export interface ElectronAPI {
     listBackups: () => Promise<{ success: boolean; backupDir: string; dbPath: string; backups: any[] }>;
     openBackupFolder: () => Promise<{ success: boolean; backupDir: string }>;
     getPaths: () => Promise<any>;
-    getBusinessDate: () => Promise<{ date: string; shopDayStartHour: number; ramadan24Hour: boolean }>;
+    getBusinessDate: () => Promise<{ date: string; openShiftId?: string | null; openShiftOpenedAt?: string | null; shopDayStartHour: number; ramadan24Hour: boolean; is24HourMode?: boolean }>;
   };
   printer: {
     getPrinters: () => Promise<{ success: boolean; printers: Array<{ name: string; displayName: string; description?: string; status?: number; isDefault?: boolean }>; error?: string }>;

@@ -5,6 +5,7 @@ import { createOutboxEntry } from '../sync/outboxHelper';
 import { addCashOut } from '../database/cashRegister';
 import { requireCurrentUser, requireManagerApproval } from './auth.ipc';
 import { logAudit } from '../audit/auditLog';
+import { getActiveBusinessDate, getOpenShift } from '../database/businessDay';
 
 type RefundMethod = 'CASH' | 'CREDIT_ADJUSTMENT';
 
@@ -99,6 +100,7 @@ export function registerReturnsIPC() {
         const now = new Date().toISOString();
         const approver = requireManagerApproval((input as any).managerPin, 'processing a refund');
         const cashierId = requireCurrentUser().id;
+        const actionShift = getOpenShift();
         const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(input.saleId) as any;
         if (!sale) throw new Error('Original sale was not found');
         if (sale.status === 'REFUNDED') throw new Error('This bill is already fully refunded');
@@ -206,7 +208,7 @@ export function registerReturnsIPC() {
         if (refundAmount <= 0) throw new Error('Refund amount must be greater than zero');
 
         if (input.refundMethod === 'CASH') {
-          addCashOut(refundAmount, now.split('T')[0]);
+          addCashOut(refundAmount, actionShift?.shift_date || getActiveBusinessDate(new Date(now)), actionShift?.id || null);
         }
 
         if (input.refundMethod === 'CREDIT_ADJUSTMENT') {
@@ -256,14 +258,15 @@ export function registerReturnsIPC() {
 
         db.prepare(`
           INSERT INTO returns (
-            id, return_number, sale_id, bill_number, customer_id, cashier_id,
+            id, return_number, sale_id, shift_id, bill_number, customer_id, cashier_id,
             return_date, refund_method, refund_amount, reason, restock_items,
             status, created_at, synced
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, 0)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, 0)
         `).run(
           returnId,
           returnNumber,
           sale.id,
+          actionShift?.id || sale.shift_id || null,
           sale.bill_number,
           sale.customer_id || null,
           cashierId,
@@ -279,6 +282,7 @@ export function registerReturnsIPC() {
           id: returnId,
           return_number: returnNumber,
           sale_id: sale.id,
+          shift_id: actionShift?.id || sale.shift_id || null,
           bill_number: sale.bill_number,
           customer_id: sale.customer_id || null,
           cashier_id: cashierId,
