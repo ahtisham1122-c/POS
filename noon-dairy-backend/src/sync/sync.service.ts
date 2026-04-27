@@ -6,6 +6,13 @@ import { Prisma } from '@prisma/client';
 export class SyncService {
   constructor(private prisma: PrismaService) {}
 
+  private modelFields = new Map(
+    Prisma.dmmf.datamodel.models.map((model) => [
+      model.name.charAt(0).toLowerCase() + model.name.slice(1),
+      new Set(model.fields.map((field) => field.name))
+    ])
+  );
+
   private tableMap: Record<string, string> = {
     users: 'user',
     products: 'product',
@@ -62,11 +69,75 @@ export class SyncService {
     return model;
   }
 
+  private normalizeEnumValues(modelName: string, data: Record<string, any>) {
+    if (modelName === 'sale') {
+      if (data.discountType === 'RS') data.discountType = 'FLAT';
+      if (data.discountType === 'PERCENT') data.discountType = 'PERCENTAGE';
+    }
+
+    if (modelName === 'saleItem') {
+      if (data.discountType === 'RS') data.discountType = 'FLAT';
+      if (data.discountType === 'PERCENT') data.discountType = 'PERCENTAGE';
+    }
+
+    if (modelName === 'product') {
+      const category = String(data.category || '').trim().toUpperCase();
+      const byName: Record<string, string> = {
+        DAIRY: 'MILK',
+        MILK: 'MILK',
+        YOGURT: 'YOGURT',
+        BAKERY: 'OTHER',
+        BUTTER: 'BUTTER_CREAM',
+        BUTTER_CREAM: 'BUTTER_CREAM',
+        DRINKS: 'DRINKS',
+        CHEESE: 'CHEESE',
+        SWEETS: 'SWEETS',
+        OTHER: 'OTHER'
+      };
+      data.category = byName[category] || 'OTHER';
+    }
+
+    if (modelName === 'expense') {
+      const category = String(data.category || '').trim().toUpperCase().replace(/\s+/g, '_');
+      const allowed = new Set([
+        'MILK_PURCHASE',
+        'SALARY',
+        'ELECTRICITY',
+        'FUEL',
+        'PACKAGING',
+        'RENT',
+        'MAINTENANCE',
+        'CLEANING',
+        'MISCELLANEOUS'
+      ]);
+      data.category = allowed.has(category) ? category : 'MISCELLANEOUS';
+    }
+
+    return data;
+  }
+
+  private sanitizePayload(modelName: string, payload: Record<string, any>) {
+    const allowedFields = this.modelFields.get(modelName);
+    if (!allowedFields) return payload;
+
+    const data = { ...payload };
+    delete data.synced;
+
+    for (const key of Object.keys(data)) {
+      if (!allowedFields.has(key)) {
+        delete data[key];
+      }
+    }
+
+    return this.normalizeEnumValues(modelName, data);
+  }
+
   async processOperation(op: any, tx?: Prisma.TransactionClient) {
     const { table, operation, recordId, payload, deviceId, timestamp } = op;
     const db = tx || this.prisma;
+    const modelName = this.tableMap[table] || table;
     const model = this.getModel(db, table);
-    const normalizedPayload = this.toCamelCaseObject(payload || {});
+    const normalizedPayload = this.sanitizePayload(modelName, this.toCamelCaseObject(payload || {}));
     if (recordId && !normalizedPayload.id) normalizedPayload.id = recordId;
 
     try {

@@ -95,6 +95,7 @@ model Customer {
 model Sale {
   id             String        @id @default(cuid())
   transactionId  String?       @unique
+  shiftId        String?
   billNumber     String        @unique
   saleDate       DateTime      @default(now())
   customerId     String?
@@ -123,9 +124,11 @@ model Sale {
   splitPayments  SplitPayment[]
   cashier        User          @relation(fields: [cashierId], references: [id])
   customer       Customer?     @relation(fields: [customerId], references: [id])
+  shift          Shift?        @relation(fields: [shiftId], references: [id])
   items          SaleItem[]
 
   @@index([saleDate])
+  @@index([shiftId])
   @@index([customerId])
   @@index([billNumber])
   @@index([paymentType])
@@ -224,6 +227,7 @@ model StockMovement {
 model Expense {
   id          String          @id @default(cuid())
   code        String          @unique
+  shiftId     String?
   expenseDate DateTime        @db.Date
   category    ExpenseCategory
   description String
@@ -231,14 +235,17 @@ model Expense {
   createdById String
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
+  shift       Shift?          @relation(fields: [shiftId], references: [id])
 
+  @@index([shiftId])
   @@index([expenseDate])
   @@index([category])
 }
 
 model CashRegister {
   id             String    @id @default(cuid())
-  date           DateTime  @unique @db.Date
+  shiftId        String?   @unique
+  date           DateTime  @db.Date
   openingBalance Decimal   @default(0) @db.Decimal(10, 2)
   cashIn         Decimal   @default(0) @db.Decimal(10, 2)
   cashOut        Decimal   @default(0) @db.Decimal(10, 2)
@@ -247,7 +254,9 @@ model CashRegister {
   closedById     String?
   closedAt       DateTime?
   createdAt      DateTime  @default(now())
+  shift          Shift?    @relation(fields: [shiftId], references: [id])
 
+  @@index([shiftId])
   @@index([date])
 }
 
@@ -288,6 +297,7 @@ model Return {
   id           String   @id
   returnNumber String   @unique
   saleId       String
+  shiftId      String?
   billNumber   String
   customerId   String?
   cashierId    String
@@ -298,7 +308,9 @@ model Return {
   restockItems Boolean  @default(true)
   status       String   @default("COMPLETED")
   createdAt    DateTime @default(now())
+  shift        Shift?   @relation(fields: [shiftId], references: [id])
 
+  @@index([shiftId])
   @@index([saleId])
   @@index([returnDate])
   @@index([returnNumber])
@@ -307,6 +319,7 @@ model Return {
 model SaleVoid {
   id             String   @id
   saleId         String   @unique
+  shiftId        String?
   billNumber     String
   voidedById     String
   voidedAt       DateTime
@@ -315,7 +328,9 @@ model SaleVoid {
   creditReversed Decimal  @default(0) @db.Decimal(10, 2)
   restockedItems Boolean  @default(true)
   createdAt      DateTime @default(now())
+  shift          Shift?   @relation(fields: [shiftId], references: [id])
 
+  @@index([shiftId])
   @@index([saleId])
   @@index([voidedAt])
   @@index([billNumber])
@@ -445,6 +460,11 @@ model Shift {
   receiptAuditSessionId String?
   status                String   @default("OPEN")
   notes                 String?
+  sales                 Sale[]
+  returns               Return[]
+  saleVoids             SaleVoid[]
+  expenses              Expense[]
+  cashRegisters         CashRegister[]
 
   @@index([shiftDate])
   @@index([status])

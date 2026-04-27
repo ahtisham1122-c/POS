@@ -1,4 +1,4 @@
-import { Module, Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Module, Controller, Get, Post, Body, UseGuards, Injectable, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -8,19 +8,30 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PaymentType, DiscountType, SaleStatus } from '@prisma/client';
 import { IsString, IsEnum, IsNumber, IsOptional, ValidateNested, IsArray } from 'class-validator';
 import { Type } from 'class-transformer';
+import { randomUUID } from 'crypto';
 
 export class SaleItemDto {
   @IsString() productId!: string;
   @IsNumber() quantity!: number;
   @IsNumber() unitPrice!: number;
 }
+
+export class SplitPaymentDto {
+  @IsString() method!: string;
+  @IsNumber() amount!: number;
+}
+
 export class CreateSaleDto {
+  @IsString() transactionId!: string;
+  @IsString() @IsOptional() shiftId?: string;
   @IsString() @IsOptional() customerId?: string;
   @IsEnum(PaymentType) paymentType!: PaymentType;
   @IsNumber() amountPaid!: number;
+  @IsNumber() @IsOptional() cashTendered?: number;
   @IsEnum(DiscountType) @IsOptional() discountType?: DiscountType;
   @IsNumber() @IsOptional() discountValue?: number;
   @IsString() @IsOptional() notes?: string;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => SplitPaymentDto) @IsOptional() splitPayments?: SplitPaymentDto[];
   @IsArray() @ValidateNested({ each: true }) @Type(() => SaleItemDto) items!: SaleItemDto[];
 }
 
@@ -30,11 +41,23 @@ export class SalesService {
 
   async createSale(dto: CreateSaleDto, user: any) {
     if (dto.items.length === 0) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Sale must have items' });
+    if (!dto.transactionId) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Transaction ID is required before saving a sale' });
     if ((dto.paymentType === 'CREDIT' || dto.paymentType === 'PARTIAL') && !dto.customerId) {
       throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Customer ID required for credit/partial' });
     }
+    const existingSale = await this.prisma.sale.findUnique({ where: { transactionId: dto.transactionId } });
+    if (existingSale) {
+      throw new ConflictException({ error: 'DUPLICATE_SALE', message: 'This sale was already saved. The second save was blocked.' });
+    }
 
     return this.prisma.$transaction(async tx => {
+      const shift = dto.shiftId
+        ? await tx.shift.findUnique({ where: { id: dto.shiftId } })
+        : await tx.shift.findFirst({ where: { status: 'OPEN' }, orderBy: { openedAt: 'desc' } });
+      if (!shift) {
+        throw new BadRequestException({ error: 'NO_OPEN_SHIFT', message: 'Open a shift before completing a sale.' });
+      }
+
       // 1. Lock and validate products
       const pIds = dto.items.map(i => i.productId);
       const prds = await tx.product.findMany({ where: { id: { in: pIds } }, select: { id: true, stock: true, name: true, unit: true, costPrice: true }});
@@ -44,18 +67,37 @@ export class SalesService {
       for (const item of dto.items) {
         const p = pMap.get(item.productId);
         if (!p) throw new NotFoundException({ error: 'PRODUCT_NOT_FOUND', message: `Product ${item.productId} not found` });
+        if (item.quantity <= 0) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Quantity must be greater than zero' });
+        if (item.unitPrice < 0) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Price cannot be negative' });
         if (Number(p.stock) < item.quantity) throw new BadRequestException({ error: 'INSUFFICIENT_STOCK', message: `Not enough stock for ${p.name}` });
         subtotal += item.quantity * item.unitPrice;
       }
 
       // 2. Compute totals
       let discountAmount = 0;
-      if (dto.discountType === 'FLAT' && dto.discountValue) discountAmount = dto.discountValue;
-      if (dto.discountType === 'PERCENTAGE' && dto.discountValue) discountAmount = subtotal * (dto.discountValue / 100);
+      const discountValue = dto.discountValue || 0;
+      if (discountValue < 0) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Discount cannot be negative' });
+      if (dto.discountType === 'FLAT') discountAmount = discountValue;
+      if (dto.discountType === 'PERCENTAGE') {
+        if (discountValue > 100) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Percentage discount cannot be more than 100%' });
+        discountAmount = subtotal * (discountValue / 100);
+      }
+      if (discountAmount > subtotal) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Discount cannot be more than the bill total' });
       
       const grandTotal = subtotal - discountAmount;
-      const actualPaid = dto.paymentType === 'CREDIT' ? 0 : dto.amountPaid;
-      const balanceDue = dto.paymentType === 'CASH' ? 0 : grandTotal - actualPaid;
+      const splitPayments = dto.splitPayments || [];
+      const cashSplit = splitPayments.find(p => p.method.toUpperCase() === 'CASH');
+      const onlineSplit = splitPayments.find(p => ['ONLINE', 'BANK', 'EASYPAISA', 'JAZZCASH'].includes(p.method.toUpperCase()));
+      const cashAmount = cashSplit?.amount || (dto.paymentType === 'CASH' ? grandTotal : 0);
+      const onlineAmount = onlineSplit?.amount || (dto.paymentType === 'ONLINE' ? grandTotal : 0);
+      const actualPaid = dto.paymentType === 'CREDIT' ? 0 : (splitPayments.length ? splitPayments.reduce((sum, p) => sum + p.amount, 0) : dto.amountPaid);
+      const cashTendered = dto.cashTendered ?? cashAmount;
+      if (cashAmount < 0 || onlineAmount < 0 || actualPaid < 0) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Payment amounts cannot be negative' });
+      if (cashTendered < cashAmount) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Cash tendered cannot be less than cash amount' });
+      if (dto.paymentType !== 'CREDIT' && actualPaid < grandTotal) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Paid amount cannot be less than bill total' });
+      if (actualPaid > grandTotal) throw new BadRequestException({ error: 'VALIDATION_ERROR', message: 'Payment amount cannot be more than bill total. Use cash tendered for change.' });
+      const changeReturned = Math.max(cashTendered - cashAmount, 0);
+      const balanceDue = dto.paymentType === 'CREDIT' ? grandTotal : Math.max(grandTotal - actualPaid, 0);
 
       // 3. Bill lock & gen
       const [lastSale] = await tx.$queryRaw<any[]>`SELECT "billNumber" FROM "Sale" ORDER BY "billNumber" DESC LIMIT 1 FOR UPDATE`;
@@ -66,9 +108,10 @@ export class SalesService {
       // 4 & 5. Create Sale
       const sale = await tx.sale.create({
         data: {
+          transactionId: dto.transactionId, shiftId: shift.id,
           billNumber, customerId: dto.customerId, cashierId: user.id, paymentType: dto.paymentType,
           subtotal, discountType: dto.discountType || 'NONE', discountValue: dto.discountValue || 0,
-          discountAmount, grandTotal, amountPaid: actualPaid, balanceDue, status: 'COMPLETED', notes: dto.notes,
+          discountAmount, grandTotal, amountPaid: actualPaid, cashTendered, changeReturned, balanceDue, status: 'COMPLETED', notes: dto.notes,
           items: {
             create: dto.items.map(i => {
               const p = pMap.get(i.productId)!;
@@ -108,15 +151,35 @@ export class SalesService {
         });
       }
 
-      // 8. Payment Rec
-      if (actualPaid > 0) {
-        const pmt = await tx.payment.create({
-          data: { customerId: dto.customerId || 'WALK_IN', saleId: sale.id, amount: actualPaid, collectedById: user.id }
+      // 8. Payment breakdown and cash register
+      const paymentBreakdown = splitPayments.length
+        ? splitPayments
+        : [
+            ...(cashAmount > 0 ? [{ method: 'CASH', amount: cashAmount }] : []),
+            ...(onlineAmount > 0 ? [{ method: 'ONLINE', amount: onlineAmount }] : []),
+            ...(dto.paymentType === 'CREDIT' && grandTotal > 0 ? [{ method: 'CREDIT', amount: grandTotal }] : [])
+          ];
+
+      if (paymentBreakdown.length > 0) {
+        await tx.splitPayment.createMany({
+          data: paymentBreakdown.map(payment => ({
+            id: randomUUID(),
+            saleId: sale.id,
+            method: payment.method.toUpperCase(),
+            amount: payment.amount,
+            customerId: dto.customerId,
+            receivedById: user.id
+          }))
         });
-        
-        // Update register
-        const cr = await tx.cashRegister.findFirst({ where: { isClosedForDay: false }, orderBy: { date: 'desc' } });
-        if (cr) await tx.cashRegister.update({ where: { id: cr.id }, data: { cashIn: { increment: actualPaid } } });
+      }
+
+      if (cashAmount > 0) {
+        const cr = await tx.cashRegister.upsert({
+          where: { shiftId: shift.id },
+          update: {},
+          create: { shiftId: shift.id, date: shift.shiftDate, openingBalance: shift.openingCash }
+        });
+        await tx.cashRegister.update({ where: { id: cr.id }, data: { cashIn: { increment: cashAmount } } });
       }
 
       // 9. Activity
