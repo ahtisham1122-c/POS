@@ -1,0 +1,85 @@
+# Noon Dairy POS - Phase 1 Structure
+
+## Backend (`noon-dairy-backend`)
+
+```text
+noon-dairy-backend/
+  prisma/
+    schema.prisma
+    seed.ts
+  src/
+    app.module.ts
+    main.ts
+    auth/
+      auth.controller.ts
+      auth.module.ts
+      auth.service.ts
+      jwt.strategy.ts
+      dto/
+        login.dto.ts
+        refresh.dto.ts
+        logout.dto.ts
+    users/
+      users.controller.ts
+      users.module.ts
+      users.service.ts
+      dto/
+        create-user.dto.ts
+        update-user.dto.ts
+        update-password.dto.ts
+    roles/
+      roles.controller.ts
+      roles.module.ts
+      roles.service.ts
+    common/
+      decorators/
+      guards/
+      filters/
+      interceptors/
+    prisma/
+      prisma.module.ts
+      prisma.service.ts
+```
+
+## Frontend (`src`)
+
+```text
+src/
+  app/
+    layout.tsx
+    page.tsx
+    globals.css
+    providers.tsx
+    (auth)/
+      login/page.tsx
+    (dashboard)/
+      layout.tsx
+      dashboard/page.tsx
+      pos/page.tsx
+      customers/page.tsx
+      inventory/page.tsx
+      expenses/page.tsx
+      reports/page.tsx
+      cash-register/page.tsx
+      settings/page.tsx
+  components/
+    layout/
+      Sidebar.tsx
+      Topbar.tsx
+    ui/
+      button.tsx
+      card.tsx
+      dialog.tsx
+      input.tsx
+      table.tsx
+      tabs.tsx
+      ...
+  store/
+    authStore.ts
+    cartStore.ts
+  services/
+    api.ts
+  lib/
+    axios.ts
+    utils.ts
+```

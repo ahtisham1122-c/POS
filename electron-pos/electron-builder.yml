@@ -1,0 +1,12 @@
+appId: com.noondairy.pos
+productName: Noon Dairy POS
+files:
+  - dist-renderer/**/*
+  - dist-electron/**/*
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  runAfterFinish: true

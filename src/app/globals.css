@@ -1,0 +1,258 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap");
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+
+  --color-primary: #0f4c35;
+  --color-primary-light: #1a6b4a;
+  --color-primary-glow: rgba(15, 76, 53, 0.4);
+  --color-accent: #d4a017;
+  --color-accent-light: #f0b429;
+  --color-bg: #0d1117;
+  --color-surface: #161b22;
+  --color-surface-2: #21262d;
+  --color-surface-3: #30363d;
+  --color-border: #30363d;
+  --color-text: #e6edf3;
+  --color-text-secondary: #8b949e;
+  --color-success: #2ea043;
+  --color-danger: #f85149;
+  --color-warning: #d29922;
+  --color-info: #388bfd;
+}
+
+.light,
+[data-theme="light"] {
+  color-scheme: light;
+  --color-primary: #0f4c35;
+  --color-primary-light: #1a6b4a;
+  --color-primary-glow: rgba(15, 76, 53, 0.15);
+  --color-accent: #b8860b;
+  --color-accent-light: #d4a017;
+  --color-bg: #f6f8fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #f3f4f6;
+  --color-surface-3: #e5e7eb;
+  --color-border: #d0d7de;
+  --color-text: #111827;
+  --color-text-secondary: #4b5563;
+  --color-success: #1f883d;
+  --color-danger: #cf222e;
+  --color-warning: #9a6700;
+  --color-info: #0969da;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  border-color: var(--color-border);
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+.mono {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.surface-card {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 95%, #fff 5%) 0%, var(--color-surface) 100%);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.22);
+}
+
+.surface-panel {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+
+.interactive {
+  transition: all 200ms ease;
+}
+
+.interactive:hover {
+  transform: translateY(-2px);
+}
+
+.interactive:active {
+  transform: scale(0.97);
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid var(--color-primary-light);
+  outline-offset: 2px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  animation: pulseDot 1.4s ease-in-out infinite;
+}
+
+.status-dot.live {
+  background: var(--color-success);
+}
+
+.status-dot.syncing {
+  background: var(--color-warning);
+}
+
+.status-dot.offline {
+  background: var(--color-danger);
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--color-surface-2) 0%, var(--color-surface-3) 50%, var(--color-surface-2) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s linear infinite;
+  border-radius: 8px;
+}
+
+.hide-scrollbar {
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.page-enter {
+  animation: fadeIn 200ms ease-out;
+}
+
+.modal-enter {
+  animation: modalIn 200ms ease-out;
+}
+
+.toast-enter {
+  animation: toastIn 200ms ease-out;
+}
+
+.toast-exit {
+  animation: toastOut 200ms ease-in;
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.95;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 0.55;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes toastOut {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  .print-target,
+  .print-target * {
+    visibility: visible !important;
+  }
+
+  .print-target {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    margin: 0;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+  }
+
+  .receipt-print {
+    width: 80mm;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .statement-print {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 16mm;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}

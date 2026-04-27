@@ -1,0 +1,114 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-surface-1 text-text-primary font-sans antialiased;
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  /* Custom dark scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-surface-3;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-4 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-surface-4/80;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface-2 rounded-lg border border-surface-4 shadow-card;
+  }
+  .card-hover {
+    @apply card hover:border-primary/50 hover:shadow-glow transition-all duration-200;
+  }
+  
+  .btn-primary {
+    @apply bg-primary hover:bg-primary-light text-white font-medium rounded-md px-4 py-2.5 transition-all duration-150 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply bg-surface-3 hover:bg-surface-4 text-text-primary border border-surface-4 rounded-md px-4 py-2.5 transition-all duration-150 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-danger {
+    @apply bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/30 rounded-md px-4 py-2.5 transition-all duration-150 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .input {
+    @apply bg-surface-3 border border-surface-4 text-text-primary rounded-md px-3 py-2.5 focus:border-primary focus:ring-1 focus:ring-primary outline-none w-full disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-success {
+    @apply badge bg-success/15 text-success;
+  }
+  .badge-danger {
+    @apply badge bg-danger/15 text-danger;
+  }
+  .badge-warning {
+    @apply badge bg-warning/15 text-warning;
+  }
+  .badge-info {
+    @apply badge bg-info/15 text-info;
+  }
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-receipt, .print-receipt * {
+    visibility: visible;
+  }
+  .print-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  .print-statement, .print-statement * {
+    visibility: visible;
+  }
+  .print-statement {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  .print-target, .print-target * {
+    visibility: visible;
+  }
+  .print-target {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    min-height: 100vh;
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .supplier-statement {
+    font-family: Arial, sans-serif;
+    padding: 16mm !important;
+  }
+}
