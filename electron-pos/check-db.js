@@ -10,8 +10,8 @@ function updateDb(path) {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
     `);
 
-    stmt.run('APP_API_URL', 'https://mngkltbsnpyouaerykzo.supabase.co/rest/v1', now);
-    stmt.run('SYNC_DEVICE_SECRET', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1uZ2tsdGJzbnB5b3VhZXJ5a3pvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyNzAxOTIsImV4cCI6MjA5Mjg0NjE5Mn0.5Ms9js_weCom4vY-SHhqQWlynb-TSmaOJ1WB9ZYI5Aw', now);
+    stmt.run('APP_API_URL', process.env.APP_API_URL || 'http://localhost:3001/api', now);
+    stmt.run('SYNC_DEVICE_SECRET', process.env.SYNC_DEVICE_SECRET || 'noon-dairy-local-sync-secret-change-me', now);
 
     console.log('Successfully updated:', path);
     db.close();

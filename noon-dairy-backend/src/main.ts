@@ -17,6 +17,7 @@ function requireStrongSecret(name: string, minLength = 24) {
 async function bootstrap() {
   requireStrongSecret('JWT_SECRET');
   requireStrongSecret('JWT_REFRESH_SECRET');
+  requireStrongSecret('SYNC_DEVICE_SECRET');
 
   const app = await NestFactory.create(AppModule);
 

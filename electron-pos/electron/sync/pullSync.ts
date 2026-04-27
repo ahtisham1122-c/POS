@@ -17,62 +17,25 @@ export async function pullSync(mainWindow?: BrowserWindow) {
     const lastPullRecord = db.prepare(`SELECT value FROM settings WHERE key = 'last_pull_timestamp'`).get() as any;
     const since = lastPullRecord ? lastPullRecord.value : new Date(0).toISOString();
 
-    const isSupabase = apiUrl.includes('supabase.co');
-    const supabaseKeySetting = db.prepare("SELECT value FROM settings WHERE key = 'SYNC_DEVICE_SECRET'").get() as any;
-    const actualSupabaseKey = supabaseKeySetting?.value || process.env.SYNC_DEVICE_SECRET;
-
     let products: any[] = [];
     let customers: any[] = [];
     let dailyRates: any[] = [];
     let settings: any[] = [];
 
-    if (isSupabase && actualSupabaseKey) {
-      let baseRestUrl = apiUrl;
-      if (!baseRestUrl.includes('/rest/v1')) {
-        baseRestUrl = `${baseRestUrl.replace(/\/$/, '')}/rest/v1`;
-      }
-
-      const headers = {
-        'apikey': actualSupabaseKey,
-        'Authorization': `Bearer ${actualSupabaseKey}`
-      };
-
-      try {
-        const prodRes = await fetchWithTimeout(`${baseRestUrl}/products?updated_at=gt.${since}`, { headers }, 15000);
-        if (prodRes.ok) products = (await prodRes.json()) as any[];
-      } catch (e) { console.error('Supabase pull products failed:', e); }
-
-      try {
-        const custRes = await fetchWithTimeout(`${baseRestUrl}/customers?updated_at=gt.${since}`, { headers }, 15000);
-        if (custRes.ok) customers = (await custRes.json()) as any[];
-      } catch (e) { console.error('Supabase pull customers failed:', e); }
-
-      try {
-        const rateRes = await fetchWithTimeout(`${baseRestUrl}/daily_rates`, { headers }, 15000);
-        if (rateRes.ok) dailyRates = (await rateRes.json()) as any[];
-      } catch (e) { console.error('Supabase pull daily rates failed:', e); }
-
-      try {
-        const setRes = await fetchWithTimeout(`${baseRestUrl}/settings?updated_at=gt.${since}`, { headers }, 15000);
-        if (setRes.ok) settings = (await setRes.json()) as any[];
-      } catch (e) { console.error('Supabase pull settings failed:', e); }
-
-    } else {
-      const response = await fetchWithTimeout(`${apiUrl}/sync/pull?deviceId=${deviceId}&since=${since}`, {
-        headers: syncHeaders
-      }, 15000);
-      
-      if (!response.ok) {
-        throw new Error(`Pull failed with standard status ${response.status}`);
-      }
-
-      const parsed: any = await response.json();
-      const payload = parsed?.success ? parsed.data : parsed;
-      products = payload?.products || [];
-      customers = payload?.customers || [];
-      dailyRates = payload?.dailyRates || [];
-      settings = payload?.settings || [];
+    const response = await fetchWithTimeout(`${apiUrl}/sync/pull?deviceId=${deviceId}&since=${since}`, {
+      headers: syncHeaders
+    }, 15000);
+    
+    if (!response.ok) {
+      throw new Error(`Pull failed with status ${response.status}`);
     }
+
+    const parsed: any = await response.json();
+    const payload = parsed?.success ? parsed.data : parsed;
+    products = payload?.products || [];
+    customers = payload?.customers || [];
+    dailyRates = payload?.dailyRates || [];
+    settings = payload?.settings || [];
     
     let hasUpdates = false;
 

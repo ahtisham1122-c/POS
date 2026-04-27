@@ -494,8 +494,20 @@ export function initializeDatabase() {
   ensureSetting.run('shopDayStartHour', '5', nowForSettings);
   ensureSetting.run('ramadan24Hour', 'false', nowForSettings);
   ensureSetting.run('24_hour_mode', 'false', nowForSettings);
-  ensureSetting.run('APP_API_URL', 'https://mngkltbsnpyouaerykzo.supabase.co/rest/v1', nowForSettings);
-  ensureSetting.run('SYNC_DEVICE_SECRET', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1uZ2tsdGJzbnB5b3VhZXJ5a3pvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyNzAxOTIsImV4cCI6MjA5Mjg0NjE5Mn0.5Ms9js_weCom4vY-SHhqQWlynb-TSmaOJ1WB9ZYI5Aw', nowForSettings);
+  const defaultApiUrl = process.env.APP_API_URL || 'http://localhost:3001/api';
+  const defaultSyncSecret = process.env.SYNC_DEVICE_SECRET || 'noon-dairy-local-sync-secret-change-me';
+  ensureSetting.run('APP_API_URL', defaultApiUrl, nowForSettings);
+  ensureSetting.run('SYNC_DEVICE_SECRET', defaultSyncSecret, nowForSettings);
+
+  // Older builds accidentally seeded a Supabase REST URL and anon key here.
+  // The desktop app should sync through the NestJS backend instead.
+  const apiUrlSetting = db.prepare("SELECT value FROM settings WHERE key = 'APP_API_URL'").get() as any;
+  if (String(apiUrlSetting?.value || '').includes('supabase.co/rest/v1')) {
+    db.prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'APP_API_URL'")
+      .run(defaultApiUrl, nowForSettings);
+    db.prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'SYNC_DEVICE_SECRET'")
+      .run(defaultSyncSecret, nowForSettings);
+  }
 
   // Seed default categories/products
   const productCount = (db.prepare('SELECT COUNT(*) as count FROM products').get() as any).count;

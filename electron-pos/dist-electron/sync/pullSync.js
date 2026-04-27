@@ -20,69 +20,22 @@ async function pullSync(mainWindow) {
         // Get last pull timestamp
         const lastPullRecord = db_1.default.prepare(`SELECT value FROM settings WHERE key = 'last_pull_timestamp'`).get();
         const since = lastPullRecord ? lastPullRecord.value : new Date(0).toISOString();
-        const isSupabase = apiUrl.includes('supabase.co');
-        const supabaseKeySetting = db_1.default.prepare("SELECT value FROM settings WHERE key = 'SYNC_DEVICE_SECRET'").get();
-        const actualSupabaseKey = supabaseKeySetting?.value || process.env.SYNC_DEVICE_SECRET;
         let products = [];
         let customers = [];
         let dailyRates = [];
         let settings = [];
-        if (isSupabase && actualSupabaseKey) {
-            let baseRestUrl = apiUrl;
-            if (!baseRestUrl.includes('/rest/v1')) {
-                baseRestUrl = `${baseRestUrl.replace(/\/$/, '')}/rest/v1`;
-            }
-            const headers = {
-                'apikey': actualSupabaseKey,
-                'Authorization': `Bearer ${actualSupabaseKey}`
-            };
-            try {
-                const prodRes = await (0, apiConfig_1.fetchWithTimeout)(`${baseRestUrl}/products?updated_at=gt.${since}`, { headers }, 15000);
-                if (prodRes.ok)
-                    products = (await prodRes.json());
-            }
-            catch (e) {
-                console.error('Supabase pull products failed:', e);
-            }
-            try {
-                const custRes = await (0, apiConfig_1.fetchWithTimeout)(`${baseRestUrl}/customers?updated_at=gt.${since}`, { headers }, 15000);
-                if (custRes.ok)
-                    customers = (await custRes.json());
-            }
-            catch (e) {
-                console.error('Supabase pull customers failed:', e);
-            }
-            try {
-                const rateRes = await (0, apiConfig_1.fetchWithTimeout)(`${baseRestUrl}/daily_rates`, { headers }, 15000);
-                if (rateRes.ok)
-                    dailyRates = (await rateRes.json());
-            }
-            catch (e) {
-                console.error('Supabase pull daily rates failed:', e);
-            }
-            try {
-                const setRes = await (0, apiConfig_1.fetchWithTimeout)(`${baseRestUrl}/settings?updated_at=gt.${since}`, { headers }, 15000);
-                if (setRes.ok)
-                    settings = (await setRes.json());
-            }
-            catch (e) {
-                console.error('Supabase pull settings failed:', e);
-            }
+        const response = await (0, apiConfig_1.fetchWithTimeout)(`${apiUrl}/sync/pull?deviceId=${deviceId}&since=${since}`, {
+            headers: syncHeaders
+        }, 15000);
+        if (!response.ok) {
+            throw new Error(`Pull failed with status ${response.status}`);
         }
-        else {
-            const response = await (0, apiConfig_1.fetchWithTimeout)(`${apiUrl}/sync/pull?deviceId=${deviceId}&since=${since}`, {
-                headers: syncHeaders
-            }, 15000);
-            if (!response.ok) {
-                throw new Error(`Pull failed with standard status ${response.status}`);
-            }
-            const parsed = await response.json();
-            const payload = parsed?.success ? parsed.data : parsed;
-            products = payload?.products || [];
-            customers = payload?.customers || [];
-            dailyRates = payload?.dailyRates || [];
-            settings = payload?.settings || [];
-        }
+        const parsed = await response.json();
+        const payload = parsed?.success ? parsed.data : parsed;
+        products = payload?.products || [];
+        customers = payload?.customers || [];
+        dailyRates = payload?.dailyRates || [];
+        settings = payload?.settings || [];
         let hasUpdates = false;
         db_1.default.transaction(() => {
             // 1. Upsert Products

@@ -78,60 +78,24 @@ export class SyncEngine {
         return;
       }
 
-      const isSupabase = apiUrl.includes('supabase.co');
-      const supabaseKeySetting = db.prepare("SELECT value FROM settings WHERE key = 'SYNC_DEVICE_SECRET'").get() as any;
-      const actualSupabaseKey = supabaseKeySetting?.value || process.env.SYNC_DEVICE_SECRET;
-
       for (const row of readyRows) {
         try {
-          let response;
-          if (isSupabase && actualSupabaseKey) {
-            let baseRestUrl = apiUrl;
-            if (!baseRestUrl.includes('/rest/v1')) {
-              baseRestUrl = `${baseRestUrl.replace(/\/$/, '')}/rest/v1`;
-            }
-
-            const payloadObj = JSON.parse(row.payload);
-            
-            if (row.operation === 'DELETE') {
-              response = await fetchWithTimeout(`${baseRestUrl}/${row.table_name}?id=eq.${row.record_id}`, {
-                method: 'DELETE',
-                headers: {
-                  'apikey': actualSupabaseKey,
-                  'Authorization': `Bearer ${actualSupabaseKey}`
-                }
-              }, 15000);
-            } else {
-              // Upsert logic for INSERT/UPDATE
-              response = await fetchWithTimeout(`${baseRestUrl}/${row.table_name}`, {
-                method: 'POST',
-                headers: {
-                  'apikey': actualSupabaseKey,
-                  'Authorization': `Bearer ${actualSupabaseKey}`,
-                  'Content-Type': 'application/json',
-                  'Prefer': 'resolution=merge-duplicates'
-                },
-                body: JSON.stringify(payloadObj)
-              }, 15000);
-            }
-          } else {
-            response = await fetchWithTimeout(`${apiUrl}/sync/ingest`, {
-              method: 'POST',
-              headers: syncHeaders,
-              body: JSON.stringify({
-                table: row.table_name,
-                operation: row.operation,
-                recordId: row.record_id,
-                payload: JSON.parse(row.payload),
-                timestamp: row.created_at,
-                device: {
-                  id: deviceInfo.deviceId,
-                  name: deviceInfo.deviceName,
-                  terminalNumber: deviceInfo.terminalNumber
-                }
-              })
-            }, 15000);
-          }
+          const response = await fetchWithTimeout(`${apiUrl}/sync/ingest`, {
+            method: 'POST',
+            headers: syncHeaders,
+            body: JSON.stringify({
+              table: row.table_name,
+              operation: row.operation,
+              recordId: row.record_id,
+              payload: JSON.parse(row.payload),
+              timestamp: row.created_at,
+              device: {
+                id: deviceInfo.deviceId,
+                name: deviceInfo.deviceName,
+                terminalNumber: deviceInfo.terminalNumber
+              }
+            })
+          }, 15000);
 
           if (response.ok) {
             db.prepare(`UPDATE sync_outbox SET status = 'synced', error_message = NULL WHERE id = ?`).run(row.id);
