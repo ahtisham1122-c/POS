@@ -97,6 +97,7 @@ export interface ElectronAPI {
   dailyRates: {
     getToday: () => Promise<any>;
     update: (data: any) => Promise<any>;
+    getHistory: () => Promise<any[]>;
   };
   cashRegister: {
     getToday: () => Promise<any>;

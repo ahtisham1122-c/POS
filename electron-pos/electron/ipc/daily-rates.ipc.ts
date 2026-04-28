@@ -22,6 +22,16 @@ export function registerDailyRatesIPC() {
     return db.prepare('SELECT * FROM daily_rates ORDER BY date DESC LIMIT 1').get() || null;
   });
 
+  ipcMain.handle('dailyRates:getHistory', () => {
+    return db.prepare(`
+      SELECT dr.*, u.name as updated_by_name
+      FROM daily_rates dr
+      LEFT JOIN users u ON u.id = dr.updated_by_id
+      ORDER BY dr.date DESC
+      LIMIT 30
+    `).all();
+  });
+
   ipcMain.handle('dailyRates:update', (_event, data: any) => {
     try {
       const user = requireCurrentUser();

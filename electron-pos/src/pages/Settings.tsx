@@ -47,6 +47,11 @@ export default function Settings() {
     receipt_footer: "Thank you! Come again"
   });
 
+  const [rateHistory, setRateHistory] = useState<any[]>([]);
+  const [backups, setBackups] = useState<any[]>([]);
+  const [backupDir, setBackupDir] = useState("");
+  const [isBackingUp, setIsBackingUp] = useState(false);
+
   const [syncStatus, setSyncStatus] = useState<{
     status: string;
     pendingCount: number;
@@ -113,7 +118,61 @@ export default function Settings() {
     loadUsers();
     loadAuditLogs();
     loadSyncStatus();
+    loadRateHistory();
+    loadBackupList();
   }, []);
+
+  const loadRateHistory = async () => {
+    try {
+      const data = await window.electronAPI?.dailyRates?.getHistory();
+      setRateHistory(data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const loadBackupList = async () => {
+    try {
+      const result = await window.electronAPI?.system?.listBackups();
+      if (result?.success) {
+        setBackups(result.backups || []);
+        setBackupDir(result.backupDir || "");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleBackupNow = async () => {
+    setIsBackingUp(true);
+    try {
+      const result = await window.electronAPI?.system?.backup();
+      if (result?.success) {
+        setBackups(result.backups || []);
+      } else {
+        alert(result?.error || "Backup failed");
+      }
+    } catch (err) {
+      alert("Backup failed");
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  const handleRestoreFromFile = async () => {
+    const ok = window.confirm(
+      "Restore will close the app and replace the current database.\n\nA safety backup is created automatically first.\n\nContinue?"
+    );
+    if (!ok) return;
+    const result = await window.electronAPI?.system?.restore();
+    if (result?.success === false && result?.reason !== "canceled") {
+      alert(result?.error || "Restore failed");
+    }
+  };
+
+  const handleOpenBackupFolder = async () => {
+    await window.electronAPI?.system?.openBackupFolder();
+  };
 
   const loadSettings = async () => {
     try {
@@ -204,12 +263,17 @@ export default function Settings() {
         alert("Rates were not changed. Manager PIN is required.");
         return;
       }
-      await window.electronAPI?.dailyRates?.update({
+      const result = await window.electronAPI?.dailyRates?.update({
         milkRate: Number(milkRate),
         yogurtRate: Number(yogurtRate),
         updatedBy: "Admin",
         managerPin
       });
+      if (result?.success === false) {
+        alert(result?.error || "Failed to update rates");
+        return;
+      }
+      await loadRateHistory();
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -629,8 +693,12 @@ export default function Settings() {
                   />
                 </div>
                 <div className="md:col-span-2 pt-4 flex items-center justify-between">
-                  <p className="text-sm text-text-secondary">Last updated: Today 8:30 AM by Admin</p>
-                  <button 
+                  <p className="text-sm text-text-secondary">
+                    {rateHistory.length > 0
+                      ? `Last updated: ${new Date(rateHistory[0].date).toLocaleDateString("en-PK", { day: "numeric", month: "short", year: "numeric" })} by ${rateHistory[0].updated_by_name || "Unknown"}`
+                      : "No rate history found"}
+                  </p>
+                  <button
                     onClick={handleSaveRates}
                     className={cn("btn-primary text-lg h-12 px-8 flex items-center gap-2 transition-all", saved ? "bg-success hover:bg-success" : "bg-accent hover:bg-accent-light")}
                   >
@@ -651,18 +719,17 @@ export default function Settings() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-4">
-                    <tr className="hover:bg-surface-3/30">
-                      <td className="px-4 py-2">Today, 08:30 AM</td>
-                      <td className="px-4 py-2 font-mono">220</td>
-                      <td className="px-4 py-2 font-mono">180</td>
-                      <td className="px-4 py-2">Admin</td>
-                    </tr>
-                    <tr className="hover:bg-surface-3/30">
-                      <td className="px-4 py-2">Yesterday, 07:15 AM</td>
-                      <td className="px-4 py-2 font-mono">220</td>
-                      <td className="px-4 py-2 font-mono">180</td>
-                      <td className="px-4 py-2">Ali Bhai</td>
-                    </tr>
+                    {rateHistory.map(r => (
+                      <tr key={r.id} className="hover:bg-surface-3/30">
+                        <td className="px-4 py-2">{new Date(r.date).toLocaleDateString("en-PK", { day: "numeric", month: "short", year: "numeric" })}</td>
+                        <td className="px-4 py-2 font-mono">{r.milk_rate}</td>
+                        <td className="px-4 py-2 font-mono">{r.yogurt_rate}</td>
+                        <td className="px-4 py-2">{r.updated_by_name || "—"}</td>
+                      </tr>
+                    ))}
+                    {rateHistory.length === 0 && (
+                      <tr><td colSpan={4} className="px-4 py-6 text-center text-text-secondary">No rate history found.</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -905,9 +972,80 @@ export default function Settings() {
           )}
 
           {activeTab === "BACKUP" && (
-            <div className="p-6 text-center text-text-secondary mt-20">
-              <Database className="w-16 h-16 mx-auto mb-4 opacity-50" />
-              <p className="text-lg">Local Backup settings coming soon.</p>
+            <div className="p-6 space-y-6 animate-slide-in-right">
+              <div className="flex justify-between items-center border-b border-surface-4 pb-4">
+                <div>
+                  <h2 className="text-xl font-bold">Backup & Restore</h2>
+                  <p className="text-sm text-text-secondary mt-1">Create local backups of your database. Auto-backup runs nightly at 2:00 AM.</p>
+                </div>
+                <button onClick={loadBackupList} className="btn-secondary text-sm px-3 py-1.5 flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4" /> Refresh
+                </button>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-4">
+                <button
+                  onClick={handleBackupNow}
+                  disabled={isBackingUp}
+                  className="btn-primary h-14 flex items-center justify-center gap-2 text-base"
+                >
+                  <Database className={cn("w-5 h-5", isBackingUp ? "animate-pulse" : "")} />
+                  {isBackingUp ? "Backing up…" : "Backup Now"}
+                </button>
+                <button
+                  onClick={handleRestoreFromFile}
+                  className="btn-secondary h-14 flex items-center justify-center gap-2 text-base border-warning/40 text-warning hover:bg-warning/10"
+                >
+                  <RefreshCw className="w-5 h-5" />
+                  Restore from File
+                </button>
+                <button
+                  onClick={handleOpenBackupFolder}
+                  className="btn-secondary h-14 flex items-center justify-center gap-2 text-base"
+                >
+                  <Database className="w-5 h-5" />
+                  Open Backup Folder
+                </button>
+              </div>
+
+              {backupDir && (
+                <div className="rounded-lg border border-surface-4 bg-surface-3/50 px-4 py-2 text-xs text-text-secondary font-mono">
+                  Backup folder: {backupDir}
+                </div>
+              )}
+
+              <div className="rounded-xl border border-surface-4 overflow-hidden">
+                <table className="w-full text-sm text-left">
+                  <thead className="text-[10px] text-text-secondary uppercase bg-surface-3 border-b border-surface-4 tracking-wider">
+                    <tr>
+                      <th className="px-4 py-3">File</th>
+                      <th className="px-4 py-3">Size</th>
+                      <th className="px-4 py-3">Created</th>
+                      <th className="px-4 py-3">Type</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-4">
+                    {backups.map(b => (
+                      <tr key={b.fileName} className="hover:bg-surface-3/50">
+                        <td className="px-4 py-3 font-mono text-xs">{b.fileName}</td>
+                        <td className="px-4 py-3">{(b.sizeBytes / 1024).toFixed(0)} KB</td>
+                        <td className="px-4 py-3">{new Date(b.createdAt).toLocaleString()}</td>
+                        <td className="px-4 py-3">
+                          <span className={cn(
+                            "badge text-xs",
+                            b.fileName.startsWith("manual") ? "bg-primary/15 text-primary" : "bg-surface-4 text-text-secondary"
+                          )}>
+                            {b.fileName.startsWith("manual") ? "Manual" : "Auto"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {backups.length === 0 && (
+                      <tr><td colSpan={4} className="px-4 py-8 text-center text-text-secondary">No backups found. Click "Backup Now" to create the first one.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
