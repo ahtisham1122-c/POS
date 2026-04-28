@@ -22,11 +22,12 @@ Use this file to continue development in a new Codex/Antigravity chat. Keep answ
 - Do not revert Antigravity/user changes unless explicitly asked.
 
 ## Current Commit Trail
-- `c913501 antigravity: update ai-context.md`
-- `293a86a antigravity: fix sales insert column-value mismatch`
-- `ba9eab2 antigravity: fix cash tendered validation rounding bug`
-- `1c0d6b8 antigravity: run the app`
-- `a774617 codex: speed up cash checkout`
+- `6324ac9 feat: first-time setup wizard for new installs`
+- `0c34557 fix: Reports — Products tab implemented, void PIN in modal not prompt`
+- `f1da2b4 feat: Customers page — Add, Edit, Khata modals now working`
+- `dd729d4 fix: Settings page — real rate history, working backup/restore tab`
+- `532ba4e fix: held bill shows subtotal and correct time format in POS hold picker`
+- `a774617 codex: speed up cash checkout` (previous)
 
 ## Architecture
 - Electron desktop app is offline-first:
@@ -189,6 +190,14 @@ npm run build:win
   - `npm run build:renderer`
   - `npm run build:electron`
 
+## UI/UX Work Completed (Session 2026-04-28)
+- `532ba4e` — Fix held bill subtotal and time format in POS hold picker
+- `dd729d4` — Settings RATES tab: real rate history from SQLite (was hardcoded fake rows). BACKUP tab: fully implemented with Backup Now / Restore from File / Open Folder / backup list table (was "coming soon").
+- `f1da2b4` — Customers page: Add Customer modal, Edit Customer modal, Khata (ledger) modal fully implemented (buttons were wired to nothing before).
+- `0c34557` — Reports PRODUCTS tab implemented with real product performance data. Void sale manager PIN moved from window.prompt to proper inline input in the void modal.
+- `6324ac9` — First-time setup wizard (SetupWizard.tsx): shop info → rates → PIN change, 3-step guided flow. App.tsx checks setup_completed setting; wizard shows before Login on fresh install. schema.ts seeds setup_completed correctly.
+- Windows installer rebuilt: `electron-pos/dist/Noon Dairy POS Setup 1.0.0.exe` — ready to distribute.
+
 ## Known Risks / Next Best Work
 - Run a full real Electron end-to-end test:
   - open shift
@@ -200,11 +209,11 @@ npm run build:win
   - close shift
   - sync now
   - verify backend DB records.
-- Audit existing local SQLite DB settings: older installed app may still contain old Supabase URL/key in `settings`. Schema init now replaces Supabase REST URL defaults, but installed DB should be checked from Settings > Sync or via SQLite.
+- Production VPS/Supabase deployment still needs final `.env`, migrations, PM2/Nginx setup.
 - Backend sync is robust but not a full conflict-resolution system. Since single-counter only, acceptable for now.
 - Backend reports are still thin compared with Electron reports. If cloud dashboard is needed, build shift-based cloud reports.
-- Production VPS/Supabase deployment still needs final `.env`, migrations, PM2/Nginx setup.
-- UI/UX quality complaints remain; owner dislikes current UI. Do not overpromise. Improve page by page with real POS workflow.
+- Code signing for installer not configured (Windows Defender may warn). For production distribution, purchase a code signing certificate.
+- SetupWizard step 2 saves rates to settings table (not daily_rates table directly) — daily_rates IPC requires manager PIN which blocks wizard flow. Consider adding a setup-only rate seeding IPC if this is a problem.
 
 ## Manual Verification Checklist
 - Backend:
