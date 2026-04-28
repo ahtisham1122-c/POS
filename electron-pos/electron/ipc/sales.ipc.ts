@@ -594,7 +594,7 @@ export function registerSalesIPC() {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `);
         const updateStock = db.prepare(`UPDATE products SET stock = stock - ?, updated_at = ? WHERE id = ?`);
-        const getStock = db.prepare(`SELECT stock FROM products WHERE id = ?`);
+        const getStock = db.prepare(`SELECT stock, category FROM products WHERE id = ?`);
         const insertMovement = db.prepare(`
           INSERT INTO stock_movements (
             id, product_id, movement_type, quantity, stock_before, stock_after, reference_id, created_by_id, created_at, synced
@@ -629,7 +629,8 @@ export function registerSalesIPC() {
           const currentStockObj: any = getStock.get(item.productId);
           if (currentStockObj) {
             const currentStock = currentStockObj.stock;
-            if (currentStock - item.quantity < 0) {
+            const isDairy = String(currentStockObj.category || '').toLowerCase() === 'dairy';
+            if (!isDairy && currentStock - item.quantity < 0) {
               throw new Error(`Insufficient stock for ${item.productName}`);
             }
             updateStock.run(item.quantity, now, item.productId);
