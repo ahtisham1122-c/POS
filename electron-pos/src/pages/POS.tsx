@@ -17,6 +17,90 @@ function toMoney(value: number) {
   return `Rs. ${Math.round(Number(value || 0)).toLocaleString("en-PK")}`;
 }
 
+type TouchInputRequest = {
+  title: string;
+  mode: "number" | "text";
+  value: string;
+  setValue: (value: string) => void;
+  allowDecimal?: boolean;
+  masked?: boolean;
+  onDone?: () => void;
+};
+
+function TouchInputPad({ input, onClose }: { input: TouchInputRequest; onClose: () => void }) {
+  const [value, setValue] = useState(input.value || "");
+  const textRows = [
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+    ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+    ["A", "S", "D", "F", "G", "H", "J", "K", "L"],
+    ["Z", "X", "C", "V", "B", "N", "M"]
+  ];
+
+  useEffect(() => {
+    setValue(input.value || "");
+  }, [input]);
+
+  const updateValue = (next: string) => {
+    setValue(next);
+    input.setValue(next);
+  };
+
+  const append = (char: string) => {
+    if (input.mode === "number" && char === "." && (!input.allowDecimal || value.includes("."))) return;
+    updateValue(value + char);
+  };
+
+  const finish = () => {
+    input.onDone?.();
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-[160] bg-black/70 backdrop-blur-sm p-3">
+      <div className="mx-auto max-w-3xl rounded-xl border border-surface-4 bg-surface-2 shadow-float overflow-hidden">
+        <div className="flex items-center justify-between border-b border-surface-4 bg-surface-3 px-4 py-3">
+          <div>
+            <div className="text-xs font-bold uppercase text-text-secondary">{input.title}</div>
+            <div className="mt-1 min-h-8 rounded-lg bg-surface-1 px-3 py-1.5 font-mono text-2xl text-white">
+              {input.masked ? "•".repeat(value.length) : value || <span className="text-text-secondary">Tap keys</span>}
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-lg bg-surface-4 px-4 py-3 text-sm font-bold text-white">Close</button>
+        </div>
+
+        {input.mode === "number" ? (
+          <div className="grid grid-cols-3 gap-2 p-3">
+            {["7", "8", "9", "4", "5", "6", "1", "2", "3"].map((key) => (
+              <button key={key} onClick={() => append(key)} className="h-16 rounded-lg bg-surface-3 text-3xl font-black text-white active:bg-success/40">{key}</button>
+            ))}
+            <button onClick={() => append(".")} disabled={!input.allowDecimal} className="h-16 rounded-lg bg-surface-3 text-3xl font-black text-white disabled:opacity-30">.</button>
+            <button onClick={() => append("0")} className="h-16 rounded-lg bg-surface-3 text-3xl font-black text-white active:bg-success/40">0</button>
+            <button onClick={() => updateValue(value.slice(0, -1))} className="h-16 rounded-lg bg-warning/20 text-xl font-black text-warning">Back</button>
+            <button onClick={() => updateValue("")} className="h-14 rounded-lg bg-danger/20 text-lg font-black text-danger">Clear</button>
+            <button onClick={finish} className="col-span-2 h-14 rounded-lg bg-success text-xl font-black text-white">Done</button>
+          </div>
+        ) : (
+          <div className="space-y-2 p-3">
+            {textRows.map((row) => (
+              <div key={row.join("")} className="flex justify-center gap-2">
+                {row.map((key) => (
+                  <button key={key} onClick={() => append(key)} className="h-12 min-w-12 rounded-lg bg-surface-3 px-3 text-lg font-black text-white active:bg-info/40">{key}</button>
+                ))}
+              </div>
+            ))}
+            <div className="grid grid-cols-4 gap-2">
+              <button onClick={() => append(" ")} className="col-span-2 h-12 rounded-lg bg-surface-3 text-lg font-bold text-white">Space</button>
+              <button onClick={() => updateValue(value.slice(0, -1))} className="h-12 rounded-lg bg-warning/20 text-sm font-black text-warning">Back</button>
+              <button onClick={() => updateValue("")} className="h-12 rounded-lg bg-danger/20 text-sm font-black text-danger">Clear</button>
+              <button onClick={finish} className="col-span-4 h-14 rounded-lg bg-success text-xl font-black text-white">Done</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function POS() {
   // Global Data
   const [products, setProducts] = useState<Product[]>([]);
@@ -82,6 +166,11 @@ export default function POS() {
   const [discountPinInput, setDiscountPinInput] = useState("");
   const [discountPinLabel, setDiscountPinLabel] = useState("");
   const discountPinResolveRef = useRef<((pin: string | null) => void) | null>(null);
+  const [touchInput, setTouchInput] = useState<TouchInputRequest | null>(null);
+
+  const openTouchInput = (input: TouchInputRequest) => {
+    setTouchInput(input);
+  };
 
   const askManagerPin = (label: string): Promise<string | null> =>
     new Promise((resolve) => {
@@ -655,6 +744,7 @@ export default function POS() {
                   placeholder="Search products..." 
                   value={otherSearch}
                   onChange={e => setOtherSearch(e.target.value)}
+                  onFocus={() => openTouchInput({ title: "Search products", mode: "text", value: otherSearch, setValue: setOtherSearch })}
                   className="w-full bg-surface-3 border border-surface-4 rounded-md pl-9 pr-3 py-2 text-sm text-text-primary outline-none focus:border-primary"
                 />
               </div>
@@ -726,6 +816,7 @@ export default function POS() {
                 placeholder="Custom Value" 
                 value={customMilkQty}
                 onChange={e => setCustomMilkQty(e.target.value)}
+                onFocus={() => openTouchInput({ title: "Milk custom value", mode: "number", value: customMilkQty, setValue: setCustomMilkQty, allowDecimal: true })}
                 className="flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
               />
               <div className="flex bg-surface-1 rounded-lg p-1">
@@ -790,6 +881,7 @@ export default function POS() {
                 placeholder="Custom Value" 
                 value={customYogurtInput}
                 onChange={e => setCustomYogurtInput(e.target.value)}
+                onFocus={() => openTouchInput({ title: "Yogurt custom value", mode: "number", value: customYogurtInput, setValue: setCustomYogurtInput, allowDecimal: true })}
                 className="flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
               />
               <div className="flex bg-surface-1 rounded-lg p-1">
@@ -904,6 +996,7 @@ export default function POS() {
                    max={discountType === "PERCENT" ? "100" : undefined}
                    value={discountInput}
                    onChange={e => setDiscountInput(e.target.value)}
+                   onFocus={() => openTouchInput({ title: "Bill discount", mode: "number", value: discountInput, setValue: setDiscountInput, allowDecimal: true })}
                    className="w-full bg-surface-1 border border-surface-4 rounded px-2 py-1 text-sm text-white focus:border-primary outline-none"
                    placeholder="Amount"
                  />
@@ -943,6 +1036,12 @@ export default function POS() {
                      placeholder="Search khata customer..." 
                      value={customerSearchQuery}
                      onChange={e => { setCustomerSearchQuery(e.target.value); setSelectedCustomerId(""); }}
+                     onFocus={() => openTouchInput({
+                       title: "Search khata customer",
+                       mode: "text",
+                       value: customerSearchQuery,
+                       setValue: (value) => { setCustomerSearchQuery(value); setSelectedCustomerId(""); }
+                     })}
                      className={cn("w-full bg-surface-3 border rounded-md pl-8 pr-2 py-1.5 text-xs text-white outline-none focus:border-info", selectedCustomerId ? "border-info bg-info/10" : "border-surface-4")}
                    />
                  </div>
@@ -988,7 +1087,7 @@ export default function POS() {
                   ))}
                 </div>
                 <label className="text-[10px] font-bold text-text-secondary uppercase mb-1">Optional change calculator</label>
-                <input type="number" min="0" inputMode="numeric" placeholder="Leave blank for exact cash" value={cashReceived} onChange={e => setCashReceived(e.target.value)} className="w-full bg-surface-1 border border-surface-4 rounded p-1.5 text-sm font-mono text-white outline-none focus:border-success mb-1" />
+                <input type="number" min="0" inputMode="numeric" placeholder="Leave blank for exact cash" value={cashReceived} onChange={e => setCashReceived(e.target.value)} onFocus={() => openTouchInput({ title: "Cash received", mode: "number", value: cashReceived, setValue: setCashReceived, allowDecimal: true })} className="w-full bg-surface-1 border border-surface-4 rounded p-1.5 text-sm font-mono text-white outline-none focus:border-success mb-1" />
                 {cashReceivedValue > 0 && cashReceivedValue < grandTotal && (
                   <div className="text-xs font-bold text-warning mt-1">Received is short by {toMoney(grandTotal - cashReceivedValue)}</div>
                 )}
@@ -1010,11 +1109,11 @@ export default function POS() {
                 <div className="grid grid-cols-2 gap-2">
                   <label className="text-[10px] font-bold text-text-secondary uppercase">
                     Cash
-                    <input type="number" placeholder="Rs" value={cashReceived} onChange={e => setCashReceived(e.target.value)} className="mt-1 w-full bg-surface-1 border border-surface-4 rounded p-1.5 text-sm font-mono text-white outline-none focus:border-success" />
+                    <input type="number" placeholder="Rs" value={cashReceived} onChange={e => setCashReceived(e.target.value)} onFocus={() => openTouchInput({ title: "Split cash", mode: "number", value: cashReceived, setValue: setCashReceived, allowDecimal: true })} className="mt-1 w-full bg-surface-1 border border-surface-4 rounded p-1.5 text-sm font-mono text-white outline-none focus:border-success" />
                   </label>
                   <label className="text-[10px] font-bold text-text-secondary uppercase">
                     Online
-                    <input type="number" placeholder="Rs" value={onlineReceived} onChange={e => setOnlineReceived(e.target.value)} className="mt-1 w-full bg-surface-1 border border-surface-4 rounded p-1.5 text-sm font-mono text-white outline-none focus:border-info" />
+                    <input type="number" placeholder="Rs" value={onlineReceived} onChange={e => setOnlineReceived(e.target.value)} onFocus={() => openTouchInput({ title: "Split online", mode: "number", value: onlineReceived, setValue: setOnlineReceived, allowDecimal: true })} className="mt-1 w-full bg-surface-1 border border-surface-4 rounded p-1.5 text-sm font-mono text-white outline-none focus:border-info" />
                   </label>
                 </div>
                 <div className="mt-2 space-y-1 text-xs font-mono">
@@ -1206,6 +1305,7 @@ export default function POS() {
                 max={itemDiscountType === "PERCENT" ? "100" : undefined}
                 value={itemDiscountInput}
                 onChange={(event) => setItemDiscountInput(event.target.value)}
+                onFocus={() => openTouchInput({ title: "Item discount", mode: "number", value: itemDiscountInput, setValue: setItemDiscountInput, allowDecimal: true })}
                 className="w-full bg-surface-1 border border-surface-4 rounded-lg px-4 py-3 text-lg font-mono text-white outline-none focus:border-primary"
                 placeholder={itemDiscountType === "PERCENT" ? "Discount %" : "Discount Rs."}
               />
@@ -1262,6 +1362,7 @@ export default function POS() {
                     type="number" 
                     value={physicalCash} 
                     onChange={e => setPhysicalCash(e.target.value)}
+                    onFocus={() => openTouchInput({ title: "Physical cash count", mode: "number", value: physicalCash, setValue: setPhysicalCash, allowDecimal: true })}
                     className="w-32 bg-surface-1 border border-surface-4 rounded px-2 py-1 text-sm font-mono text-white text-right focus:border-success outline-none"
                   />
                 </div>
@@ -1353,6 +1454,7 @@ export default function POS() {
                 inputMode="numeric"
                 value={discountPinInput}
                 onChange={e => setDiscountPinInput(e.target.value)}
+                onFocus={() => openTouchInput({ title: "Manager PIN", mode: "number", value: discountPinInput, setValue: setDiscountPinInput, masked: true })}
                 onKeyDown={e => e.key === "Enter" && resolveDiscountPin(discountPinInput)}
                 className="input font-mono text-2xl text-center tracking-widest py-4"
                 placeholder="••••"
@@ -1367,6 +1469,9 @@ export default function POS() {
             </div>
           </div>
         </div>
+      )}
+      {touchInput && (
+        <TouchInputPad input={touchInput} onClose={() => setTouchInput(null)} />
       )}
     </div>
   );
