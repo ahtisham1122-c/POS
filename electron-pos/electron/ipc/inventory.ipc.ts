@@ -75,7 +75,30 @@ export function registerInventoryIPC() {
   ipcMain.handle('inventory:stockIn', async (_event, id: string, data: any) => {
     try {
       requireCurrentUser(['ADMIN', 'MANAGER']);
-      return handleStockMutation(id, requirePositiveQuantity(data.quantity, 'Stock-in quantity'), 'STOCK_IN', data);
+      const quantity = requirePositiveQuantity(data.quantity, 'Stock-in quantity');
+      const product = db.prepare('SELECT code FROM products WHERE id = ?').get(id) as any;
+
+      // Yogurt is produced from milk — deduct same quantity from Milk in same transaction
+      if (product?.code === 'YOGT') {
+        return db.transaction(() => {
+          const milkProduct = db.prepare(`SELECT id, stock FROM products WHERE code = 'MILK' AND is_active = 1`).get() as any;
+          if (!milkProduct) throw new Error('Milk product not found. Yogurt is made from milk.');
+          if (Number(milkProduct.stock) < quantity) {
+            throw new Error(`Not enough milk stock. Need ${quantity} kg but only ${Number(milkProduct.stock).toFixed(2)} kg available.`);
+          }
+          // Add yogurt stock
+          handleStockMutation(id, quantity, 'STOCK_IN', { ...data, notes: data.notes || 'Yogurt produced from milk' });
+          // Deduct milk stock with YOGURT_PRODUCTION movement type
+          handleStockMutation(milkProduct.id, -quantity, 'YOGURT_PRODUCTION', {
+            ...data,
+            notes: `Used for yogurt production (${quantity} kg)`,
+            referenceId: id
+          });
+          return { success: true };
+        })();
+      }
+
+      return handleStockMutation(id, quantity, 'STOCK_IN', data);
     } catch (e: any) {
       return { success: false, error: e.message };
     }

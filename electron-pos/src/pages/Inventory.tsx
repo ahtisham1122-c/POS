@@ -312,11 +312,17 @@ export default function Inventory() {
                 <tbody className="divide-y divide-surface-4">
                   {filteredProducts.map(p => {
                     const status = p.stock <= 0 ? "OUT" : p.stock <= (p.low_stock_threshold || 5) ? "LOW" : "OK";
+                    const isLocked = p.code === 'MILK' || p.code === 'YOGT';
+                    const isMilk = p.code === 'MILK';
+                    const isYogurt = p.code === 'YOGT';
                     return (
                       <tr key={p.id} className="hover:bg-surface-3/50 transition-colors">
                         <td className="px-4 py-3 font-mono text-text-secondary">{p.code}</td>
                         <td className="px-4 py-3 font-medium flex items-center gap-2">
-                          <span className="text-xl">{p.emoji || "📦"}</span> {p.name}
+                          <span className="text-xl">{p.emoji || "📦"}</span>
+                          {p.name}
+                          {isMilk && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-semibold">SUPPLIER-FED</span>}
+                          {isYogurt && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-semibold">FROM MILK</span>}
                         </td>
                         <td className="px-4 py-3">{p.category}</td>
                         <td className="px-4 py-3 font-mono font-medium">{p.stock.toFixed(2)} <span className="text-text-secondary text-xs">{p.unit}</span></td>
@@ -333,13 +339,14 @@ export default function Inventory() {
                           {status === "OUT" && <span className="badge badge-danger">✕ Out</span>}
                         </td>
                         <td className="px-4 py-3 text-right space-x-2">
-                          <button 
+                          <button
                             onClick={() => { setSelectedProduct(p); setStockInModalOpen(true); }}
-                            className="p-1.5 text-success hover:bg-success/10 rounded transition-colors" title="Stock In"
+                            className={cn("p-1.5 rounded transition-colors", isYogurt ? "text-amber-400 hover:bg-amber-500/10" : "text-success hover:bg-success/10")}
+                            title={isYogurt ? "Produce Yogurt (uses milk)" : isMilk ? "Stock In (use Suppliers page for collections)" : "Stock In"}
                           >
                             <ArrowUpCircle className="w-4 h-4" />
                           </button>
-                          <button 
+                          <button
                             onClick={() => {
                               setEditProduct({
                                 id: p.id,
@@ -359,16 +366,18 @@ export default function Inventory() {
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
-                          <button 
-                            onClick={() => {
-                              setProductToDelete(p);
-                              setIsDeleteModalOpen(true);
-                            }}
-                            className="p-1.5 text-text-secondary hover:text-danger hover:bg-danger/10 rounded transition-colors" title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-
+                          {isLocked ? (
+                            <span className="inline-flex p-1.5 text-text-secondary/40 cursor-not-allowed" title="System product — cannot be deleted">
+                              🔒
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => { setProductToDelete(p); setIsDeleteModalOpen(true); }}
+                              className="p-1.5 text-text-secondary hover:text-danger hover:bg-danger/10 rounded transition-colors" title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -409,11 +418,14 @@ export default function Inventory() {
                       <td className="px-4 py-3">
                         <span className={cn("px-2 py-1 rounded text-xs font-bold",
                           m.movement_type === "STOCK_IN" ? "bg-success/10 text-success" :
+                          m.movement_type === "MILK_COLLECTION" ? "bg-blue-500/10 text-blue-400" :
+                          m.movement_type === "YOGURT_PRODUCTION" ? "bg-amber-500/10 text-amber-400" :
                           m.movement_type === "STOCK_OUT" ? "bg-danger/10 text-danger" :
                           m.movement_type === "SALE" ? "bg-info/10 text-info" :
+                          m.movement_type === "WASTAGE" ? "bg-orange-500/10 text-orange-400" :
                           "bg-surface-4 text-text-primary"
                         )}>
-                          {m.movement_type}
+                          {m.movement_type.replace(/_/g, ' ')}
                         </span>
                       </td>
                       <td className={cn("px-4 py-3 text-right font-mono font-bold", 
@@ -441,16 +453,35 @@ export default function Inventory() {
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-slide-up">
           <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-md overflow-hidden flex flex-col border border-surface-4">
             <div className="p-4 border-b border-surface-4 flex justify-between items-center">
-              <h3 className="font-semibold text-lg">Stock In: {selectedProduct.name}</h3>
-              <button onClick={() => setStockInModalOpen(false)} className="text-text-secondary hover:text-text-primary"><Trash2 className="w-5 h-5 opacity-0" />✕</button>
+              <h3 className="font-semibold text-lg">
+                {selectedProduct.code === 'YOGT' ? '🫙 Produce Yogurt' : `Stock In: ${selectedProduct.name}`}
+              </h3>
+              <button onClick={() => setStockInModalOpen(false)} className="text-text-secondary hover:text-text-primary">✕</button>
             </div>
             <div className="p-6 space-y-4">
+              {selectedProduct.code === 'YOGT' && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-sm text-amber-400">
+                  ⚠ Yogurt is made from milk. Adding yogurt stock will automatically deduct the same quantity from Milk inventory.
+                  {stockInQty && Number(stockInQty) > 0 && (
+                    <div className="mt-1 font-semibold">
+                      This will use {Number(stockInQty).toFixed(2)} kg of Milk.
+                    </div>
+                  )}
+                </div>
+              )}
+              {selectedProduct.code === 'MILK' && (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-sm text-blue-400">
+                  💡 Milk stock normally comes from supplier entries (Suppliers page). Use this only for manual corrections.
+                </div>
+              )}
               <div className="bg-surface-3 rounded-lg p-4 flex justify-between items-center">
                 <span className="text-text-secondary text-sm">Current Stock</span>
                 <span className="font-mono font-bold text-lg">{selectedProduct.stock.toFixed(2)} {selectedProduct.unit}</span>
               </div>
               <div>
-                <label className="text-xs font-semibold text-text-secondary uppercase mb-1 block">Quantity to Add</label>
+                <label className="text-xs font-semibold text-text-secondary uppercase mb-1 block">
+                  {selectedProduct.code === 'YOGT' ? 'Yogurt Quantity to Produce' : 'Quantity to Add'}
+                </label>
                 <div className="relative">
                   <input
                     type="number"
@@ -458,6 +489,7 @@ export default function Inventory() {
                     onChange={(e) => setStockInQty(e.target.value)}
                     className="input font-mono text-lg py-3"
                     placeholder="0.00"
+                    autoFocus
                   />
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-text-secondary font-mono">{selectedProduct.unit}</span>
                 </div>
@@ -469,13 +501,19 @@ export default function Inventory() {
                   value={stockNotes}
                   onChange={(e) => setStockNotes(e.target.value)}
                   className="input py-2"
-                  placeholder="e.g. Supplier Name or reason"
+                  placeholder={selectedProduct.code === 'YOGT' ? "e.g. Morning batch" : "e.g. Supplier name or reason"}
                 />
               </div>
             </div>
             <div className="p-4 bg-surface-3 border-t border-surface-4 flex gap-3">
               <button onClick={() => setStockInModalOpen(false)} className="btn-secondary flex-1">Cancel</button>
-              <button onClick={handleStockIn} className="btn-primary flex-1" disabled={!stockInQty || Number(stockInQty) <= 0}>Confirm Stock In</button>
+              <button
+                onClick={handleStockIn}
+                className={cn("flex-1", selectedProduct.code === 'YOGT' ? "bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors" : "btn-primary")}
+                disabled={!stockInQty || Number(stockInQty) <= 0}
+              >
+                {selectedProduct.code === 'YOGT' ? 'Confirm Production' : 'Confirm Stock In'}
+              </button>
             </div>
           </div>
         </div>

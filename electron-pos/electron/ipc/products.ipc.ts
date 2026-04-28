@@ -206,6 +206,10 @@ export function registerProductsIPC() {
   ipcMain.handle('products:remove', async (_event, id: string) => {
     try {
       requireCurrentUser(['ADMIN', 'MANAGER']);
+      const product = db.prepare('SELECT code FROM products WHERE id = ?').get(id) as any;
+      if (product && ['MILK', 'YOGT'].includes(product.code)) {
+        return { success: false, error: 'Milk and Yogurt are system products and cannot be deleted.' };
+      }
       const now = new Date().toISOString();
       db.prepare('UPDATE products SET is_active = 0, updated_at = ?, synced = 0 WHERE id = ?').run(now, id);
       createOutboxEntry('products', 'UPDATE', id, { id, is_active: 0, updated_at: now });
