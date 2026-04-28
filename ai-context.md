@@ -22,11 +22,11 @@ Use this file to continue development in a new Codex/Antigravity chat. Keep answ
 - Do not revert Antigravity/user changes unless explicitly asked.
 
 ## Current Commit Trail
+- `c913501 antigravity: update ai-context.md`
 - `293a86a antigravity: fix sales insert column-value mismatch`
 - `ba9eab2 antigravity: fix cash tendered validation rounding bug`
 - `1c0d6b8 antigravity: run the app`
 - `a774617 codex: speed up cash checkout`
-- `e7b4df0 codex: handle legacy partial product sync`
 
 ## Architecture
 - Electron desktop app is offline-first:
@@ -172,12 +172,22 @@ npm run build:win
 ## Commercial Blockers Already Addressed
 - Duplicate sale protection via `transaction_id`.
 - Cash tendered/change returned/payment breakdown saved.
+- POS cash sale no longer requires typing cash received. Empty cash box is treated as exact cash payment for faster counter checkout; cash box is now only an optional change calculator with quick buttons.
 - Manager PIN approval exists in Electron IPC for refunds, voids, stock adjustment, daily rates/discount limit paths.
 - Shift-based reporting/business day logic.
 - Visible sync status badge and stuck outbox warning.
 - Backup/restore safety work exists in `electron-pos/electron/sync/backup.ts`.
 - Audit log system exists in `electron-pos/electron/audit/auditLog.ts`.
 - Export IPC exists for reports.
+
+## Recent POS Cash Checkout Work
+- Commit `a774617 codex: speed up cash checkout` updated `electron-pos/src/pages/POS.tsx`.
+- In Cash mode, cashier can leave the cash received input empty and press Enter/CASH to complete the sale.
+- Backend sale IPC already treats blank/zero tendered cash as exact payment, so saved payment totals remain sensible.
+- POS now shows quick cash buttons: Exact, Rs 500, Rs 1000, Rs 5000.
+- Verified after the change:
+  - `npm run build:renderer`
+  - `npm run build:electron`
 
 ## Known Risks / Next Best Work
 - Run a full real Electron end-to-end test:
