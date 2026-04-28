@@ -439,7 +439,32 @@ CREATE TABLE IF NOT EXISTS bill_counter (
 INSERT OR IGNORE INTO bill_counter (id, last_number) VALUES (1, 0);
 `;
 
+function tableExists(tableName: string) {
+  const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName) as any;
+  return Boolean(row);
+}
+
+function columnExists(tableName: string, columnName: string) {
+  if (!tableExists(tableName)) return false;
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return columns.some((column) => column.name === columnName);
+}
+
+function addColumnIfMissing(tableName: string, columnName: string, definition: string) {
+  if (!tableExists(tableName) || columnExists(tableName, columnName)) return;
+  db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
+}
+
+function prepareLegacyTablesForSchemaIndexes() {
+  addColumnIfMissing('sales', 'shift_id', 'TEXT');
+  addColumnIfMissing('sale_voids', 'shift_id', 'TEXT');
+  addColumnIfMissing('returns', 'shift_id', 'TEXT');
+  addColumnIfMissing('cash_register', 'shift_id', 'TEXT');
+  addColumnIfMissing('expenses', 'shift_id', 'TEXT');
+}
+
 export function initializeDatabase() {
+  prepareLegacyTablesForSchemaIndexes();
   db.exec(schema);
   console.log('Database schema initialized.');
 

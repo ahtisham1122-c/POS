@@ -443,7 +443,30 @@ CREATE TABLE IF NOT EXISTS bill_counter (
 );
 INSERT OR IGNORE INTO bill_counter (id, last_number) VALUES (1, 0);
 `;
+function tableExists(tableName) {
+    const row = db_1.default.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName);
+    return Boolean(row);
+}
+function columnExists(tableName, columnName) {
+    if (!tableExists(tableName))
+        return false;
+    const columns = db_1.default.prepare(`PRAGMA table_info(${tableName})`).all();
+    return columns.some((column) => column.name === columnName);
+}
+function addColumnIfMissing(tableName, columnName, definition) {
+    if (!tableExists(tableName) || columnExists(tableName, columnName))
+        return;
+    db_1.default.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
+}
+function prepareLegacyTablesForSchemaIndexes() {
+    addColumnIfMissing('sales', 'shift_id', 'TEXT');
+    addColumnIfMissing('sale_voids', 'shift_id', 'TEXT');
+    addColumnIfMissing('returns', 'shift_id', 'TEXT');
+    addColumnIfMissing('cash_register', 'shift_id', 'TEXT');
+    addColumnIfMissing('expenses', 'shift_id', 'TEXT');
+}
 function initializeDatabase() {
+    prepareLegacyTablesForSchemaIndexes();
     db_1.default.exec(schema);
     console.log('Database schema initialized.');
     // Seed default admin user if none exists
