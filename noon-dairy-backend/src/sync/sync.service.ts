@@ -159,6 +159,19 @@ export class SyncService {
   }
 
   private normalizeLegacyRequiredFields(modelName: string, data: Record<string, any>) {
+    if (modelName === 'product') {
+      const productId = String(data.id || data.productId || 'unknown');
+      if (!data.code) data.code = `SYNC-${productId.slice(0, 18)}`;
+      if (!data.name) data.name = data.productName || `Synced Product ${productId.slice(0, 8)}`;
+      if (!data.unit) data.unit = 'unit';
+      if (data.sellingPrice === undefined || data.sellingPrice === null) data.sellingPrice = Number(data.unitPrice || 0);
+      if (data.costPrice === undefined || data.costPrice === null) data.costPrice = 0;
+      if (data.stock === undefined || data.stock === null) data.stock = 0;
+      if (data.lowStockThreshold === undefined || data.lowStockThreshold === null) data.lowStockThreshold = 0;
+      if (data.taxExempt === undefined || data.taxExempt === null) data.taxExempt = false;
+      if (!data.emoji) data.emoji = 'PKG';
+    }
+
     if (modelName === 'saleItem') {
       const quantity = Number(data.quantity || 0);
       const lineTotal = Number(data.lineTotal || 0);
