@@ -40,8 +40,8 @@ class SyncEngine {
         if (!networkMonitor_1.networkMonitor.isOnline)
             return;
         const apiUrl = (0, apiConfig_1.getApiBaseUrl)();
-        if (!apiUrl || apiUrl.includes('localhost')) {
-            // Skip sync if API URL is not configured or pointing to localhost (dev default)
+        if (!apiUrl) {
+            // Skip sync only if API URL is not configured.
             return;
         }
         this.isSyncing = true;
@@ -99,7 +99,7 @@ class SyncEngine {
                     }
                     else {
                         const errText = await response.text();
-                        throw new Error(`Server Error (${response.status}): ${errText.substring(0, 50)}`);
+                        throw new Error(`Server Error (${response.status}): ${errText.substring(0, 500)}`);
                     }
                 }
                 catch (error) {

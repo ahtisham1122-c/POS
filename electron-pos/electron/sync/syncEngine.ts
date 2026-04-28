@@ -38,8 +38,8 @@ export class SyncEngine {
     if (!networkMonitor.isOnline) return;
 
     const apiUrl = getApiBaseUrl();
-    if (!apiUrl || apiUrl.includes('localhost')) {
-      // Skip sync if API URL is not configured or pointing to localhost (dev default)
+    if (!apiUrl) {
+      // Skip sync only if API URL is not configured.
       return;
     }
 
@@ -102,7 +102,7 @@ export class SyncEngine {
             logger.info(`SyncEngine successfully uploaded row ${row.id} for table '${row.table_name}'.`);
           } else {
             const errText = await response.text();
-            throw new Error(`Server Error (${response.status}): ${errText.substring(0, 50)}`);
+            throw new Error(`Server Error (${response.status}): ${errText.substring(0, 500)}`);
           }
 
         } catch (error: any) {

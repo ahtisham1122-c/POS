@@ -158,6 +158,43 @@ export class SyncService {
     return data;
   }
 
+  private normalizeLegacyRequiredFields(modelName: string, data: Record<string, any>) {
+    if (modelName === 'saleItem') {
+      const quantity = Number(data.quantity || 0);
+      const lineTotal = Number(data.lineTotal || 0);
+
+      if (data.unitPrice === undefined || data.unitPrice === null) {
+        data.unitPrice = quantity > 0 ? lineTotal / quantity : 0;
+      }
+
+      if (data.costPrice === undefined || data.costPrice === null) {
+        data.costPrice = 0;
+      }
+    }
+
+    if (modelName === 'stockMovement') {
+      const quantity = Number(data.quantity || 0);
+      const movementType = String(data.movementType || '').toUpperCase();
+
+      if (data.stockBefore === undefined || data.stockBefore === null) {
+        data.stockBefore = 0;
+      }
+
+      if (data.stockAfter === undefined || data.stockAfter === null) {
+        const stockBefore = Number(data.stockBefore || 0);
+        const increasesStock = ['STOCK_IN', 'OPENING', 'RETURN_IN', 'VOID_RESTOCK', 'MILK_COLLECTION'].includes(movementType);
+        const decreasesStock = ['STOCK_OUT', 'WASTAGE'].includes(movementType);
+        data.stockAfter = increasesStock ? stockBefore + quantity : decreasesStock ? stockBefore - quantity : stockBefore;
+      }
+
+      if (!data.createdById) {
+        data.createdById = 'admin-id';
+      }
+    }
+
+    return data;
+  }
+
   private sanitizePayload(modelName: string, payload: Record<string, any>) {
     const allowedFields = this.modelFields.get(modelName);
     if (!allowedFields) return payload;
@@ -174,6 +211,7 @@ export class SyncService {
     this.normalizeEnumValues(modelName, data);
     this.normalizeDateOnlyFields(modelName, data);
     this.normalizeBooleanFields(modelName, data);
+    this.normalizeLegacyRequiredFields(modelName, data);
     return data;
   }
 
@@ -295,6 +333,22 @@ export class SyncService {
     }
   }
 
+  private async hasRequiredParent(modelName: string, data: Record<string, any>, tx: Prisma.TransactionClient) {
+    if (modelName === 'saleItem') {
+      if (!data.saleId) return false;
+      const sale = await tx.sale.findUnique({ where: { id: data.saleId }, select: { id: true } });
+      return Boolean(sale);
+    }
+
+    if (modelName === 'returnItem') {
+      if (!data.returnId) return false;
+      const returnRecord = await tx.return.findUnique({ where: { id: data.returnId }, select: { id: true } });
+      return Boolean(returnRecord);
+    }
+
+    return true;
+  }
+
   async processOperation(op: any, tx?: Prisma.TransactionClient) {
     const { table, operation, recordId, payload, deviceId, timestamp } = op;
     const db = tx || this.prisma;
@@ -333,6 +387,9 @@ export class SyncService {
         } else {
           // Transform payload string dates to Date objects where appropriate
           const data = { ...normalizedPayload };
+          if (!(await this.hasRequiredParent(modelName, data, db as Prisma.TransactionClient))) {
+            return { success: true, action: 'skipped', reason: `Missing parent for ${modelName}` };
+          }
           await this.ensureSyncDependencies(modelName, data, db as Prisma.TransactionClient);
           
           await model.create({ data });
@@ -364,6 +421,9 @@ export class SyncService {
 
         if (!existingRecord) {
            // Treating as upsert if missing but update preferred
+           if (!(await this.hasRequiredParent(modelName, normalizedPayload, db as Prisma.TransactionClient))) {
+            return { success: true, action: 'skipped', reason: `Missing parent for ${modelName}` };
+           }
            await this.ensureSyncDependencies(modelName, normalizedPayload, db as Prisma.TransactionClient);
            await model.create({ data: normalizedPayload });
            return { success: true, action: 'created' };

@@ -7,16 +7,35 @@ exports.getApiBaseUrl = getApiBaseUrl;
 exports.getSyncHeaders = getSyncHeaders;
 exports.fetchWithTimeout = fetchWithTimeout;
 const db_1 = __importDefault(require("../database/db"));
+function getDefaultApiBaseUrl() {
+    return process.env.APP_API_URL || 'http://localhost:3001/api';
+}
+function isSupabaseRestUrl(value) {
+    const normalized = value.toLowerCase();
+    return normalized.includes('supabase.co') || normalized.includes('/rest/v1');
+}
+function normalizeApiBaseUrl(value) {
+    const trimmed = value.trim().replace(/\/+$/, '');
+    if (!trimmed || isSupabaseRestUrl(trimmed))
+        return getDefaultApiBaseUrl();
+    return trimmed;
+}
 function getApiBaseUrl() {
     try {
         const row = db_1.default.prepare("SELECT value FROM settings WHERE key = 'APP_API_URL'").get();
-        if (row?.value)
-            return row.value;
+        if (row?.value) {
+            const normalized = normalizeApiBaseUrl(row.value);
+            if (normalized !== row.value) {
+                db_1.default.prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'APP_API_URL'")
+                    .run(normalized, new Date().toISOString());
+            }
+            return normalized;
+        }
     }
     catch (e) {
         console.error('Error reading APP_API_URL from settings:', e);
     }
-    return process.env.APP_API_URL || 'http://localhost:3001/api';
+    return getDefaultApiBaseUrl();
 }
 function getSyncHeaders(deviceId) {
     let syncSecret = process.env.SYNC_DEVICE_SECRET;
