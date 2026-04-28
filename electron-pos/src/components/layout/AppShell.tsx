@@ -21,6 +21,7 @@ const pageTitles: Record<PageId, string> = {
   "receipt-audit": "Receipt Audit",
   shifts: "Shift Management",
   backup: "Backup & Restore",
+  "test-center": "System Health / Test Center",
   expenses: "Expenses",
   reports: "Reports",
   settings: "Settings",

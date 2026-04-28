@@ -130,6 +130,7 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
         openBackupFolder: () => electron_1.ipcRenderer.invoke('system:openBackupFolder'),
         getPaths: () => electron_1.ipcRenderer.invoke('system:getPaths'),
         getBusinessDate: () => electron_1.ipcRenderer.invoke('system:getBusinessDate'),
+        getHealth: () => electron_1.ipcRenderer.invoke('system:getHealth'),
     },
     printer: {
         getPrinters: () => electron_1.ipcRenderer.invoke('printer:getPrinters'),

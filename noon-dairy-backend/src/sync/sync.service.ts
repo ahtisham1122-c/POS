@@ -454,6 +454,47 @@ export class SyncService {
     };
   }
 
+  async verifyRecords(records: Array<{ table: string; id: string }> = []) {
+    const safeRecords = (Array.isArray(records) ? records : [])
+      .filter((record) => record?.table && record?.id)
+      .slice(0, 50);
+
+    const results = await Promise.all(safeRecords.map(async (record) => {
+      const modelName = this.tableMap[record.table] || record.table;
+      const model = (this.prisma as any)[modelName];
+
+      if (!model?.findUnique) {
+        return {
+          table: record.table,
+          model: modelName,
+          id: record.id,
+          found: false,
+          error: 'Unsupported table'
+        };
+      }
+
+      const found = await model.findUnique({
+        where: { id: record.id },
+        select: { id: true }
+      });
+
+      return {
+        table: record.table,
+        model: modelName,
+        id: record.id,
+        found: Boolean(found)
+      };
+    }));
+
+    return {
+      success: true,
+      checked: results.length,
+      found: results.filter((result) => result.found).length,
+      missing: results.filter((result) => !result.found).length,
+      results
+    };
+  }
+
   async registerDevice(data: any) {
     const device = await this.prisma.device.upsert({
       where: { deviceId: data.deviceId },

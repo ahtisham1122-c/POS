@@ -20,7 +20,7 @@ export function MobileNav({ page, setPage }: MobileNavProps) {
     <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-surface-2 border-t border-surface-4 h-16 flex items-center justify-around px-2 z-50">
       {items.map((item) => {
         const Icon = item.icon;
-        const isActive = page === item.id || (item.id === "more" && ["suppliers", "customers", "returns", "receipt-audit", "shifts", "backup", "reports", "expenses", "settings"].includes(page));
+        const isActive = page === item.id || (item.id === "more" && ["suppliers", "customers", "returns", "receipt-audit", "shifts", "backup", "test-center", "reports", "expenses", "settings"].includes(page));
         return (
           <button
             key={item.id}

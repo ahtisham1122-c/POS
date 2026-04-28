@@ -27,6 +27,11 @@ export class SyncController {
     return this.syncService.getStatus(deviceId);
   }
 
+  @Post('verify-records')
+  async verifyRecords(@Body('records') records: Array<{ table: string; id: string }>) {
+    return this.syncService.verifyRecords(records);
+  }
+
   @Post('register-device')
   async registerDevice(@Body() payload: any) {
     return this.syncService.registerDevice(payload);

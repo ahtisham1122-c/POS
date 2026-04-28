@@ -129,6 +129,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openBackupFolder: () => ipcRenderer.invoke('system:openBackupFolder'),
     getPaths: () => ipcRenderer.invoke('system:getPaths'),
     getBusinessDate: () => ipcRenderer.invoke('system:getBusinessDate'),
+    getHealth: () => ipcRenderer.invoke('system:getHealth'),
   },
   printer: {
     getPrinters: () => ipcRenderer.invoke('printer:getPrinters'),

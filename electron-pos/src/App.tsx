@@ -15,8 +15,9 @@ import ReceiptAudit from "./pages/ReceiptAudit";
 import Shifts from "./pages/Shifts";
 import BackupRestore from "./pages/BackupRestore";
 import Suppliers from "./pages/Suppliers";
+import TestCenter from "./pages/TestCenter";
 
-export type PageId = "dashboard" | "pos" | "inventory" | "suppliers" | "customers" | "khata" | "returns" | "receipt-audit" | "shifts" | "backup" | "expenses" | "reports" | "settings" | "cash-register";
+export type PageId = "dashboard" | "pos" | "inventory" | "suppliers" | "customers" | "khata" | "returns" | "receipt-audit" | "shifts" | "backup" | "test-center" | "expenses" | "reports" | "settings" | "cash-register";
 
 export default function App() {
   const [page, setPage] = useState<PageId>("pos");
@@ -51,6 +52,7 @@ export default function App() {
         {page === "receipt-audit" && <ReceiptAudit />}
         {page === "shifts" && <Shifts setPage={setPage} />}
         {page === "backup" && <BackupRestore />}
+        {page === "test-center" && <TestCenter setPage={setPage} />}
         {page === "cash-register" && <CashRegister setPage={setPage} />}
         {page === "expenses" && <Expenses />}
         {page === "reports" && <Reports />}

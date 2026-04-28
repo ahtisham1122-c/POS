@@ -127,6 +127,7 @@ export interface ElectronAPI {
     openBackupFolder: () => Promise<{ success: boolean; backupDir: string }>;
     getPaths: () => Promise<any>;
     getBusinessDate: () => Promise<{ date: string; openShiftId?: string | null; openShiftOpenedAt?: string | null; shopDayStartHour: number; ramadan24Hour: boolean; is24HourMode?: boolean }>;
+    getHealth: () => Promise<any>;
   };
   printer: {
     getPrinters: () => Promise<{ success: boolean; printers: Array<{ name: string; displayName: string; description?: string; status?: number; isDefault?: boolean }>; error?: string }>;
