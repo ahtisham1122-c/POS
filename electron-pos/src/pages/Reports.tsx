@@ -22,6 +22,8 @@ export default function Reports() {
   const [voidReason, setVoidReason] = useState("");
   const [voidRestockItems, setVoidRestockItems] = useState(true);
   const [isVoiding, setIsVoiding] = useState(false);
+  const [voidPin, setVoidPin] = useState("");
+  const [productPerformance, setProductPerformance] = useState<any[]>([]);
   const [plStartDate, setPlStartDate] = useState(() => {
     const d = new Date();
     d.setDate(1);
@@ -45,10 +47,24 @@ export default function Reports() {
       fetchSalesHistory();
     } else if (activeTab === "DUES") {
       fetchDues();
+    } else if (activeTab === "PRODUCTS") {
+      fetchProductPerformance();
     } else if (activeTab === "PNL") {
       fetchProfitLoss();
     }
   }, [activeTab, dateStr, plStartDate, plEndDate]);
+
+  const fetchProductPerformance = async () => {
+    setIsLoading(true);
+    try {
+      const data = await window.electronAPI?.reports?.getProductPerformance();
+      setProductPerformance(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const fetchDailySummary = async () => {
     setIsLoading(true);
@@ -128,6 +144,7 @@ export default function Reports() {
     setVoidSale(sale);
     setVoidReason("");
     setVoidRestockItems(true);
+    setVoidPin("");
   };
 
   const submitVoidSale = async () => {
@@ -139,18 +156,18 @@ export default function Reports() {
       return;
     }
 
+    if (!voidPin) {
+      alert("Manager PIN is required to void a sale.");
+      return;
+    }
+
     setIsVoiding(true);
     try {
-      const managerPin = window.prompt("Manager PIN required to void this sale.");
-      if (!managerPin) {
-        alert("Void blocked. Manager PIN is required.");
-        return;
-      }
       const result = await window.electronAPI?.sales?.void({
         saleId: voidSale.id,
         reason: cleanReason,
         restockItems: voidRestockItems,
-        managerPin,
+        managerPin: voidPin,
       });
 
       if (!result?.success) {
@@ -355,10 +372,45 @@ export default function Reports() {
         )}
 
         {activeTab === "PRODUCTS" && (
-          <div className="p-4 md:p-6 animate-slide-in-right">
-            <div className="text-center p-12 border border-dashed border-surface-4 rounded-lg text-text-secondary">
-              Products Report implementation coming soon.
+          <div className="p-4 md:p-6 animate-slide-in-right space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">Product Performance — All Time</h2>
+              <button onClick={fetchProductPerformance} disabled={isLoading} className="btn-secondary flex items-center gap-2 text-sm">
+                <Download className="w-4 h-4" /> Refresh
+              </button>
             </div>
+            {isLoading ? (
+              <div className="p-12 flex justify-center"><div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" /></div>
+            ) : (
+              <div className="overflow-x-auto border border-surface-4 rounded-xl">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-surface-3 border-b border-surface-4 text-text-secondary uppercase text-[10px] font-bold tracking-widest">
+                    <tr>
+                      <th className="px-4 py-3">#</th>
+                      <th className="px-4 py-3">Product</th>
+                      <th className="px-4 py-3 text-right">Qty Sold</th>
+                      <th className="px-4 py-3 text-right">Total Sales</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-4">
+                    {productPerformance.map((p, i) => (
+                      <tr key={p.productId || i} className="hover:bg-surface-3/50 transition-colors">
+                        <td className="px-4 py-3 font-bold text-text-secondary">{i + 1}</td>
+                        <td className="px-4 py-3 font-medium text-text-primary flex items-center gap-2">
+                          <Package className="w-4 h-4 text-text-secondary opacity-50" />
+                          {p.productName}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">{Number(p.totalQty).toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-success">{toMoney(p.totalSales)}</td>
+                      </tr>
+                    ))}
+                    {productPerformance.length === 0 && (
+                      <tr><td colSpan={4} className="px-4 py-12 text-center text-text-secondary">No sales data found.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -536,6 +588,19 @@ export default function Reports() {
               >
                 {voidRestockItems ? "Restore sold items back into stock" : "Do not restore stock"}
               </button>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-text-primary">Manager PIN</span>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  value={voidPin}
+                  onChange={e => setVoidPin(e.target.value)}
+                  className="input mt-2 font-mono text-center text-lg tracking-widest"
+                  placeholder="••••"
+                  autoComplete="off"
+                />
+              </label>
             </div>
 
             <div className="p-5 border-t border-surface-4 flex gap-3 justify-end">
