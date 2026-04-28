@@ -1,7 +1,10 @@
 import { Controller, Post, Get, Body, Query, UseGuards } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { SyncService } from './sync.service';
 import { SyncSecretGuard } from './sync-secret.guard';
 
+// Electron polls every 5 s — exempt from the global rate limit
+@SkipThrottle()
 @Controller('sync')
 @UseGuards(SyncSecretGuard)
 export class SyncController {

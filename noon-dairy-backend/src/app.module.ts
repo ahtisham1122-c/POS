@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { PrismaModule } from './prisma/prisma.module';
 import { CodeGeneratorModule } from './code-generator/code-generator.module';
 import { AuthModule } from './auth/auth.module';
@@ -14,10 +16,13 @@ import { ExpensesModule } from './expenses/expenses.module';
 import { CashRegisterModule } from './cash-register/cash-register.module';
 import { SyncModule } from './sync/sync.module';
 import { RolesModule } from './roles/roles.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // 300 requests per minute per IP — protects sync endpoint from runaway loops
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 300 }]),
     PrismaModule,
     CodeGeneratorModule,
     AuthModule,
@@ -31,7 +36,11 @@ import { RolesModule } from './roles/roles.module';
     ExpensesModule,
     CashRegisterModule,
     SyncModule,
-    RolesModule
+    RolesModule,
+    HealthModule,
+  ],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule {}
