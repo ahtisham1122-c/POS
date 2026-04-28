@@ -47,6 +47,8 @@ export default function Settings() {
     receipt_footer: "Thank you! Come again"
   });
 
+  const [ratesPinModal, setRatesPinModal] = useState(false);
+  const [ratesPin, setRatesPin] = useState("");
   const [rateHistory, setRateHistory] = useState<any[]>([]);
   const [backups, setBackups] = useState<any[]>([]);
   const [backupDir, setBackupDir] = useState("");
@@ -255,24 +257,29 @@ export default function Settings() {
     await loadAuditLogs();
   };
 
-  const handleSaveRates = async () => {
+  const handleSaveRates = () => {
+    if (!milkRate || Number(milkRate) <= 0 || !yogurtRate || Number(yogurtRate) <= 0) {
+      alert("Both rates must be greater than zero.");
+      return;
+    }
+    setRatesPin("");
+    setRatesPinModal(true);
+  };
+
+  const submitRatesWithPin = async () => {
+    if (!ratesPin) return;
     try {
       setIsLoading(true);
-      const managerPin = window.prompt("Manager PIN required to change daily milk/yogurt rates.");
-      if (!managerPin) {
-        alert("Rates were not changed. Manager PIN is required.");
-        return;
-      }
       const result = await window.electronAPI?.dailyRates?.update({
         milkRate: Number(milkRate),
         yogurtRate: Number(yogurtRate),
-        updatedBy: "Admin",
-        managerPin
+        managerPin: ratesPin
       });
       if (result?.success === false) {
-        alert(result?.error || "Failed to update rates");
+        alert(result?.error || "Wrong PIN or failed to update rates");
         return;
       }
+      setRatesPinModal(false);
       await loadRateHistory();
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -1050,6 +1057,39 @@ export default function Settings() {
           )}
         </div>
       </div>
+
+      {/* MANAGER PIN MODAL FOR RATES */}
+      {ratesPinModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-xs overflow-hidden flex flex-col border border-surface-4 animate-slide-up">
+            <div className="p-4 border-b border-surface-4 flex justify-between items-center">
+              <h3 className="font-semibold text-lg">Manager PIN Required</h3>
+              <button onClick={() => setRatesPinModal(false)} className="text-text-secondary hover:text-text-primary">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-text-secondary text-center">
+                Updating rates to Milk <strong>Rs. {milkRate}</strong> and Yogurt <strong>Rs. {yogurtRate}</strong>
+              </p>
+              <input
+                type="password"
+                inputMode="numeric"
+                value={ratesPin}
+                onChange={e => setRatesPin(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && submitRatesWithPin()}
+                className="input font-mono text-2xl text-center tracking-widest py-4"
+                placeholder="••••"
+                autoFocus
+              />
+            </div>
+            <div className="p-4 bg-surface-3 border-t border-surface-4 flex gap-3">
+              <button onClick={() => setRatesPinModal(false)} className="btn-secondary flex-1">Cancel</button>
+              <button onClick={submitRatesWithPin} disabled={!ratesPin || isLoading} className="btn-primary flex-1">
+                {isLoading ? "Saving…" : "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

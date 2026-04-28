@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, RotateCcw, Search, Undo2 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "../lib/utils";
@@ -31,6 +31,22 @@ export default function Returns() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [pinModal, setPinModal] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const pinResolveRef = useRef<((pin: string | null) => void) | null>(null);
+
+  const askPin = (): Promise<string | null> =>
+    new Promise((resolve) => {
+      pinResolveRef.current = resolve;
+      setPinInput("");
+      setPinModal(true);
+    });
+
+  const resolvePin = (pin: string | null) => {
+    setPinModal(false);
+    pinResolveRef.current?.(pin);
+    pinResolveRef.current = null;
+  };
 
   useEffect(() => {
     loadReturns();
@@ -108,9 +124,10 @@ export default function Returns() {
 
     setIsSubmitting(true);
     try {
-      const managerPin = window.prompt("Manager PIN required to process a return/refund.");
+      const managerPin = await askPin();
       if (!managerPin) {
         setMessage({ type: "error", text: "Return blocked. Manager PIN is required." });
+        setIsSubmitting(false);
         return;
       }
       const result = await window.electronAPI?.returns?.create({
@@ -355,6 +372,34 @@ export default function Returns() {
           </div>
         </div>
       </div>
+
+      {pinModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-xs overflow-hidden flex flex-col border border-surface-4 animate-slide-up">
+            <div className="p-4 border-b border-surface-4 flex justify-between items-center">
+              <h3 className="font-semibold text-lg">Manager PIN Required</h3>
+              <button onClick={() => resolvePin(null)} className="text-text-secondary hover:text-text-primary">✕</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-text-secondary text-center">Enter Manager PIN to approve this refund.</p>
+              <input
+                type="password"
+                inputMode="numeric"
+                value={pinInput}
+                onChange={e => setPinInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && resolvePin(pinInput)}
+                className="input font-mono text-2xl text-center tracking-widest py-4"
+                placeholder="••••"
+                autoFocus
+              />
+            </div>
+            <div className="p-4 bg-surface-3 border-t border-surface-4 flex gap-3">
+              <button onClick={() => resolvePin(null)} className="btn-secondary flex-1">Cancel</button>
+              <button onClick={() => resolvePin(pinInput)} disabled={!pinInput} className="btn-primary flex-1">Approve</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -77,6 +77,26 @@ export default function POS() {
   const [endOfDayData, setEndOfDayData] = useState<any>(null);
   const [physicalCash, setPhysicalCash] = useState<string>("");
 
+  // Discount approval PIN modal
+  const [discountPinModal, setDiscountPinModal] = useState(false);
+  const [discountPinInput, setDiscountPinInput] = useState("");
+  const [discountPinLabel, setDiscountPinLabel] = useState("");
+  const discountPinResolveRef = useRef<((pin: string | null) => void) | null>(null);
+
+  const askManagerPin = (label: string): Promise<string | null> =>
+    new Promise((resolve) => {
+      discountPinResolveRef.current = resolve;
+      setDiscountPinInput("");
+      setDiscountPinLabel(label);
+      setDiscountPinModal(true);
+    });
+
+  const resolveDiscountPin = (pin: string | null) => {
+    setDiscountPinModal(false);
+    discountPinResolveRef.current?.(pin);
+    discountPinResolveRef.current = null;
+  };
+
 
   // Derived values
   const parsedDiscountValue = Number(discountInput);
@@ -459,9 +479,8 @@ export default function POS() {
       const totalDiscountForApproval = roundMoney(discountAmount + totalItemDiscount);
       let managerPin: string | undefined;
       if (totalDiscountForApproval > 100) {
-        const enteredPin = window.prompt(`Manager PIN required because discount is ${toMoney(totalDiscountForApproval)}.`);
+        const enteredPin = await askManagerPin(`Discount is ${toMoney(totalDiscountForApproval)} — Manager PIN required.`);
         if (!enteredPin) {
-          alert("Sale blocked. Manager PIN is required for this discount.");
           setIsSubmitting(false);
           return;
         }
@@ -1314,6 +1333,37 @@ export default function POS() {
             </div>
             <div className="p-4 bg-surface-3 border-t border-surface-4 flex justify-end">
               <button onClick={() => setShowShortcutHelp(false)} className="btn-primary text-sm px-6">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MANAGER PIN MODAL (discount approval) */}
+      {discountPinModal && (
+        <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-2 border border-surface-4 rounded-xl shadow-float w-full max-w-xs overflow-hidden animate-bounce-in">
+            <div className="p-4 border-b border-surface-4 bg-surface-3 flex justify-between items-center">
+              <h2 className="font-bold text-base text-white">Manager Approval</h2>
+              <button onClick={() => resolveDiscountPin(null)} className="text-text-secondary hover:text-white">✕</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-text-secondary text-center">{discountPinLabel}</p>
+              <input
+                type="password"
+                inputMode="numeric"
+                value={discountPinInput}
+                onChange={e => setDiscountPinInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && resolveDiscountPin(discountPinInput)}
+                className="input font-mono text-2xl text-center tracking-widest py-4"
+                placeholder="••••"
+                autoFocus
+              />
+            </div>
+            <div className="p-4 bg-surface-3 border-t border-surface-4 flex gap-3">
+              <button onClick={() => resolveDiscountPin(null)} className="btn-secondary flex-1">Cancel</button>
+              <button onClick={() => resolveDiscountPin(discountPinInput)} disabled={!discountPinInput} className="btn-primary flex-1">
+                Approve
+              </button>
             </div>
           </div>
         </div>
