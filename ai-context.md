@@ -22,11 +22,11 @@ Use this file to continue development in a new Codex/Antigravity chat. Keep answ
 - Do not revert Antigravity/user changes unless explicitly asked.
 
 ## Current Commit Trail
-- `1a3eb19 codex: harden accounting sync records`
-- `007b70c codex: harden sync payloads for sales and ledgers`
-- `a4a5cb1 codex: fix cloud sync backend routing`
-- `4ff66a0 codex: align cloud backend with shift sales sync`
-- `020d285 codex: fix shift based business day reporting`
+- `293a86a antigravity: fix sales insert column-value mismatch`
+- `ba9eab2 antigravity: fix cash tendered validation rounding bug`
+- `1c0d6b8 antigravity: run the app`
+- `a774617 codex: speed up cash checkout`
+- `e7b4df0 codex: handle legacy partial product sync`
 
 ## Architecture
 - Electron desktop app is offline-first:
