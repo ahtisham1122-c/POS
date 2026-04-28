@@ -86,14 +86,16 @@ export function registerInventoryIPC() {
           if (Number(milkProduct.stock) < quantity) {
             throw new Error(`Not enough milk stock. Need ${quantity} kg but only ${Number(milkProduct.stock).toFixed(2)} kg available.`);
           }
-          // Add yogurt stock
-          handleStockMutation(id, quantity, 'STOCK_IN', { ...data, notes: data.notes || 'Yogurt produced from milk' });
-          // Deduct milk stock with YOGURT_PRODUCTION movement type
-          handleStockMutation(milkProduct.id, -quantity, 'YOGURT_PRODUCTION', {
+          // Add yogurt stock — throw on failure so outer transaction rolls back
+          const yogurtResult = handleStockMutation(id, quantity, 'STOCK_IN', { ...data, notes: data.notes || 'Yogurt produced from milk' }) as any;
+          if (!yogurtResult.success) throw new Error(yogurtResult.error || 'Failed to add yogurt stock');
+          // Deduct milk stock — throw on failure so yogurt addition is also rolled back
+          const milkResult = handleStockMutation(milkProduct.id, -quantity, 'YOGURT_PRODUCTION', {
             ...data,
             notes: `Used for yogurt production (${quantity} kg)`,
             referenceId: id
-          });
+          }) as any;
+          if (!milkResult.success) throw new Error(milkResult.error || 'Failed to deduct milk stock');
           return { success: true };
         })();
       }

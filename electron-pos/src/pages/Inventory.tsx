@@ -114,8 +114,7 @@ export default function Inventory() {
     try {
       const res = await window.electronAPI?.inventory?.stockIn(selectedProduct.id, {
         quantity: Number(stockInQty),
-        notes: stockNotes,
-        userId: "admin"
+        notes: stockNotes
       });
       if (res?.success) {
         setStockInModalOpen(false);

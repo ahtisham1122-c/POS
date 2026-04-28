@@ -527,7 +527,7 @@ function registerSalesIPC() {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `);
                 const updateStock = db_1.default.prepare(`UPDATE products SET stock = stock - ?, updated_at = ? WHERE id = ?`);
-                const getStock = db_1.default.prepare(`SELECT stock FROM products WHERE id = ?`);
+                const getStock = db_1.default.prepare(`SELECT stock, code, category FROM products WHERE id = ?`);
                 const insertMovement = db_1.default.prepare(`
           INSERT INTO stock_movements (
             id, product_id, movement_type, quantity, stock_before, stock_after, reference_id, created_by_id, created_at, synced
@@ -555,7 +555,9 @@ function registerSalesIPC() {
                     const currentStockObj = getStock.get(item.productId);
                     if (currentStockObj) {
                         const currentStock = currentStockObj.stock;
-                        if (currentStock - item.quantity < 0) {
+                        // Milk and yogurt are tracked via supplier collections / production — allow going below 0
+                        const isTrackedDairy = ['MILK', 'YOGT'].includes(String(currentStockObj.code || '').toUpperCase());
+                        if (!isTrackedDairy && currentStock - item.quantity < 0) {
                             throw new Error(`Insufficient stock for ${item.productName}`);
                         }
                         updateStock.run(item.quantity, now, item.productId);

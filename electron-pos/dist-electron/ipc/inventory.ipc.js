@@ -111,7 +111,33 @@ function registerInventoryIPC() {
     electron_1.ipcMain.handle('inventory:stockIn', async (_event, id, data) => {
         try {
             (0, auth_ipc_1.requireCurrentUser)(['ADMIN', 'MANAGER']);
-            return handleStockMutation(id, requirePositiveQuantity(data.quantity, 'Stock-in quantity'), 'STOCK_IN', data);
+            const quantity = requirePositiveQuantity(data.quantity, 'Stock-in quantity');
+            const product = db_1.default.prepare('SELECT code FROM products WHERE id = ?').get(id);
+            // Yogurt is produced from milk — deduct same quantity from Milk in same transaction
+            if (product?.code === 'YOGT') {
+                return db_1.default.transaction(() => {
+                    const milkProduct = db_1.default.prepare(`SELECT id, stock FROM products WHERE code = 'MILK' AND is_active = 1`).get();
+                    if (!milkProduct)
+                        throw new Error('Milk product not found. Yogurt is made from milk.');
+                    if (Number(milkProduct.stock) < quantity) {
+                        throw new Error(`Not enough milk stock. Need ${quantity} kg but only ${Number(milkProduct.stock).toFixed(2)} kg available.`);
+                    }
+                    // Add yogurt stock — throw on failure so outer transaction rolls back
+                    const yogurtResult = handleStockMutation(id, quantity, 'STOCK_IN', { ...data, notes: data.notes || 'Yogurt produced from milk' });
+                    if (!yogurtResult.success)
+                        throw new Error(yogurtResult.error || 'Failed to add yogurt stock');
+                    // Deduct milk stock — throw on failure so yogurt addition is also rolled back
+                    const milkResult = handleStockMutation(milkProduct.id, -quantity, 'YOGURT_PRODUCTION', {
+                        ...data,
+                        notes: `Used for yogurt production (${quantity} kg)`,
+                        referenceId: id
+                    });
+                    if (!milkResult.success)
+                        throw new Error(milkResult.error || 'Failed to deduct milk stock');
+                    return { success: true };
+                })();
+            }
+            return handleStockMutation(id, quantity, 'STOCK_IN', data);
         }
         catch (e) {
             return { success: false, error: e.message };
