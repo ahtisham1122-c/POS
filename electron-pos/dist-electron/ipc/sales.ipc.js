@@ -503,7 +503,7 @@ function registerSalesIPC() {
           id, transaction_id, shift_id, bill_number, sale_date, customer_id, cashier_id, payment_type,
           subtotal, discount_type, discount_value, discount_amount, tax_enabled, tax_label, tax_rate, taxable_amount, tax_amount, grand_total, 
           amount_paid, cash_tendered, change_returned, balance_due, status, created_at, synced
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
       `).run(saleId, transactionId, openShift.id, billNumber, now, data.customerId || null, cashierId, paymentType, subtotal, discount.discountType, discount.discountValue, discount.discountAmount, tax.taxEnabled ? 1 : 0, taxLabel, taxRate, tax.taxableAmount, tax.taxAmount, grandTotal, amountPaid, cashTendered, changeReturned, balanceDue, 'COMPLETED', now);
             // Create sync outbox entry for sale
             (0, outboxHelper_1.createOutboxEntry)('sales', 'INSERT', saleId, {
