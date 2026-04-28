@@ -32,6 +32,15 @@ export function registerDailyRatesIPC() {
     `).all();
   });
 
+  ipcMain.handle('dailyRates:getRateChangeHistory', (_event, limit = 100) => {
+    return db.prepare(`
+      SELECT *
+      FROM rate_change_history
+      ORDER BY changed_at DESC
+      LIMIT ?
+    `).all(limit);
+  });
+
   ipcMain.handle('dailyRates:update', (_event, data: any) => {
     try {
       const user = requireCurrentUser();
@@ -48,12 +57,7 @@ export function registerDailyRatesIPC() {
           UPDATE daily_rates
           SET milk_rate = ?, yogurt_rate = ?, updated_by_id = ?, synced = 0
           WHERE date = ?
-        `).run(
-          milkRate,
-          yogurtRate,
-          user.id,
-          date
-        );
+        `).run(milkRate, yogurtRate, user.id, date);
         createOutboxEntry('daily_rates', 'UPDATE', id, {
           id,
           date,
@@ -66,14 +70,7 @@ export function registerDailyRatesIPC() {
         db.prepare(`
           INSERT INTO daily_rates (id, date, milk_rate, yogurt_rate, updated_by_id, created_at, synced)
           VALUES (?, ?, ?, ?, ?, ?, 0)
-        `).run(
-          id,
-          date,
-          milkRate,
-          yogurtRate,
-          user.id,
-          now
-        );
+        `).run(id, date, milkRate, yogurtRate, user.id, now);
         createOutboxEntry('daily_rates', 'INSERT', id, {
           id,
           date,
@@ -83,6 +80,36 @@ export function registerDailyRatesIPC() {
           created_at: now
         });
       }
+
+      // Sync selling price on Milk and Yogurt products so POS always uses the current rate
+      const milkProduct = db.prepare(`SELECT id FROM products WHERE code = 'MILK' AND is_active = 1`).get() as any;
+      const yogurtProduct = db.prepare(`SELECT id FROM products WHERE code = 'YOGT' AND is_active = 1`).get() as any;
+      if (milkProduct) {
+        db.prepare(`UPDATE products SET selling_price = ?, updated_at = ?, synced = 0 WHERE id = ?`).run(milkRate, now, milkProduct.id);
+      }
+      if (yogurtProduct) {
+        db.prepare(`UPDATE products SET selling_price = ?, updated_at = ?, synced = 0 WHERE id = ?`).run(yogurtRate, now, yogurtProduct.id);
+      }
+
+      // Record every rate change in history (even multiple changes in the same day)
+      const historyId = crypto.randomUUID();
+      db.prepare(`
+        INSERT INTO rate_change_history (
+          id, changed_at, milk_rate_old, milk_rate_new, yogurt_rate_old, yogurt_rate_new,
+          changed_by_id, changed_by_name, notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        historyId,
+        now,
+        existing ? existing.milk_rate : null,
+        milkRate,
+        existing ? existing.yogurt_rate : null,
+        yogurtRate,
+        user.id,
+        user.name || user.username || null,
+        data.notes || null,
+        now
+      );
 
       logAudit({
         actionType: 'DAILY_RATES_CHANGED',

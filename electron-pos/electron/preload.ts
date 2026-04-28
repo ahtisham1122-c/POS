@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getToday: () => ipcRenderer.invoke('dailyRates:getToday'),
     update: (data: any) => ipcRenderer.invoke('dailyRates:update', data),
     getHistory: () => ipcRenderer.invoke('dailyRates:getHistory'),
+    getRateChangeHistory: (limit?: number) => ipcRenderer.invoke('dailyRates:getRateChangeHistory', limit),
   },
   cashRegister: {
     getToday: () => ipcRenderer.invoke('cashRegister:getToday'),

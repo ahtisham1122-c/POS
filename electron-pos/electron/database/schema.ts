@@ -390,6 +390,21 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS rate_change_history (
+  id TEXT PRIMARY KEY,
+  changed_at TEXT NOT NULL,
+  milk_rate_old REAL,
+  milk_rate_new REAL NOT NULL,
+  yogurt_rate_old REAL,
+  yogurt_rate_new REAL NOT NULL,
+  changed_by_id TEXT NOT NULL,
+  changed_by_name TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_change_history_date ON rate_change_history(changed_at);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id TEXT PRIMARY KEY,
   action_type TEXT NOT NULL,
@@ -544,8 +559,8 @@ export function initializeDatabase() {
     console.log('Seeding default products...');
     const now = new Date().toISOString();
     const seedProducts = [
-      { id: 'p1', code: 'MILK', name: 'Fresh Milk', category: 'Dairy', unit: 'kg', selling_price: 180, cost_price: 160, stock: 100, emoji: '🥛' },
-      { id: 'p2', code: 'YOGT', name: 'Fresh Yogurt', category: 'Dairy', unit: 'kg', selling_price: 220, cost_price: 190, stock: 50, emoji: '🫙' },
+      { id: 'p1', code: 'MILK', name: 'Fresh Milk', category: 'Dairy', unit: 'kg', selling_price: 180, cost_price: 160, stock: 0, emoji: '🥛' },
+      { id: 'p2', code: 'YOGT', name: 'Fresh Yogurt', category: 'Dairy', unit: 'kg', selling_price: 220, cost_price: 190, stock: 0, emoji: '🫙' },
       { id: 'p3', code: 'GHEE', name: 'Desi Ghee', category: 'Dairy', unit: 'kg', selling_price: 1600, cost_price: 1400, stock: 10, emoji: '🧈' },
       { id: 'p4', code: 'BUTR', name: 'Butter', category: 'Dairy', unit: 'kg', selling_price: 1200, cost_price: 1000, stock: 15, emoji: '🧀' },
       { id: 'p5', code: 'BRED', name: 'Bread', category: 'Bakery', unit: 'unit', selling_price: 120, cost_price: 100, stock: 20, emoji: '🍞' },
