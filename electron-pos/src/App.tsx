@@ -1,6 +1,7 @@
 import { useState, Suspense, useEffect } from "react";
 import { AppShell } from "./components/layout/AppShell";
 import Login from "./pages/Login";
+import SetupWizard from "./pages/SetupWizard";
 import POS from "./pages/POS";
 import Inventory from "./pages/Inventory";
 import Customers from "./pages/Customers";
@@ -23,16 +24,28 @@ export default function App() {
   const [page, setPage] = useState<PageId>("pos");
   const [user, setUser] = useState<any>(null);
   const [authChecking, setAuthChecking] = useState(true);
+  const [setupCompleted, setSetupCompleted] = useState(true);
 
   useEffect(() => {
-    window.electronAPI?.auth?.getMe().then(u => {
+    const init = async () => {
+      const u = await window.electronAPI?.auth?.getMe();
       setUser(u);
+
+      const settings = await window.electronAPI?.settings?.getAll();
+      const completedSetting = settings?.find((s: any) => s.key === "setup_completed");
+      setSetupCompleted(completedSetting?.value === "true");
+
       setAuthChecking(false);
-    });
+    };
+    init();
   }, []);
 
   if (authChecking) {
     return <div className="h-screen flex items-center justify-center bg-surface-1"><div className="w-8 h-8 rounded-full bg-primary animate-pulse-dot" /></div>;
+  }
+
+  if (!setupCompleted) {
+    return <SetupWizard />;
   }
 
   if (!user) {

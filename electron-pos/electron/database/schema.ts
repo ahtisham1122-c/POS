@@ -504,7 +504,8 @@ export function initializeDatabase() {
       ['discountApprovalLimit', '100'],
       ['shopDayStartHour', '5'],
       ['ramadan24Hour', 'false'],
-      ['24_hour_mode', 'false']
+      ['24_hour_mode', 'false'],
+      ['setup_completed', 'false']
     ];
     const insertSetting = db.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)");
     defaultSettings.forEach(([key, val]) => insertSetting.run(key, val, now));
@@ -519,6 +520,9 @@ export function initializeDatabase() {
   ensureSetting.run('shopDayStartHour', '5', nowForSettings);
   ensureSetting.run('ramadan24Hour', 'false', nowForSettings);
   ensureSetting.run('24_hour_mode', 'false', nowForSettings);
+  // Existing installs that already have settings get setup marked complete automatically
+  const existingAdmin = db.prepare("SELECT id FROM users WHERE username = 'admin' AND password_hash != '1234'").get();
+  ensureSetting.run('setup_completed', existingAdmin ? 'true' : 'false', nowForSettings);
   const defaultApiUrl = process.env.APP_API_URL || 'http://localhost:3001/api';
   const defaultSyncSecret = process.env.SYNC_DEVICE_SECRET || 'noon-dairy-local-sync-secret-change-me';
   ensureSetting.run('APP_API_URL', defaultApiUrl, nowForSettings);
