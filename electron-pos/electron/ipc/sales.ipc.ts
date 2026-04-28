@@ -527,7 +527,7 @@ export function registerSalesIPC() {
       const amountPaid = paymentType === 'CREDIT' ? 0 : roundMoney(cashPaid + onlinePaid);
       const balanceDue = paymentType === 'CREDIT' ? grandTotal : 0;
       const cashTendered = paymentType === 'CASH'
-        ? roundMoney(requestedCashTendered > 0 ? requestedCashTendered : grandTotal)
+        ? (requestedCashTendered === 0 || Math.abs(requestedCashTendered - data.grandTotal) < 0.01 ? grandTotal : roundMoney(requestedCashTendered))
         : paymentType === 'SPLIT'
           ? cashPaid
           : 0;
