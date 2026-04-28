@@ -945,9 +945,34 @@ export default function POS() {
             )}
 
             {paymentMode === "CASH" && (
-              <div className="flex flex-col bg-surface-2 border border-surface-4 rounded-lg p-2 animate-slide-up relative">
-                <label className="text-[10px] font-bold text-text-secondary uppercase mb-1">Cash Received</label>
-                <input type="number" placeholder="Amount (Rs)" value={cashReceived} onChange={e => setCashReceived(e.target.value)} className="w-full bg-surface-1 border border-surface-4 rounded p-1.5 text-sm font-mono text-white outline-none focus:border-success mb-1" />
+              <div className="flex flex-col bg-success/10 border border-success/30 rounded-lg p-2 animate-slide-up relative">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div>
+                    <div className="text-[10px] font-bold text-success uppercase">Fast cash sale</div>
+                    <div className="text-[10px] text-text-secondary">Cash box is optional. Press Enter or CASH to complete.</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] text-text-secondary uppercase">Bill</div>
+                    <div className="text-lg font-black font-mono text-success">{toMoney(grandTotal)}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5 mb-2">
+                  {[grandTotal, 500, 1000, 5000].map((amount, index) => (
+                    <button
+                      key={`${index}-${amount}`}
+                      type="button"
+                      onClick={() => setCashReceived(String(Math.round(amount)))}
+                      className="h-8 rounded-md bg-surface-3 hover:bg-surface-4 border border-surface-4 text-[11px] font-bold text-white"
+                    >
+                      {amount === grandTotal ? "Exact" : `Rs ${amount}`}
+                    </button>
+                  ))}
+                </div>
+                <label className="text-[10px] font-bold text-text-secondary uppercase mb-1">Optional change calculator</label>
+                <input type="number" min="0" inputMode="numeric" placeholder="Leave blank for exact cash" value={cashReceived} onChange={e => setCashReceived(e.target.value)} className="w-full bg-surface-1 border border-surface-4 rounded p-1.5 text-sm font-mono text-white outline-none focus:border-success mb-1" />
+                {cashReceivedValue > 0 && cashReceivedValue < grandTotal && (
+                  <div className="text-xs font-bold text-warning mt-1">Received is short by {toMoney(grandTotal - cashReceivedValue)}</div>
+                )}
                 {cashReceivedValue > grandTotal && (
                   <div className="text-xs font-bold text-success animate-bounce-in mt-1">Change: {toMoney(changeToReturn)}</div>
                 )}
