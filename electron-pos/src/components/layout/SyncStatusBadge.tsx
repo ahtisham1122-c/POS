@@ -69,29 +69,6 @@ export function SyncStatusBadge() {
 
   return (
     <div className="relative">
-      {stuckCount > 0 && (
-        <div className="fixed right-4 top-16 z-50 w-[360px] max-w-[calc(100vw-2rem)] rounded-xl border border-danger/40 bg-danger/15 p-4 shadow-float backdrop-blur-md">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
-            <div className="min-w-0 flex-1">
-              <p className="font-bold text-danger">Cloud sync needs attention</p>
-              <p className="mt-1 text-sm text-text-secondary">
-                {stuckCount} record{stuckCount === 1 ? "" : "s"} have not synced for more than 10 minutes. Sales are safe locally, but the cloud copy is behind.
-              </p>
-              {latestError && <p className="mt-2 truncate text-xs text-danger">{latestError}</p>}
-              <button
-                onClick={handleSyncNow}
-                className="mt-3 inline-flex h-9 items-center gap-2 rounded-lg bg-danger px-3 text-sm font-bold text-white transition active:scale-95"
-                disabled={status === "SYNCING"}
-              >
-                <RefreshCw className={cn("h-4 w-4", status === "SYNCING" && "animate-spin")} />
-                Retry Sync
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
