@@ -1048,10 +1048,10 @@ export default function POS() {
                        <div key={b.id} className="p-2 bg-surface-3 hover:bg-surface-4 rounded-md text-left flex justify-between items-center transition-colors group">
                          <button onClick={() => resumeBill(b)} className="flex-1 text-left">
                            <div className="font-bold text-sm text-white">{b.customerName}</div>
-                           <div className="text-[10px] text-text-secondary">{format(b.time, "hh:mm a")} • {b.items.length} items</div>
+                           <div className="text-[10px] text-text-secondary">{format(new Date(b.time), "hh:mm a")} • {b.items.length} items</div>
                          </button>
                          <div className="flex items-center gap-2">
-                           <div className="font-mono text-accent font-bold text-xs">{toMoney(b.total)}</div>
+                           <div className="font-mono text-accent font-bold text-xs">{toMoney(b.subtotal)}</div>
                            <button onClick={(e) => discardHeldBill(e, b.id)} className="text-danger opacity-0 group-hover:opacity-100 p-1 hover:bg-danger/20 rounded">
                              <X className="w-3 h-3" />
                            </button>
