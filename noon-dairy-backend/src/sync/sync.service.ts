@@ -599,9 +599,9 @@ export class SyncService {
     let totalStock = 0;
     movements.forEach(m => {
        const qty = Number(m.quantity);
-       if (m.movementType === 'STOCK_IN' || m.movementType === 'OPENING' || m.movementType === 'RETURN_IN' || m.movementType === 'VOID_RESTOCK' || m.movementType === 'MILK_COLLECTION') {
+       if (['STOCK_IN', 'OPENING', 'RETURN_IN', 'VOID_RESTOCK', 'MILK_COLLECTION', 'DELIVERY_RETURN'].includes(m.movementType)) {
          totalStock += qty;
-       } else if (m.movementType === 'STOCK_OUT' || m.movementType === 'WASTAGE') {
+       } else if (['STOCK_OUT', 'WASTAGE', 'DELIVERY_OUT'].includes(m.movementType)) {
          totalStock -= qty;
        }
     });

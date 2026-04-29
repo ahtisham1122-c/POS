@@ -528,6 +528,8 @@ enum StockMovementType {
   WASTAGE
   ADJUSTMENT
   OPENING
+  DELIVERY_OUT
+  DELIVERY_RETURN
 }
 
 enum ExpenseCategory {
