@@ -135,7 +135,7 @@ export function registerInventoryIPC() {
   });
 }
 
-function handleStockMutation(productId: string, quantityDiff: number, movementType: string, data: any) {
+export function handleStockMutation(productId: string, quantityDiff: number, movementType: string, data: any) {
   const transaction = db.transaction(() => {
     const now = new Date().toISOString();
     const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(productId) as any;

@@ -478,6 +478,61 @@ export function runMigrations() {
             CREATE INDEX IF NOT EXISTS idx_employee_salary_payments_emp ON employee_salary_payments(employee_id);
           `);
         }
+      },
+      {
+        version: 16,
+        up: () => {
+          log.info('Running migration v16: Adding riders and milk delivery management');
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS riders (
+              id TEXT PRIMARY KEY,
+              code TEXT UNIQUE NOT NULL,
+              name TEXT NOT NULL,
+              phone TEXT,
+              area TEXT,
+              is_active INTEGER DEFAULT 1,
+              notes TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS delivery_sessions (
+              id TEXT PRIMARY KEY,
+              rider_id TEXT NOT NULL,
+              session_date TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'OPEN',
+              total_pickup REAL DEFAULT 0,
+              total_return REAL DEFAULT 0,
+              total_delivered REAL DEFAULT 0,
+              opened_by_id TEXT,
+              completed_by_id TEXT,
+              completed_at TEXT,
+              notes TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (rider_id) REFERENCES riders(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS delivery_entries (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              rider_id TEXT NOT NULL,
+              entry_type TEXT NOT NULL,
+              quantity REAL NOT NULL,
+              stock_movement_id TEXT,
+              notes TEXT,
+              created_by_id TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (session_id) REFERENCES delivery_sessions(id),
+              FOREIGN KEY (rider_id) REFERENCES riders(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_riders_active ON riders(is_active);
+            CREATE INDEX IF NOT EXISTS idx_delivery_sessions_rider ON delivery_sessions(rider_id);
+            CREATE INDEX IF NOT EXISTS idx_delivery_sessions_date ON delivery_sessions(session_date);
+            CREATE INDEX IF NOT EXISTS idx_delivery_sessions_status ON delivery_sessions(status);
+            CREATE INDEX IF NOT EXISTS idx_delivery_entries_session ON delivery_entries(session_id);
+          `);
+        }
       }
     ];
 

@@ -152,6 +152,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDefaultPeriod: (startDate: string, targetMonth?: string) => ipcRenderer.invoke('employees:getDefaultPeriod', startDate, targetMonth),
     calculateLeavingPay: (employeeId: string) => ipcRenderer.invoke('employees:calculateLeavingPay', employeeId),
   },
+  riders: {
+    getAll: (showInactive?: boolean) => ipcRenderer.invoke('riders:getAll', showInactive),
+    create: (data: any) => ipcRenderer.invoke('riders:create', data),
+    update: (id: string, data: any) => ipcRenderer.invoke('riders:update', id, data),
+    deactivate: (id: string) => ipcRenderer.invoke('riders:deactivate', id),
+  },
+  deliveries: {
+    getTodayOverview: () => ipcRenderer.invoke('deliveries:getTodayOverview'),
+    getOrCreateSession: (riderId: string) => ipcRenderer.invoke('deliveries:getOrCreateSession', riderId),
+    addPickup: (data: any) => ipcRenderer.invoke('deliveries:addPickup', data),
+    addReturn: (data: any) => ipcRenderer.invoke('deliveries:addReturn', data),
+    completeSession: (sessionId: string, notes?: string) => ipcRenderer.invoke('deliveries:completeSession', sessionId, notes),
+    getSession: (sessionId: string) => ipcRenderer.invoke('deliveries:getSession', sessionId),
+    getRiderHistory: (riderId: string, limit?: number) => ipcRenderer.invoke('deliveries:getRiderHistory', riderId, limit),
+    getAllHistory: (limit?: number) => ipcRenderer.invoke('deliveries:getAllHistory', limit),
+    getMilkStock: () => ipcRenderer.invoke('deliveries:getMilkStock'),
+  },
   onNetworkChange: (callback: (status: 'online' | 'offline') => void) => {
     ipcRenderer.on('network-status-changed', (_event, status) => callback(status));
   },
