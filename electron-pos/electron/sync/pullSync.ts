@@ -37,6 +37,7 @@ export async function pullSync(mainWindow?: BrowserWindow) {
     dailyRates = payload?.dailyRates || [];
     settings = payload?.settings || [];
     
+    const SYSTEM_PRODUCT_CODES = new Set(['MILK', 'YOGT']);
     let hasUpdates = false;
 
     db.transaction(() => {
@@ -51,16 +52,21 @@ export async function pullSync(mainWindow?: BrowserWindow) {
       `);
 
       for (const p of products) {
+        const code = String(p.code || '').toUpperCase();
+        // Never allow cloud to deactivate system products
+        const isActive = SYSTEM_PRODUCT_CODES.has(code)
+          ? 1
+          : ((p.isActive ?? p.is_active) ? 1 : 0);
         upsertProduct.run({
-          id: p.id, code: p.code, name: p.name, category: p.category, unit: p.unit, 
+          id: p.id, code: p.code, name: p.name, category: p.category, unit: p.unit,
           sellingPrice: p.sellingPrice ?? p.selling_price,
-          costPrice: p.costPrice ?? p.cost_price, 
-          stock: p.stock, 
-          lowStockThreshold: p.lowStockThreshold ?? p.low_stock_threshold, 
-          taxExempt: (p.taxExempt ?? p.tax_exempt) ? 1 : 0, 
-          emoji: p.emoji, 
-          isActive: (p.isActive ?? p.is_active) ? 1 : 0, 
-          createdAt: p.createdAt ?? p.created_at, 
+          costPrice: p.costPrice ?? p.cost_price,
+          stock: p.stock,
+          lowStockThreshold: p.lowStockThreshold ?? p.low_stock_threshold,
+          taxExempt: (p.taxExempt ?? p.tax_exempt) ? 1 : 0,
+          emoji: p.emoji,
+          isActive,
+          createdAt: p.createdAt ?? p.created_at,
           updatedAt: p.updatedAt ?? p.updated_at
         });
         hasUpdates = true;

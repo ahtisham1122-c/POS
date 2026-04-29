@@ -5,6 +5,12 @@ import { createOutboxEntry } from '../sync/outboxHelper';
 import { getCurrentUser, requireCurrentUser } from './auth.ipc';
 import { logAudit } from '../audit/auditLog';
 
+const SYSTEM_PRODUCT_CODES = new Set(['MILK', 'YOGT']);
+
+function isSystemProductCode(code: unknown) {
+  return SYSTEM_PRODUCT_CODES.has(String(code || '').trim().toUpperCase());
+}
+
 function requireText(value: unknown, fieldName: string) {
   const text = String(value || '').trim();
   if (!text) throw new Error(`${fieldName} is required`);
@@ -52,7 +58,10 @@ export function registerProductsIPC() {
       requireCurrentUser(['ADMIN', 'MANAGER']);
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
-      const code = data.code || `PRD-${Date.now()}`;
+      const code = String(data.code || `PRD-${Date.now()}`).trim().toUpperCase();
+      if (isSystemProductCode(code)) {
+        return { success: false, error: 'Milk and Yogurt are built-in POS products and cannot be created again.' };
+      }
       const productName = requireText(data.name, 'Product name');
       const category = requireText(data.category || 'OTHER', 'Category');
       const unit = requireText(data.unit || 'pcs', 'Unit');
@@ -85,21 +94,23 @@ export function registerProductsIPC() {
           now
         );
 
-        createOutboxEntry('products', 'INSERT', id, {
-          id,
-          code,
-          name: productName,
-          category,
-          unit,
-          selling_price: sellingPrice,
-          cost_price: costPrice,
-          stock: initialStock,
-          low_stock_threshold: lowStockThreshold,
-          tax_exempt: taxExempt,
-          emoji,
-          created_at: now,
-          updated_at: now
-        });
+        if (!isSystemProductCode(code)) {
+          createOutboxEntry('products', 'INSERT', id, {
+            id,
+            code,
+            name: productName,
+            category,
+            unit,
+            selling_price: sellingPrice,
+            cost_price: costPrice,
+            stock: initialStock,
+            low_stock_threshold: lowStockThreshold,
+            tax_exempt: taxExempt,
+            emoji,
+            created_at: now,
+            updated_at: now
+          });
+        }
 
         if (initialStock > 0) {
           const movementId = crypto.randomUUID();
@@ -146,6 +157,9 @@ export function registerProductsIPC() {
       const now = new Date().toISOString();
       const oldProduct = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as any;
       if (!oldProduct) return { success: false, error: 'Product not found' };
+      if (isSystemProductCode(oldProduct.code)) {
+        return { success: false, error: 'Milk and Yogurt are system products. Use Daily Rates for price and Inventory/Suppliers for stock.' };
+      }
       const productName = data.name !== undefined ? requireText(data.name, 'Product name') : oldProduct.name;
       const category = data.category !== undefined ? requireText(data.category, 'Category') : oldProduct.category;
       const unit = data.unit !== undefined ? requireText(data.unit, 'Unit') : oldProduct.unit;
@@ -174,7 +188,7 @@ export function registerProductsIPC() {
         id
       );
 
-      createOutboxEntry('products', 'UPDATE', id, {
+      if (!isSystemProductCode(oldProduct.code)) createOutboxEntry('products', 'UPDATE', id, {
         id,
         name: productName,
         category,
@@ -207,7 +221,7 @@ export function registerProductsIPC() {
     try {
       requireCurrentUser(['ADMIN', 'MANAGER']);
       const product = db.prepare('SELECT code FROM products WHERE id = ?').get(id) as any;
-      if (product && ['MILK', 'YOGT'].includes(product.code)) {
+      if (product && isSystemProductCode(product.code)) {
         return { success: false, error: 'Milk and Yogurt are system products and cannot be deleted.' };
       }
       const now = new Date().toISOString();
