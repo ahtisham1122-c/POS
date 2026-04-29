@@ -35,9 +35,18 @@ export function registerShiftsIPC() {
   ipcMain.handle('shifts:open', (_event, data: { openingCash: number; notes?: string; confirmAfterMidnightOpen?: boolean }) => {
     try {
       return db.transaction(() => {
-        const existingOpen = db.prepare("SELECT id FROM shifts WHERE status = 'OPEN' LIMIT 1").get() as any;
+        const existingOpen = db.prepare(`
+          SELECT id, shift_date, opened_at
+          FROM shifts
+          WHERE status = 'OPEN'
+          ORDER BY opened_at DESC
+          LIMIT 1
+        `).get() as any;
         if (existingOpen) {
-          return { success: false, error: 'A shift is already open' };
+          return {
+            success: false,
+            error: `A shift from ${existingOpen.shift_date} is still open. Close that shift first, then open today's shift.`
+          };
         }
 
         const now = new Date().toISOString();

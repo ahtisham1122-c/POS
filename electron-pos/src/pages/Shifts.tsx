@@ -23,6 +23,8 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
     if (!cashRegister) return 0;
     return Number(cashRegister.opening_balance || 0) + Number(cashRegister.cash_in || 0) - Number(cashRegister.cash_out || 0);
   }, [cashRegister]);
+  const todayDate = format(new Date(), "yyyy-MM-dd");
+  const isPreviousDayShiftOpen = Boolean(currentShift && currentShift.shift_date !== todayDate);
 
   async function loadData() {
     setIsLoading(true);
@@ -67,7 +69,7 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
       setMessage({ type: "error", text: result?.error || "Failed to close shift." });
       return;
     }
-    setMessage({ type: "success", text: `Shift closed. Difference: ${toMoney(result.variance || 0)}.` });
+    setMessage({ type: "success", text: `Shift closed. Difference: ${toMoney(result.variance || 0)}. You can now open today's shift.` });
     setNotes("");
     await loadData();
   }
@@ -112,11 +114,24 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
             {currentShift ? (
               <>
                 <div className="grid sm:grid-cols-2 gap-3">
+                  <InfoCard label="Shift Date" value={currentShift.shift_date} tone={isPreviousDayShiftOpen ? "warning" : "default"} />
                   <InfoCard label="Opened By" value={currentShift.opened_by_name || currentShift.opened_by_id} />
                   <InfoCard label="Opened At" value={format(new Date(currentShift.opened_at), "dd MMM, hh:mm a")} />
                   <InfoCard label="Opening Cash" value={toMoney(currentShift.opening_cash)} />
                   <InfoCard label="Expected Cash" value={toMoney(expectedCash)} tone="success" />
                 </div>
+
+                {isPreviousDayShiftOpen && (
+                  <div className="rounded-xl border border-warning/30 bg-warning/10 p-4 flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-warning mt-0.5" />
+                    <div>
+                      <p className="font-bold text-warning">Previous shift is still open</p>
+                      <p className="text-sm text-text-secondary mt-1">
+                        This shift is from {currentShift.shift_date}. Count the cash drawer, enter the counted cash below, close this shift, then open today's shift.
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 <div className="rounded-xl border border-info/30 bg-info/5 p-4">
                   <p className="font-bold text-text-primary flex items-center gap-2">
@@ -247,11 +262,15 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
   );
 }
 
-function InfoCard({ label, value, tone }: { label: string; value: string; tone?: "success" }) {
+function InfoCard({ label, value, tone }: { label: string; value: string; tone?: "success" | "warning" | "default" }) {
   return (
     <div className="bg-surface-3 rounded-xl p-4 border border-surface-4">
       <p className="text-xs text-text-secondary uppercase font-bold">{label}</p>
-      <p className={cn("font-bold text-text-primary mt-1", tone === "success" && "text-success")}>{value}</p>
+      <p className={cn(
+        "font-bold text-text-primary mt-1",
+        tone === "success" && "text-success",
+        tone === "warning" && "text-warning"
+      )}>{value}</p>
     </div>
   );
 }
