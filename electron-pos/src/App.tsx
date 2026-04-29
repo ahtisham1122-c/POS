@@ -16,7 +16,6 @@ import ReceiptAudit from "./pages/ReceiptAudit";
 import Shifts from "./pages/Shifts";
 import BackupRestore from "./pages/BackupRestore";
 import Suppliers from "./pages/Suppliers";
-import TestCenter from "./pages/TestCenter";
 import Employees from "./pages/Employees";
 import Deliveries from "./pages/Deliveries";
 
@@ -42,7 +41,7 @@ export const PAGE_ACCESS: Record<PageId, UserRole[]> = {
   "employees":     ["ADMIN"],
   "settings":      ["ADMIN"],
   "backup":        ["ADMIN"],
-  "test-center":   ["ADMIN"],
+  "test-center":   [],
 };
 
 export function canAccessPage(role: string | undefined, page: PageId): boolean {
@@ -112,7 +111,6 @@ export default function App() {
         {page === "receipt-audit" && allowed("receipt-audit") && <ReceiptAudit />}
         {page === "shifts" && allowed("shifts") && <Shifts setPage={guardedSetPage} />}
         {page === "backup" && allowed("backup") && <BackupRestore />}
-        {page === "test-center" && allowed("test-center") && <TestCenter setPage={guardedSetPage} />}
         {page === "cash-register" && allowed("cash-register") && <CashRegister setPage={guardedSetPage} />}
         {page === "expenses" && allowed("expenses") && <Expenses />}
         {page === "reports" && allowed("reports") && <Reports />}

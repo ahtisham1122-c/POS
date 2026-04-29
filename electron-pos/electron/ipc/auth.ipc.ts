@@ -29,6 +29,21 @@ function verifyPasswordOrPin(secret: string, hash: string | null | undefined) {
   return secret === hash;
 }
 
+function setupCompleted() {
+  const setting = db.prepare("SELECT value FROM settings WHERE key = 'setup_completed'").get() as any;
+  return String(setting?.value || '').toLowerCase() === 'true';
+}
+
+function validatePrivatePin(newPin: string) {
+  if (!/^\d{4,8}$/.test(newPin)) {
+    throw new Error('PIN must be 4 to 8 digits');
+  }
+
+  if (newPin === '1234' || newPin === '0000') {
+    throw new Error('Please choose a private PIN, not 1234 or 0000');
+  }
+}
+
 export function requireManagerApproval(pin: unknown, actionLabel: string) {
   requireCurrentUser();
   const approvalPin = String(pin || '').trim();
@@ -133,13 +148,7 @@ export function registerAuthIPC() {
       const currentPassword = String(data?.currentPassword || '');
       const newPin = String(data?.newPin || '').trim();
 
-      if (!/^\d{4,8}$/.test(newPin)) {
-        throw new Error('Manager PIN must be 4 to 8 digits');
-      }
-
-      if (newPin === '1234' || newPin === '0000') {
-        throw new Error('Please choose a private PIN, not 1234 or 0000');
-      }
+      validatePrivatePin(newPin);
 
       const actorRow = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(actor.id) as any;
       if (!actorRow || !verifyPasswordOrPin(currentPassword, actorRow.password_hash)) {
@@ -164,6 +173,56 @@ export function registerAuthIPC() {
         entityType: 'users',
         entityId: target.id,
         after: { targetUser: target.name, role: target.role },
+        actor
+      });
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('auth:completeInitialSetup', async (_event, data: { currentPassword?: string; newPin?: string }) => {
+    try {
+      if (setupCompleted()) {
+        throw new Error('Initial setup is already complete');
+      }
+
+      const currentPassword = String(data?.currentPassword || '');
+      const newPin = String(data?.newPin || '').trim();
+      validatePrivatePin(newPin);
+
+      const admin = db.prepare(`
+        SELECT id, name, username, role, password_hash
+        FROM users
+        WHERE username = 'admin' AND role = 'ADMIN' AND is_active = 1
+      `).get() as any;
+      if (!admin) {
+        throw new Error('Default admin user was not found');
+      }
+
+      if (!verifyPasswordOrPin(currentPassword, admin.password_hash)) {
+        throw new Error('Current admin PIN is incorrect. Setup was not completed.');
+      }
+
+      const now = new Date().toISOString();
+      const hash = bcrypt.hashSync(newPin, 12);
+      db.transaction(() => {
+        db.prepare('UPDATE users SET password_hash = ?, manager_pin_hash = ?, updated_at = ?, synced = 0 WHERE id = ?')
+          .run(hash, hash, now, admin.id);
+        db.prepare(`
+          INSERT INTO settings (key, value, updated_at)
+          VALUES ('setup_completed', 'true', ?)
+          ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = excluded.updated_at
+        `).run(now);
+      })();
+
+      const actor = { id: admin.id, name: admin.name, username: admin.username, role: admin.role };
+      logAudit({
+        actionType: 'INITIAL_SETUP_COMPLETED',
+        entityType: 'users',
+        entityId: admin.id,
+        after: { defaultCredentialRemoved: true },
         actor
       });
 

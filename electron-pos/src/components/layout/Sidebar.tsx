@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Receipt,
-  BarChart3, Settings, LogOut, ChevronLeft, ChevronRight, CreditCard, RotateCcw, ClipboardCheck, Clock, DatabaseBackup, Truck, Stethoscope, UserRound, Bike
+  BarChart3, Settings, LogOut, ChevronLeft, ChevronRight, CreditCard, RotateCcw, ClipboardCheck, Clock, DatabaseBackup, Truck, UserRound, Bike
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "../../lib/utils";
@@ -36,7 +36,6 @@ export function Sidebar({ page, setPage, collapsed, setCollapsed, userRole }: Si
     { id: "shifts", label: "Shifts", icon: Clock },
     { id: "cash-register", label: "Cash Register", icon: Receipt },
     { id: "backup", label: "Backup", icon: DatabaseBackup },
-    { id: "test-center", label: "Test Center", icon: Stethoscope },
     { id: "expenses", label: "Expenses", icon: Receipt },
     { id: "reports", label: "Reports", icon: BarChart3 },
     { id: "settings", label: "Settings", icon: Settings },

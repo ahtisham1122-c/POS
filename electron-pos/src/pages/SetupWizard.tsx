@@ -62,17 +62,13 @@ export default function SetupWizard() {
   };
 
   const completSetup = async () => {
-    if (newPin.length < 4) { setError("PIN must be at least 4 characters."); return; }
+    if (!/^\d{4,8}$/.test(newPin)) { setError("PIN must be 4 to 8 digits."); return; }
+    if (newPin === "1234" || newPin === "0000") { setError("Choose a private PIN, not 1234 or 0000."); return; }
     if (newPin !== confirmPin) { setError("PINs do not match."); return; }
     setError("");
     setIsSaving(true);
     try {
-      const adminUsers = await window.electronAPI?.auth?.getUsers();
-      const admin = adminUsers?.find((u: any) => u.role === "ADMIN");
-      if (!admin) { setError("No admin user found."); return; }
-
-      const result = await window.electronAPI?.auth?.setManagerPin({
-        userId: admin.id,
+      const result = await window.electronAPI?.auth?.completeInitialSetup({
         currentPassword: "1234",
         newPin,
       });
@@ -82,18 +78,12 @@ export default function SetupWizard() {
         return;
       }
 
-      await window.electronAPI?.settings?.update({ setup_completed: "true" });
       window.location.reload();
     } catch {
       setError("Failed to complete setup.");
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const skipSetup = async () => {
-    await window.electronAPI?.settings?.update({ setup_completed: "true" });
-    window.location.reload();
   };
 
   return (
@@ -192,7 +182,7 @@ export default function SetupWizard() {
           {step === 3 && (
             <>
               <h2 className="text-xl font-bold text-text-primary">Set Manager PIN</h2>
-              <p className="text-sm text-text-secondary">The default PIN is <strong>1234</strong>. Change it now to something only you know. This PIN approves voids, refunds, and daily rate changes.</p>
+              <p className="text-sm text-text-secondary">The default PIN is <strong>1234</strong>. Change it now to something only you know. This PIN is used for admin login and manager approvals.</p>
               <div>
                 <label className="text-xs font-bold text-text-secondary uppercase mb-1 block">New PIN (4+ digits)</label>
                 <input
@@ -218,9 +208,6 @@ export default function SetupWizard() {
               </div>
               <button onClick={completSetup} disabled={isSaving} className="btn-primary w-full h-12 text-base mt-2">
                 {isSaving ? "Setting up…" : "Finish Setup ✓"}
-              </button>
-              <button onClick={skipSetup} className="w-full text-sm text-text-secondary hover:text-text-primary text-center py-2 transition-colors">
-                Skip for now (keep PIN as 1234)
               </button>
             </>
           )}

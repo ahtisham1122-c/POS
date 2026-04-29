@@ -1,7 +1,14 @@
 import { ipcMain } from 'electron';
 import db from '../database/db';
-import { requireCurrentUser } from './auth.ipc';
+import { getCurrentUser, requireCurrentUser } from './auth.ipc';
 import { logAudit } from '../audit/auditLog';
+
+const SETUP_ALLOWED_KEYS = new Set(['shop_name', 'shop_address', 'shop_phone', 'milk_rate', 'yogurt_rate']);
+
+function isSetupCompleted() {
+  const setting = db.prepare("SELECT value FROM settings WHERE key = 'setup_completed'").get() as any;
+  return String(setting?.value || '').toLowerCase() === 'true';
+}
 
 export function registerSettingsIPC() {
   ipcMain.handle('settings:getAll', () => {
@@ -10,8 +17,19 @@ export function registerSettingsIPC() {
 
   ipcMain.handle('settings:update', (_event, data: Record<string, any>) => {
     try {
-      requireCurrentUser(['ADMIN', 'MANAGER']);
       const payload = { ...(data || {}) };
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        const setupMode = !isSetupCompleted();
+        const keys = Object.keys(payload);
+        const setupOnlyPayload = keys.length > 0 && keys.every((key) => SETUP_ALLOWED_KEYS.has(key));
+        if (!setupMode || !setupOnlyPayload) {
+          requireCurrentUser(['ADMIN', 'MANAGER']);
+        }
+      } else {
+        requireCurrentUser(['ADMIN', 'MANAGER']);
+      }
+
       if (payload.taxRate !== undefined) {
         const rate = Number(payload.taxRate);
         if (!Number.isFinite(rate) || rate < 0) {

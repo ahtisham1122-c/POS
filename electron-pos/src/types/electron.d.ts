@@ -6,6 +6,7 @@ export interface ElectronAPI {
     logout: () => Promise<{ success: boolean }>;
     verifyManagerPin: (data: { pin: string; action?: string }) => Promise<{ success: boolean; approver?: any; error?: string }>;
     setManagerPin: (data: { userId?: string; currentPassword: string; newPin: string }) => Promise<{ success: boolean; error?: string }>;
+    completeInitialSetup: (data: { currentPassword: string; newPin: string }) => Promise<{ success: boolean; error?: string }>;
   };
   audit: {
     getAll: (limit?: number) => Promise<any[]>;

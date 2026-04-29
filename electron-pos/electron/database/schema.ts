@@ -1,6 +1,14 @@
 import db from './db';
 import bcrypt from 'bcryptjs';
 
+function verifyPasswordOrPin(secret: string, hash: string | null | undefined) {
+  if (!hash) return false;
+  if (hash.startsWith('$2')) {
+    return bcrypt.compareSync(secret, hash);
+  }
+  return secret === hash;
+}
+
 const SYSTEM_PRODUCTS = [
   {
     id: 'p1',
@@ -646,9 +654,19 @@ export function initializeDatabase() {
   ensureSetting.run('shopDayStartHour', '5', nowForSettings);
   ensureSetting.run('ramadan24Hour', 'false', nowForSettings);
   ensureSetting.run('24_hour_mode', 'false', nowForSettings);
-  // Existing installs that already have settings get setup marked complete automatically
-  const existingAdmin = db.prepare("SELECT id FROM users WHERE username = 'admin' AND password_hash != '1234'").get();
-  ensureSetting.run('setup_completed', existingAdmin ? 'true' : 'false', nowForSettings);
+  // Existing installs are not considered secure if the admin login still accepts 1234.
+  const adminCredential = db.prepare("SELECT password_hash FROM users WHERE username = 'admin' AND is_active = 1").get() as any;
+  const adminUsesDefaultCredential = adminCredential?.password_hash
+    ? verifyPasswordOrPin('1234', adminCredential.password_hash)
+    : false;
+  ensureSetting.run('setup_completed', adminUsesDefaultCredential ? 'false' : 'true', nowForSettings);
+  if (adminUsesDefaultCredential) {
+    db.prepare(`
+      INSERT INTO settings (key, value, updated_at)
+      VALUES ('setup_completed', 'false', ?)
+      ON CONFLICT(key) DO UPDATE SET value = 'false', updated_at = excluded.updated_at
+    `).run(nowForSettings);
+  }
   const defaultApiUrl = process.env.APP_API_URL || 'http://localhost:3001/api';
   const defaultSyncSecret = process.env.SYNC_DEVICE_SECRET || 'noon-dairy-local-sync-secret-change-me';
   ensureSetting.run('APP_API_URL', defaultApiUrl, nowForSettings);

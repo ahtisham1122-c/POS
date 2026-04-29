@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     logout: () => ipcRenderer.invoke('auth:logout'),
     verifyManagerPin: (data: any) => ipcRenderer.invoke('auth:verifyManagerPin', data),
     setManagerPin: (data: any) => ipcRenderer.invoke('auth:setManagerPin', data),
+    completeInitialSetup: (data: any) => ipcRenderer.invoke('auth:completeInitialSetup', data),
   },
   audit: {
     getAll: (limit?: number) => ipcRenderer.invoke('audit:getAll', limit),
