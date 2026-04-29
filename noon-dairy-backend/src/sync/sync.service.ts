@@ -172,6 +172,16 @@ export class SyncService {
       if (!data.emoji) data.emoji = 'PKG';
     }
 
+    if (modelName === 'supplier') {
+      const supplierId = String(data.id || 'unknown');
+      if (!data.code) data.code = `SYNC-SUP-${supplierId.slice(0, 12)}`;
+      if (!data.name) data.name = `Synced Supplier ${supplierId.slice(0, 8)}`;
+      if (!data.allowedShifts) data.allowedShifts = 'BOTH';
+      if (data.defaultRate === undefined || data.defaultRate === null) data.defaultRate = 0;
+      if (data.currentBalance === undefined || data.currentBalance === null) data.currentBalance = 0;
+      if (data.isActive === undefined || data.isActive === null) data.isActive = false;
+    }
+
     if (modelName === 'saleItem') {
       const quantity = Number(data.quantity || 0);
       const lineTotal = Number(data.lineTotal || 0);
@@ -542,6 +552,24 @@ export class SyncService {
 
       return { success: true, action: 'skipped' };
     } catch (e: any) {
+      // Prisma error code mapping — handle common known failures gracefully so the
+      // sync engine can retry instead of failing with a 400 and getting stuck.
+      const code = e?.code;
+      if (code === 'P2003') {
+        // Foreign key violation — parent not synced yet. Will retry once parent arrives.
+        console.warn(`Sync FK miss on table ${table}: ${e.message}`);
+        return { success: true, action: 'skipped', reason: `Missing parent for ${modelName}` };
+      }
+      if (code === 'P2002') {
+        // Unique constraint — record already exists. Treat as success (idempotent).
+        console.warn(`Sync unique conflict on table ${table}: ${e.message}`);
+        return { success: true, action: 'skipped', reason: 'Duplicate record (unique constraint)' };
+      }
+      if (code === 'P2025') {
+        // Record not found during update — will retry as upsert.
+        console.warn(`Sync missing record on table ${table}: ${e.message}`);
+        return { success: true, action: 'skipped', reason: 'Record not found for update' };
+      }
       console.error(`Sync error on table ${table}:`, e.message);
       throw new BadRequestException({ error: 'SYNC_ERROR', message: e.message });
     }

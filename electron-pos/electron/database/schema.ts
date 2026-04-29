@@ -1,6 +1,117 @@
 import db from './db';
 import bcrypt from 'bcryptjs';
 
+const SYSTEM_PRODUCTS = [
+  {
+    id: 'p1',
+    code: 'MILK',
+    name: 'Fresh Milk',
+    category: 'Dairy',
+    unit: 'kg',
+    selling_price: 180,
+    cost_price: 160,
+    stock: 0,
+    low_stock_threshold: 5,
+    tax_exempt: 1,
+    emoji: 'MILK'
+  },
+  {
+    id: 'p2',
+    code: 'YOGT',
+    name: 'Fresh Yogurt',
+    category: 'Dairy',
+    unit: 'kg',
+    selling_price: 220,
+    cost_price: 190,
+    stock: 0,
+    low_stock_threshold: 5,
+    tax_exempt: 1,
+    emoji: 'YOG'
+  }
+];
+
+function ensureSystemProducts() {
+  const now = new Date().toISOString();
+  const insertProduct = db.prepare(`
+    INSERT INTO products (
+      id, code, name, category, unit, selling_price, cost_price, stock,
+      low_stock_threshold, tax_exempt, emoji, is_active, created_at, updated_at, synced
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0)
+  `);
+  const updateProduct = db.prepare(`
+    UPDATE products
+    SET name = ?, category = ?, unit = ?,
+        selling_price = CASE WHEN selling_price > 0 THEN selling_price ELSE ? END,
+        cost_price = CASE WHEN cost_price > 0 THEN cost_price ELSE ? END,
+        low_stock_threshold = COALESCE(low_stock_threshold, ?),
+        tax_exempt = ?, emoji = ?, is_active = 1, updated_at = ?, synced = 0
+    WHERE code = ?
+  `);
+  const existingByCode = db.prepare('SELECT id FROM products WHERE code = ?');
+  const existingById = db.prepare('SELECT id FROM products WHERE id = ?');
+
+  SYSTEM_PRODUCTS.forEach((product) => {
+    const existing = existingByCode.get(product.code) as any;
+    if (existing) {
+      updateProduct.run(
+        product.name,
+        product.category,
+        product.unit,
+        product.selling_price,
+        product.cost_price,
+        product.low_stock_threshold,
+        product.tax_exempt,
+        product.emoji,
+        now,
+        product.code
+      );
+      return;
+    }
+
+    const existingId = existingById.get(product.id) as any;
+    if (existingId) {
+      db.prepare(`
+        UPDATE products
+        SET code = ?, name = ?, category = ?, unit = ?,
+            selling_price = CASE WHEN selling_price > 0 THEN selling_price ELSE ? END,
+            cost_price = CASE WHEN cost_price > 0 THEN cost_price ELSE ? END,
+            low_stock_threshold = COALESCE(low_stock_threshold, ?),
+            tax_exempt = ?, emoji = ?, is_active = 1, updated_at = ?, synced = 0
+        WHERE id = ?
+      `).run(
+        product.code,
+        product.name,
+        product.category,
+        product.unit,
+        product.selling_price,
+        product.cost_price,
+        product.low_stock_threshold,
+        product.tax_exempt,
+        product.emoji,
+        now,
+        product.id
+      );
+      return;
+    }
+
+    insertProduct.run(
+      product.id,
+      product.code,
+      product.name,
+      product.category,
+      product.unit,
+      product.selling_price,
+      product.cost_price,
+      product.stock,
+      product.low_stock_threshold,
+      product.tax_exempt,
+      product.emoji,
+      now,
+      now
+    );
+  });
+}
+
 const schema = `
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -559,8 +670,7 @@ export function initializeDatabase() {
     console.log('Seeding default products...');
     const now = new Date().toISOString();
     const seedProducts = [
-      { id: 'p1', code: 'MILK', name: 'Fresh Milk', category: 'Dairy', unit: 'kg', selling_price: 180, cost_price: 160, stock: 0, emoji: '🥛' },
-      { id: 'p2', code: 'YOGT', name: 'Fresh Yogurt', category: 'Dairy', unit: 'kg', selling_price: 220, cost_price: 190, stock: 0, emoji: '🫙' },
+      ...SYSTEM_PRODUCTS,
       { id: 'p3', code: 'GHEE', name: 'Desi Ghee', category: 'Dairy', unit: 'kg', selling_price: 1600, cost_price: 1400, stock: 10, emoji: '🧈' },
       { id: 'p4', code: 'BUTR', name: 'Butter', category: 'Dairy', unit: 'kg', selling_price: 1200, cost_price: 1000, stock: 15, emoji: '🧀' },
       { id: 'p5', code: 'BRED', name: 'Bread', category: 'Bakery', unit: 'unit', selling_price: 120, cost_price: 100, stock: 20, emoji: '🍞' },
@@ -578,6 +688,7 @@ export function initializeDatabase() {
     `);
     seedProducts.forEach((p: any) => insertProduct.run(p.id, p.code, p.name, p.category, p.unit, p.selling_price, p.cost_price, p.stock, p.tax_exempt || 0, p.emoji, now, now));
   }
+  ensureSystemProducts();
 
   // Ensure daily rates exist for today
   const today = new Date().toISOString().split('T')[0];
@@ -590,4 +701,3 @@ export function initializeDatabase() {
     `).run(crypto.randomUUID ? crypto.randomUUID() : 'initial-rate', today, 180, 220, 'admin-id', now);
   }
 }
-

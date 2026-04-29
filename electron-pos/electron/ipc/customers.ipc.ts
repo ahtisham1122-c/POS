@@ -3,7 +3,7 @@ import db from '../database/db';
 import * as crypto from 'crypto';
 import { createOutboxEntry } from '../sync/outboxHelper';
 import { addCashIn } from '../database/cashRegister';
-import { getCurrentUser } from './auth.ipc';
+import { getCurrentUser, requireCurrentUser, requireManagerApproval } from './auth.ipc';
 
 export function registerCustomersIPC() {
   ipcMain.handle('customers:getAll', (_event, filters) => {
@@ -83,6 +83,8 @@ export function registerCustomersIPC() {
 
   ipcMain.handle('customers:create', async (_event, data: any) => {
     try {
+      requireCurrentUser();
+      if (!data?.name?.trim()) throw new Error('Customer name is required');
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
       const code = data.code || `CUST-${Date.now()}`;
@@ -147,6 +149,7 @@ export function registerCustomersIPC() {
 
   ipcMain.handle('customers:update', async (_event, id: string, data: any) => {
     try {
+      requireCurrentUser(['ADMIN', 'MANAGER']);
       const oldCustomer = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as any;
       if (!oldCustomer) return { success: false, error: 'Customer not found' };
 
@@ -180,8 +183,17 @@ export function registerCustomersIPC() {
     }
   });
 
-  ipcMain.handle('customers:remove', async (_event, id: string) => {
+  ipcMain.handle('customers:remove', async (_event, id: string, options?: { managerPin?: string }) => {
     try {
+      requireCurrentUser();
+      const customer = db.prepare('SELECT id, current_balance FROM customers WHERE id = ?').get(id) as any;
+      if (!customer) return { success: false, error: 'Customer not found' };
+      // Manager approval required to deactivate any customer
+      requireManagerApproval(options?.managerPin, 'deactivating a customer');
+      // Block deactivation if there is an outstanding balance — protects khata records
+      if (Number(customer.current_balance || 0) > 0) {
+        return { success: false, error: 'This customer has an outstanding balance. Settle the khata before deactivating.' };
+      }
       const now = new Date().toISOString();
       db.prepare('UPDATE customers SET is_active = 0, updated_at = ?, synced = 0 WHERE id = ?').run(now, id);
       createOutboxEntry('customers', 'UPDATE', id, { id, is_active: 0, updated_at: now });
@@ -197,6 +209,7 @@ export function registerCustomersIPC() {
 
   ipcMain.handle('customers:collectPayment', async (_event, id: string, data: any) => {
     const transaction = db.transaction(() => {
+      requireCurrentUser();
       const now = new Date().toISOString();
       const customer = db.prepare('SELECT current_balance FROM customers WHERE id = ?').get(id) as any;
       if (!customer) throw new Error('Customer not found');

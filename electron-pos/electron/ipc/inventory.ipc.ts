@@ -90,7 +90,7 @@ export function registerInventoryIPC() {
           const yogurtResult = handleStockMutation(id, quantity, 'STOCK_IN', { ...data, notes: data.notes || 'Yogurt produced from milk' }) as any;
           if (!yogurtResult.success) throw new Error(yogurtResult.error || 'Failed to add yogurt stock');
           // Deduct milk stock — throw on failure so yogurt addition is also rolled back
-          const milkResult = handleStockMutation(milkProduct.id, -quantity, 'YOGURT_PRODUCTION', {
+          const milkResult = handleStockMutation(milkProduct.id, -quantity, 'STOCK_OUT', {
             ...data,
             notes: `Used for yogurt production (${quantity} kg)`,
             referenceId: id

@@ -8,6 +8,7 @@ type AppShellProps = {
   page: PageId;
   setPage: (p: PageId) => void;
   children: React.ReactNode;
+  userRole?: string;
 };
 
 const pageTitles: Record<PageId, string> = {
@@ -30,7 +31,7 @@ const pageTitles: Record<PageId, string> = {
   deliveries: "Milk Deliveries",
 };
 
-export function AppShell({ page, setPage, children }: AppShellProps) {
+export function AppShell({ page, setPage, children, userRole }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Sidebar and topbar visibility
@@ -44,6 +45,7 @@ export function AppShell({ page, setPage, children }: AppShellProps) {
           setPage={setPage}
           collapsed={sidebarCollapsed}
           setCollapsed={setSidebarCollapsed}
+          userRole={userRole}
         />
       )}
 
@@ -55,7 +57,7 @@ export function AppShell({ page, setPage, children }: AppShellProps) {
         </main>
       </div>
 
-      {!isPos && <MobileNav page={page} setPage={setPage} />}
+      {!isPos && <MobileNav page={page} setPage={setPage} userRole={userRole} />}
     </div>
   );
 }

@@ -346,7 +346,9 @@ export default function Inventory() {
                             <ArrowUpCircle className="w-4 h-4" />
                           </button>
                           <button
+                            disabled={isLocked}
                             onClick={() => {
+                              if (isLocked) return;
                               setEditProduct({
                                 id: p.id,
                                 code: p.code,
@@ -361,7 +363,13 @@ export default function Inventory() {
                               });
                               setIsEditModalOpen(true);
                             }}
-                            className="p-1.5 text-text-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit"
+                            className={cn(
+                              "p-1.5 rounded transition-colors",
+                              isLocked
+                                ? "text-text-secondary/40 cursor-not-allowed"
+                                : "text-text-secondary hover:text-primary hover:bg-primary/10"
+                            )}
+                            title={isLocked ? "System product cannot be edited" : "Edit"}
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>

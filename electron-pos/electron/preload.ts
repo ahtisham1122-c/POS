@@ -49,7 +49,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getOne: (id: string) => ipcRenderer.invoke('customers:getOne', id),
     create: (data: any) => ipcRenderer.invoke('customers:create', data),
     update: (id: string, data: any) => ipcRenderer.invoke('customers:update', id, data),
-    remove: (id: string) => ipcRenderer.invoke('customers:remove', id),
+    remove: (id: string, options?: { managerPin?: string }) => ipcRenderer.invoke('customers:remove', id, options),
     getLedger: (id: string) => ipcRenderer.invoke('customers:getLedger', id),
     collectPayment: (id: string, data: any) => ipcRenderer.invoke('customers:collectPayment', id, data),
     search: (query: string) => ipcRenderer.invoke('customers:search', query),
@@ -80,7 +80,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAll: (filters?: any) => ipcRenderer.invoke('expenses:getAll', filters),
     create: (data: any) => ipcRenderer.invoke('expenses:create', data),
     update: (id: string, data: any) => ipcRenderer.invoke('expenses:update', id, data),
-    remove: (id: string) => ipcRenderer.invoke('expenses:remove', id),
+    remove: (id: string, options?: { managerPin?: string; reason?: string }) => ipcRenderer.invoke('expenses:remove', id, options),
     getSummary: () => ipcRenderer.invoke('expenses:getSummary'),
   },
   reports: {

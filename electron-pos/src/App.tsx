@@ -22,6 +22,34 @@ import Deliveries from "./pages/Deliveries";
 
 export type PageId = "dashboard" | "pos" | "inventory" | "suppliers" | "customers" | "khata" | "returns" | "receipt-audit" | "shifts" | "backup" | "test-center" | "expenses" | "reports" | "settings" | "cash-register" | "employees" | "deliveries";
 
+export type UserRole = "ADMIN" | "MANAGER" | "CASHIER";
+
+// Pages each role is allowed to access. Unlisted = ADMIN-only.
+export const PAGE_ACCESS: Record<PageId, UserRole[]> = {
+  "dashboard":     ["ADMIN", "MANAGER"],
+  "pos":           ["ADMIN", "MANAGER", "CASHIER"],
+  "inventory":     ["ADMIN", "MANAGER"],
+  "suppliers":     ["ADMIN", "MANAGER"],
+  "customers":     ["ADMIN", "MANAGER", "CASHIER"],
+  "khata":         ["ADMIN", "MANAGER", "CASHIER"],
+  "returns":       ["ADMIN", "MANAGER", "CASHIER"],
+  "receipt-audit": ["ADMIN", "MANAGER", "CASHIER"],
+  "shifts":        ["ADMIN", "MANAGER", "CASHIER"],
+  "cash-register": ["ADMIN", "MANAGER", "CASHIER"],
+  "expenses":      ["ADMIN", "MANAGER"],
+  "reports":       ["ADMIN", "MANAGER"],
+  "deliveries":    ["ADMIN", "MANAGER"],
+  "employees":     ["ADMIN"],
+  "settings":      ["ADMIN"],
+  "backup":        ["ADMIN"],
+  "test-center":   ["ADMIN"],
+};
+
+export function canAccessPage(role: string | undefined, page: PageId): boolean {
+  if (!role) return false;
+  return PAGE_ACCESS[page]?.includes(role as UserRole) ?? false;
+}
+
 export default function App() {
   const [page, setPage] = useState<PageId>("pos");
   const [user, setUser] = useState<any>(null);
@@ -42,6 +70,21 @@ export default function App() {
     init();
   }, []);
 
+  // If a user is logged in and the current page is not allowed for their role,
+  // bounce them to a landing page their role can access (POS for cashiers, dashboard otherwise).
+  useEffect(() => {
+    if (!user) return;
+    if (!canAccessPage(user.role, page)) {
+      const fallback: PageId = user.role === "CASHIER" ? "pos" : "dashboard";
+      setPage(fallback);
+    }
+  }, [user, page]);
+
+  const guardedSetPage = (next: PageId) => {
+    if (user && !canAccessPage(user.role, next)) return;
+    setPage(next);
+  };
+
   if (authChecking) {
     return <div className="h-screen flex items-center justify-center bg-surface-1"><div className="w-8 h-8 rounded-full bg-primary animate-pulse-dot" /></div>;
   }
@@ -54,26 +97,28 @@ export default function App() {
     return <Login />;
   }
 
+  const allowed = (p: PageId) => canAccessPage(user.role, p);
+
   return (
-    <AppShell page={page} setPage={setPage}>
+    <AppShell page={page} setPage={guardedSetPage} userRole={user.role}>
       <Suspense fallback={<div className="p-8 flex justify-center"><div className="w-8 h-8 rounded-full bg-primary animate-pulse-dot" /></div>}>
-        {page === "dashboard" && <Dashboard setPage={setPage} />}
-        {page === "pos" && <POS />}
-        {page === "inventory" && <Inventory />}
-        {page === "suppliers" && <Suppliers />}
-        {page === "customers" && <Customers />}
-        {page === "khata" && <Khata />}
-        {page === "returns" && <Returns />}
-        {page === "receipt-audit" && <ReceiptAudit />}
-        {page === "shifts" && <Shifts setPage={setPage} />}
-        {page === "backup" && <BackupRestore />}
-        {page === "test-center" && <TestCenter setPage={setPage} />}
-        {page === "cash-register" && <CashRegister setPage={setPage} />}
-        {page === "expenses" && <Expenses />}
-        {page === "reports" && <Reports />}
-        {page === "settings" && <Settings />}
-        {page === "employees" && <Employees />}
-        {page === "deliveries" && <Deliveries />}
+        {page === "dashboard" && allowed("dashboard") && <Dashboard setPage={guardedSetPage} />}
+        {page === "pos" && allowed("pos") && <POS />}
+        {page === "inventory" && allowed("inventory") && <Inventory />}
+        {page === "suppliers" && allowed("suppliers") && <Suppliers />}
+        {page === "customers" && allowed("customers") && <Customers />}
+        {page === "khata" && allowed("khata") && <Khata />}
+        {page === "returns" && allowed("returns") && <Returns />}
+        {page === "receipt-audit" && allowed("receipt-audit") && <ReceiptAudit />}
+        {page === "shifts" && allowed("shifts") && <Shifts setPage={guardedSetPage} />}
+        {page === "backup" && allowed("backup") && <BackupRestore />}
+        {page === "test-center" && allowed("test-center") && <TestCenter setPage={guardedSetPage} />}
+        {page === "cash-register" && allowed("cash-register") && <CashRegister setPage={guardedSetPage} />}
+        {page === "expenses" && allowed("expenses") && <Expenses />}
+        {page === "reports" && allowed("reports") && <Reports />}
+        {page === "settings" && allowed("settings") && <Settings />}
+        {page === "employees" && allowed("employees") && <Employees />}
+        {page === "deliveries" && allowed("deliveries") && <Deliveries />}
       </Suspense>
     </AppShell>
   );

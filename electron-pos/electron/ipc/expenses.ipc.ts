@@ -3,7 +3,8 @@ import db from '../database/db';
 import * as crypto from 'crypto';
 import { createOutboxEntry } from '../sync/outboxHelper';
 import { addCashOut, adjustCashOut } from '../database/cashRegister';
-import { getCurrentUser } from './auth.ipc';
+import { getCurrentUser, requireCurrentUser, requireManagerApproval } from './auth.ipc';
+import { logAudit } from '../audit/auditLog';
 import { getActiveBusinessDate, getOpenShift } from '../database/businessDay';
 
 export function registerExpensesIPC() {
@@ -17,6 +18,7 @@ export function registerExpensesIPC() {
 
   ipcMain.handle('expenses:create', async (_event, data: any) => {
     const transaction = db.transaction(() => {
+      requireCurrentUser();
       const now = new Date().toISOString();
       const code = `EXP-${Date.now()}`;
       const expenseId = crypto.randomUUID();
@@ -25,6 +27,8 @@ export function registerExpensesIPC() {
       const createdById = data.userId || getCurrentUser()?.id || 'system';
       const shift = getOpenShift();
       if (amount <= 0) throw new Error('Expense amount must be greater than zero');
+      if (!data.category) throw new Error('Expense category is required');
+      if (!data.description?.trim()) throw new Error('Expense description is required');
 
       // INSERT expense
       db.prepare(`
@@ -59,6 +63,7 @@ export function registerExpensesIPC() {
 
   ipcMain.handle('expenses:update', async (_event, id: string, data: any) => {
     try {
+      requireCurrentUser(['ADMIN', 'MANAGER']);
       const oldExpense = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) as any;
       if (!oldExpense) return { success: false, error: 'Expense not found' };
       const now = new Date().toISOString();
@@ -91,13 +96,28 @@ export function registerExpensesIPC() {
     }
   });
 
-  ipcMain.handle('expenses:remove', async (_event, id: string) => {
+  ipcMain.handle('expenses:remove', async (_event, id: string, options?: { managerPin?: string; reason?: string }) => {
     try {
+      const actor = requireCurrentUser();
       const oldExpense = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) as any;
       if (!oldExpense) return { success: false, error: 'Expense not found' };
+      const approver = requireManagerApproval(options?.managerPin, 'deleting an expense');
+      const reason = String(options?.reason || '').trim();
+      if (reason.length < 5) {
+        return { success: false, error: 'Provide a reason (min 5 characters) to delete this expense' };
+      }
       db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
       createOutboxEntry('expenses', 'DELETE', id, { id });
       adjustCashOut(-Number(oldExpense.amount || 0), oldExpense.shift_id ? undefined : String(oldExpense.expense_date).split('T')[0], oldExpense.shift_id || null);
+      logAudit({
+        actionType: 'EXPENSE_DELETED',
+        entityType: 'expenses',
+        entityId: id,
+        before: oldExpense,
+        reason,
+        actor,
+        approvedBy: approver
+      });
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message };

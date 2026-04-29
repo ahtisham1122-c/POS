@@ -325,12 +325,15 @@ export default function POS() {
     setPhysicalCash(data?.cashInDrawer?.toString() || "");
   };
 
-  const milkProduct = useMemo(() => products.find(p => p.code === "MILK" || p.name.toUpperCase().includes("MILK")), [products]);
-  const yogurtProduct = useMemo(() => products.find(p => p.code === "YOGT" || p.name.toUpperCase().includes("YOGURT")), [products]);
+  const milkProduct = useMemo(() => products.find(p => String(p.code).toUpperCase() === "MILK"), [products]);
+  const yogurtProduct = useMemo(() => products.find(p => String(p.code).toUpperCase() === "YOGT"), [products]);
   const otherProducts = useMemo(() => products.filter(p => p.id !== milkProduct?.id && p.id !== yogurtProduct?.id && p.name.toLowerCase().includes(otherSearch.toLowerCase())), [products, milkProduct, yogurtProduct, otherSearch]);
 
   const addMilk = (qty: number) => {
-    if (!milkProduct) return;
+    if (!milkProduct) {
+      addAlert("Milk system product is missing. Restart the app once to repair products.");
+      return;
+    }
     addItem({
       id: crypto.randomUUID(),
       productId: milkProduct.id,
@@ -344,7 +347,10 @@ export default function POS() {
   };
 
   const addYogurtKg = (qty: number) => {
-    if (!yogurtProduct) return;
+    if (!yogurtProduct) {
+      addAlert("Yogurt system product is missing. Restart the app once to repair products.");
+      return;
+    }
     addItem({
       id: crypto.randomUUID(),
       productId: yogurtProduct.id,
@@ -358,7 +364,11 @@ export default function POS() {
   };
 
   const addYogurtRs = (amount: number) => {
-    if (!yogurtProduct || rates.yogurt_rate <= 0) return;
+    if (!yogurtProduct) {
+      addAlert("Yogurt system product is missing. Restart the app once to repair products.");
+      return;
+    }
+    if (rates.yogurt_rate <= 0) return;
     const qty = Math.round((amount / rates.yogurt_rate) * 1000) / 1000;
     addItem({
       id: crypto.randomUUID(),
@@ -373,7 +383,11 @@ export default function POS() {
   };
 
   const addMilkRs = (amount: number) => {
-    if (!milkProduct || rates.milk_rate <= 0) return;
+    if (!milkProduct) {
+      addAlert("Milk system product is missing. Restart the app once to repair products.");
+      return;
+    }
+    if (rates.milk_rate <= 0) return;
     const qty = Math.round((amount / rates.milk_rate) * 1000) / 1000;
     addItem({
       id: crypto.randomUUID(),

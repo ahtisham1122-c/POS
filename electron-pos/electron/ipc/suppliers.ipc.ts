@@ -3,7 +3,7 @@ import db from '../database/db';
 import * as crypto from 'crypto';
 import { createOutboxEntry } from '../sync/outboxHelper';
 import { addCashOut } from '../database/cashRegister';
-import { getCurrentUser } from './auth.ipc';
+import { getCurrentUser, requireCurrentUser } from './auth.ipc';
 
 type SupplierInput = {
   name: string;
@@ -23,13 +23,8 @@ type CollectionInput = {
 };
 
 function getMilkProduct() {
-  return db.prepare(`
-    SELECT *
-    FROM products
-    WHERE code = 'MILK' OR lower(name) LIKE '%milk%'
-    ORDER BY code = 'MILK' DESC
-    LIMIT 1
-  `).get() as any;
+  // Only the system MILK product — never match by name to avoid hitting "milk powder" etc.
+  return db.prepare(`SELECT * FROM products WHERE code = 'MILK' LIMIT 1`).get() as any;
 }
 
 function nextSupplierCode() {
@@ -49,6 +44,7 @@ export function registerSuppliersIPC() {
 
   ipcMain.handle('suppliers:create', (_event, data: SupplierInput) => {
     try {
+      requireCurrentUser(['ADMIN', 'MANAGER']);
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
       const code = nextSupplierCode();
@@ -85,6 +81,7 @@ export function registerSuppliersIPC() {
 
   ipcMain.handle('suppliers:update', (_event, id: string, data: SupplierInput) => {
     try {
+      requireCurrentUser(['ADMIN', 'MANAGER']);
       const now = new Date().toISOString();
       if (!data.name?.trim()) return { success: false, error: 'Supplier name is required' };
 
@@ -120,6 +117,7 @@ export function registerSuppliersIPC() {
 
   ipcMain.handle('suppliers:collectMilk', (_event, data: CollectionInput) => {
     try {
+      requireCurrentUser();
       return db.transaction(() => {
         const now = new Date().toISOString();
         const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ? AND is_active = 1').get(data.supplierId) as any;
@@ -263,6 +261,7 @@ export function registerSuppliersIPC() {
 
   ipcMain.handle('suppliers:collectPayment', (_event, supplierId: string, data: { amount: number; notes?: string }) => {
     try {
+      requireCurrentUser(['ADMIN', 'MANAGER']);
       return db.transaction(() => {
         const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ? AND is_active = 1').get(supplierId) as any;
         if (!supplier) throw new Error('Supplier not found');

@@ -4,6 +4,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "../../lib/utils";
+import { canAccessPage } from "../../App";
 import type { PageId } from "../../App";
 
 type SidebarProps = {
@@ -11,15 +12,17 @@ type SidebarProps = {
   setPage: (p: PageId) => void;
   collapsed: boolean;
   setCollapsed: (c: boolean) => void;
+  userRole?: string;
 };
 
-export function Sidebar({ page, setPage, collapsed, setCollapsed }: SidebarProps) {
+export function Sidebar({ page, setPage, collapsed, setCollapsed, userRole }: SidebarProps) {
   const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
     window.electronAPI?.auth?.getMe().then(u => setUser(u));
   }, []);
-  const navItems = [
+  const role = userRole || user?.role;
+  const allNavItems: Array<{ id: PageId; label: string; icon: any }> = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "pos", label: "Point of Sale", icon: ShoppingCart },
     { id: "inventory", label: "Inventory", icon: Package },
@@ -38,6 +41,14 @@ export function Sidebar({ page, setPage, collapsed, setCollapsed }: SidebarProps
     { id: "reports", label: "Reports", icon: BarChart3 },
     { id: "settings", label: "Settings", icon: Settings },
   ];
+  const navItems = role ? allNavItems.filter(item => canAccessPage(role, item.id)) : allNavItems;
+
+  const handleLogout = async () => {
+    try {
+      await window.electronAPI?.auth?.logout();
+    } catch {}
+    window.location.reload();
+  };
 
   return (
     <aside
@@ -112,7 +123,7 @@ export function Sidebar({ page, setPage, collapsed, setCollapsed }: SidebarProps
           </button>
 
           {!collapsed && (
-            <button onClick={() => window.location.reload()} className="flex items-center gap-2 text-sm text-danger hover:bg-danger/10 px-3 py-2 rounded-md transition-colors font-medium">
+            <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-danger hover:bg-danger/10 px-3 py-2 rounded-md transition-colors font-medium">
               <LogOut className="w-4 h-4" />
               Log Out
             </button>

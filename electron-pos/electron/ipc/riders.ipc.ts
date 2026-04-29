@@ -12,12 +12,7 @@ function nextRiderCode() {
 }
 
 function getMilkProduct() {
-  return db.prepare(`
-    SELECT * FROM products
-    WHERE code = 'MILK' OR lower(name) LIKE '%milk%'
-    ORDER BY code = 'MILK' DESC
-    LIMIT 1
-  `).get() as any;
+  return db.prepare(`SELECT * FROM products WHERE code = 'MILK' LIMIT 1`).get() as any;
 }
 
 function todayDate() {

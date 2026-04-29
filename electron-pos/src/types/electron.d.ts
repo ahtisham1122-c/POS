@@ -47,7 +47,7 @@ export interface ElectronAPI {
     getOne: (id: string) => Promise<any>;
     create: (data: any) => Promise<any>;
     update: (id: string, data: any) => Promise<any>;
-    remove: (id: string) => Promise<any>;
+    remove: (id: string, options?: { managerPin?: string }) => Promise<any>;
     getLedger: (id: string) => Promise<any[]>;
     collectPayment: (id: string, data: any) => Promise<{ success: boolean; error?: string }>;
     search: (query: string) => Promise<any[]>;
@@ -78,7 +78,7 @@ export interface ElectronAPI {
     getAll: (filters?: any) => Promise<any[]>;
     create: (data: any) => Promise<any>;
     update: (id: string, data: any) => Promise<any>;
-    remove: (id: string) => Promise<any>;
+    remove: (id: string, options?: { managerPin?: string; reason?: string }) => Promise<any>;
     getSummary: () => Promise<any>;
   };
   reports: {
