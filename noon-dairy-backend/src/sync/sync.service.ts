@@ -306,10 +306,37 @@ export class SyncService {
     });
   }
 
+  private async ensureShiftExists(shiftId: string | null | undefined, tx: Prisma.TransactionClient) {
+    if (!shiftId) return;
+    const existing = await tx.shift.findUnique({ where: { id: shiftId } });
+    if (existing) return;
+
+    const placeholderUserId = `sync-shift-user-${shiftId.slice(0, 8)}`;
+    await this.ensureUserExists(placeholderUserId, tx);
+    await tx.shift.create({
+      data: {
+        id: shiftId,
+        shiftDate: new Date(),
+        openedById: placeholderUserId,
+        openedAt: new Date(),
+        status: 'CLOSED',
+        openingCash: 0,
+        expectedCash: 0,
+        closingCash: 0,
+        cashVariance: 0,
+      }
+    });
+  }
+
   private async ensureSyncDependencies(modelName: string, data: Record<string, any>, tx: Prisma.TransactionClient) {
     if (modelName === 'sale') {
+      await this.ensureShiftExists(data.shiftId, tx);
       await this.ensureUserExists(data.cashierId, tx);
       await this.ensureCustomerExists(data.customerId, tx);
+    }
+
+    if (modelName === 'cashRegister') {
+      await this.ensureShiftExists(data.shiftId, tx);
     }
 
     if (modelName === 'shift') {
@@ -347,6 +374,14 @@ export class SyncService {
   }
 
   private async hasRequiredParent(modelName: string, data: Record<string, any>, tx: Prisma.TransactionClient) {
+    if (modelName === 'sale') {
+      if (data.shiftId) {
+        const shift = await tx.shift.findUnique({ where: { id: data.shiftId }, select: { id: true } });
+        if (!shift) return false;
+      }
+      return true;
+    }
+
     if (modelName === 'saleItem') {
       if (!data.saleId) return false;
       const sale = await tx.sale.findUnique({ where: { id: data.saleId }, select: { id: true } });
@@ -357,6 +392,14 @@ export class SyncService {
       if (!data.saleId) return false;
       const sale = await tx.sale.findUnique({ where: { id: data.saleId }, select: { id: true } });
       return Boolean(sale);
+    }
+
+    if (modelName === 'payment') {
+      if (data.saleId) {
+        const sale = await tx.sale.findUnique({ where: { id: data.saleId }, select: { id: true } });
+        if (!sale) return false;
+      }
+      return true;
     }
 
     if (modelName === 'returnItem') {

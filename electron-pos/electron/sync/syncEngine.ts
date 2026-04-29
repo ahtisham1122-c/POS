@@ -98,8 +98,24 @@ export class SyncEngine {
           }, 15000);
 
           if (response.ok) {
-            db.prepare(`UPDATE sync_outbox SET status = 'synced', error_message = NULL WHERE id = ?`).run(row.id);
-            logger.info(`SyncEngine successfully uploaded row ${row.id} for table '${row.table_name}'.`);
+            const result = await response.json() as any;
+            const action = result?.data?.action ?? result?.action;
+            const reason = result?.data?.reason ?? result?.reason ?? '';
+
+            if (action === 'skipped' && typeof reason === 'string' && reason.startsWith('Missing parent')) {
+              // Parent not synced yet — keep pending so it retries after parent arrives
+              db.prepare(`
+                UPDATE sync_outbox
+                SET attempt_count = attempt_count + 1,
+                    error_message = ?,
+                    last_attempted_at = datetime('now')
+                WHERE id = ?
+              `).run(`Waiting for parent: ${reason}`, row.id);
+              logger.info(`SyncEngine deferred row ${row.id} (${row.table_name}): ${reason}`);
+            } else {
+              db.prepare(`UPDATE sync_outbox SET status = 'synced', error_message = NULL WHERE id = ?`).run(row.id);
+              logger.info(`SyncEngine synced row ${row.id} for table '${row.table_name}' (action: ${action}).`);
+            }
           } else {
             const errText = await response.text();
             throw new Error(`Server Error (${response.status}): ${errText.substring(0, 500)}`);

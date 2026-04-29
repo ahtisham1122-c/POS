@@ -32,7 +32,7 @@ if (!fs.existsSync(dbPath) && fs.existsSync(legacyDbPath)) {
   }
 }
 
-const db = new Database(dbPath, { verbose: console.log });
+const db = new Database(dbPath);
 
 // Production stability PRAGMAs
 db.pragma('journal_mode = WAL');       // Prevents database locks under concurrent reads

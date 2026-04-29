@@ -136,6 +136,37 @@ export interface ElectronAPI {
     printReceipt: (data: any) => Promise<{ success: boolean; error?: string }>;
     printStatement: (data: any) => Promise<{ success: boolean; error?: string }>;
   };
+  employees: {
+    getAll: (showInactive?: boolean) => Promise<any[]>;
+    getOne: (id: string) => Promise<any>;
+    create: (data: any) => Promise<any>;
+    update: (id: string, data: any) => Promise<any>;
+    updateSalary: (id: string, salary: number, effectiveDate: string, notes?: string) => Promise<any>;
+    markLeft: (id: string, leftDate: string) => Promise<any>;
+    addAdvance: (data: any) => Promise<any>;
+    addLeave: (data: any) => Promise<any>;
+    calculateSalary: (employeeId: string, periodStart: string, periodEnd: string) => Promise<any>;
+    paySalary: (data: any) => Promise<any>;
+    getDefaultPeriod: (startDate: string, targetMonth?: string) => Promise<{ periodStart: string; periodEnd: string }>;
+    calculateLeavingPay: (employeeId: string) => Promise<any>;
+  };
+  riders: {
+    getAll: (showInactive?: boolean) => Promise<any[]>;
+    create: (data: any) => Promise<any>;
+    update: (id: string, data: any) => Promise<any>;
+    deactivate: (id: string) => Promise<any>;
+  };
+  deliveries: {
+    getTodayOverview: () => Promise<any>;
+    getOrCreateSession: (riderId: string) => Promise<any>;
+    addPickup: (data: any) => Promise<any>;
+    addReturn: (data: any) => Promise<any>;
+    completeSession: (sessionId: string, notes?: string) => Promise<any>;
+    getSession: (sessionId: string) => Promise<any>;
+    getRiderHistory: (riderId: string, limit?: number) => Promise<any[]>;
+    getAllHistory: (limit?: number) => Promise<any[]>;
+    getMilkStock: () => Promise<any>;
+  };
   onNetworkChange: (callback: (status: 'online' | 'offline') => void) => void;
 }
 
