@@ -1,5 +1,5 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
+import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -26,6 +26,10 @@ export class AuthService {
       throw new Error(`${name} is not configured`);
     }
     return value;
+  }
+
+  private getJwtExpiry(name: string, fallback: JwtSignOptions['expiresIn']): JwtSignOptions['expiresIn'] {
+    return (process.env[name] || fallback) as JwtSignOptions['expiresIn'];
   }
 
   async login(dto: LoginDto) {
@@ -136,12 +140,12 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: this.getRequiredEnv('JWT_SECRET'),
-      expiresIn: process.env.JWT_EXPIRES_IN || '8h',
+      expiresIn: this.getJwtExpiry('JWT_EXPIRES_IN', '8h'),
     });
 
     const refreshToken = this.jwtService.sign(payload, {
       secret: this.getRequiredEnv('JWT_REFRESH_SECRET'),
-      expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
+      expiresIn: this.getJwtExpiry('JWT_REFRESH_EXPIRES_IN', '30d'),
     });
 
     const refreshTtlDays = Number(process.env.JWT_REFRESH_TTL_DAYS || 30);
