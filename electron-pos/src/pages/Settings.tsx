@@ -39,6 +39,14 @@ export default function Settings() {
   const [pinAdminPassword, setPinAdminPassword] = useState("");
   const [newManagerPin, setNewManagerPin] = useState("");
   const [confirmManagerPin, setConfirmManagerPin] = useState("");
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newUser, setNewUser] = useState({
+    name: "",
+    username: "",
+    pin: "",
+    confirmPin: "",
+    role: "CASHIER" as "ADMIN" | "MANAGER" | "CASHIER"
+  });
   const [auditIntegrity, setAuditIntegrity] = useState<{ valid: boolean; checked: number; error?: string } | null>(null);
   const [shopConfig, setShopConfig] = useState({
     shop_name: "Gujjar Milk Shop",
@@ -335,6 +343,40 @@ export default function Settings() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleCreateUser = async () => {
+    if (!newUser.name.trim()) {
+      alert("User name is required.");
+      return;
+    }
+    if (!newUser.username.trim()) {
+      alert("Username is required.");
+      return;
+    }
+    if (!newUser.pin || newUser.pin !== newUser.confirmPin) {
+      alert("PIN and confirm PIN must match.");
+      return;
+    }
+
+    const result = await window.electronAPI?.auth?.createUser({
+      name: newUser.name.trim(),
+      username: newUser.username.trim(),
+      pin: newUser.pin,
+      role: newUser.role
+    });
+
+    if (!result?.success) {
+      alert(result?.error || "Failed to add user");
+      return;
+    }
+
+    setShowAddUser(false);
+    setNewUser({ name: "", username: "", pin: "", confirmPin: "", role: "CASHIER" });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    await loadUsers();
+    await loadAuditLogs();
   };
 
   const handleSetManagerPin = async () => {
@@ -747,8 +789,88 @@ export default function Settings() {
             <div className="p-6 space-y-6 animate-slide-in-right">
               <div className="flex justify-between items-center border-b border-surface-4 pb-4">
                 <h2 className="text-xl font-bold">Users & Roles</h2>
-                <button className="btn-primary text-sm px-3 py-1.5">+ Add User</button>
+                <button onClick={() => setShowAddUser(true)} className="btn-primary text-sm px-3 py-1.5">+ Add User</button>
               </div>
+              {showAddUser && (
+                <div className="rounded-xl border border-surface-4 bg-surface-2 p-4 space-y-4">
+                  <div>
+                    <h3 className="font-bold text-text-primary">Add Login User</h3>
+                    <p className="text-sm text-text-secondary mt-1">This creates a real POS login for cashier, manager, or admin.</p>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Full Name</label>
+                      <input
+                        className="input"
+                        value={newUser.name}
+                        onChange={(e) => setNewUser((u) => ({ ...u, name: e.target.value }))}
+                        placeholder="e.g. Ali Cashier"
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Username</label>
+                      <input
+                        className="input"
+                        value={newUser.username}
+                        onChange={(e) => setNewUser((u) => ({ ...u, username: e.target.value.toLowerCase() }))}
+                        placeholder="e.g. ali"
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Role</label>
+                      <select
+                        className="input"
+                        value={newUser.role}
+                        onChange={(e) => setNewUser((u) => ({ ...u, role: e.target.value as "ADMIN" | "MANAGER" | "CASHIER" }))}
+                      >
+                        <option value="CASHIER">Cashier - POS only</option>
+                        <option value="MANAGER">Manager - reports and approvals</option>
+                        <option value="ADMIN">Admin - full access</option>
+                      </select>
+                    </div>
+                    <div className="rounded-lg border border-info/20 bg-info/5 p-3 text-xs text-text-secondary">
+                      <p className="font-bold text-text-primary">Role access</p>
+                      <p className="mt-1">Cashier can sell, return, khata, shift, and cash register. Manager gets reports, inventory, suppliers, expenses, and deliveries. Admin gets everything.</p>
+                    </div>
+                    <div>
+                      <label className="label">Login PIN</label>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        className="input"
+                        value={newUser.pin}
+                        onChange={(e) => setNewUser((u) => ({ ...u, pin: e.target.value }))}
+                        placeholder="4 to 8 digit private PIN"
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Confirm PIN</label>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        className="input"
+                        value={newUser.confirmPin}
+                        onChange={(e) => setNewUser((u) => ({ ...u, confirmPin: e.target.value }))}
+                        placeholder="Repeat PIN"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      onClick={() => {
+                        setShowAddUser(false);
+                        setNewUser({ name: "", username: "", pin: "", confirmPin: "", role: "CASHIER" });
+                      }}
+                      className="btn-secondary"
+                    >
+                      Cancel
+                    </button>
+                    <button onClick={handleCreateUser} className="btn-primary">
+                      Save User
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="rounded-xl border border-warning/30 bg-warning/5 p-4">
                 <h3 className="font-bold text-text-primary">Manager PIN</h3>
                 <p className="text-sm text-text-secondary mt-1">This PIN approves refunds, voids, high discounts, stock adjustments, and daily rate changes.</p>

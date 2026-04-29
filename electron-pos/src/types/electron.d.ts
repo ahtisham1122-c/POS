@@ -3,6 +3,7 @@ export interface ElectronAPI {
     login: (credentials: { username: string; password: string }) => Promise<any>;
     getMe: () => Promise<any>;
     getUsers: () => Promise<any[]>;
+    createUser: (data: { name: string; username: string; pin: string; role: 'ADMIN' | 'MANAGER' | 'CASHIER' }) => Promise<{ success: boolean; user?: any; error?: string }>;
     logout: () => Promise<{ success: boolean }>;
     verifyManagerPin: (data: { pin: string; action?: string }) => Promise<{ success: boolean; approver?: any; error?: string }>;
     setManagerPin: (data: { userId?: string; currentPassword: string; newPin: string }) => Promise<{ success: boolean; error?: string }>;

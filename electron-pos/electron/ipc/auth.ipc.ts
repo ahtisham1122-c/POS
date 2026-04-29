@@ -2,6 +2,8 @@ import { ipcMain } from 'electron';
 import db from '../database/db';
 import bcrypt from 'bcryptjs';
 import { logAudit } from '../audit/auditLog';
+import { createOutboxEntry } from '../sync/outboxHelper';
+import * as crypto from 'crypto';
 
 let currentUser: any = null;
 
@@ -117,6 +119,62 @@ export function registerAuthIPC() {
 
   ipcMain.handle('auth:getUsers', () => {
     return db.prepare('SELECT id, name, username, role FROM users WHERE is_active = 1').all();
+  });
+
+  ipcMain.handle('auth:createUser', (_event, data: { name?: string; username?: string; pin?: string; role?: string }) => {
+    try {
+      const actor = requireCurrentUser(['ADMIN']);
+      const name = String(data?.name || '').trim();
+      const username = String(data?.username || '').trim().toLowerCase();
+      const pin = String(data?.pin || '').trim();
+      const role = String(data?.role || 'CASHIER').trim().toUpperCase();
+
+      if (!name) throw new Error('User name is required');
+      if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
+        throw new Error('Username must be 3-30 characters. Use letters, numbers, dot, dash, or underscore.');
+      }
+      if (!['ADMIN', 'MANAGER', 'CASHIER'].includes(role)) {
+        throw new Error('Select a valid role');
+      }
+      validatePrivatePin(pin);
+
+      const duplicate = db.prepare('SELECT id FROM users WHERE username = ?').get(username) as any;
+      if (duplicate) throw new Error('This username already exists');
+
+      const now = new Date().toISOString();
+      const id = crypto.randomUUID();
+      const passwordHash = bcrypt.hashSync(pin, 12);
+      const managerPinHash = role === 'ADMIN' || role === 'MANAGER' ? passwordHash : null;
+
+      db.prepare(`
+        INSERT INTO users (id, name, username, password_hash, manager_pin_hash, role, is_active, created_at, updated_at, synced)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 0)
+      `).run(id, name, username, passwordHash, managerPinHash, role, now, now);
+
+      createOutboxEntry('users', 'INSERT', id, {
+        id,
+        name,
+        username,
+        password_hash: 'local-pos-login-not-synced',
+        manager_pin_hash: null,
+        role,
+        is_active: 1,
+        created_at: now,
+        updated_at: now
+      });
+
+      logAudit({
+        actionType: 'USER_CREATED',
+        entityType: 'users',
+        entityId: id,
+        after: { name, username, role },
+        actor
+      });
+
+      return { success: true, user: { id, name, username, role } };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
   });
 
   ipcMain.handle('auth:logout', () => {
