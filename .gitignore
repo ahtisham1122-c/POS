@@ -6,3 +6,13 @@ coverage/
 *.log
 .env*
 !.env.example
+!.env.production.example
+
+# Electron build output — generated files, never commit these
+electron-pos/dist-electron/
+electron-pos/dist/
+electron-pos/release/
+
+# Backend build output
+noon-dairy-backend/dist/
+
