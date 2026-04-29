@@ -111,7 +111,7 @@ export interface ElectronAPI {
     getCurrent: () => Promise<any | null>;
     getToday: () => Promise<any | null>;
     open: (data: any) => Promise<{ success: boolean; shiftId?: string; requiresPreviousShiftConfirmation?: boolean; error?: string }>;
-    close: (data: any) => Promise<{ success: boolean; expectedCash?: number; closingCash?: number; variance?: number; requiresReceiptAudit?: boolean; error?: string }>;
+    close: (data: any) => Promise<{ success: boolean; expectedCash?: number; closingCash?: number; variance?: number; error?: string }>;
     getHistory: (limit?: number) => Promise<any[]>;
   };
   settings: {

@@ -7,16 +7,6 @@ import { getCashRegisterExpected } from '../database/cashRegister';
 import { formatLocalDate, getActiveBusinessDate, shouldWarnBeforeOpeningShift } from '../database/businessDay';
 import { performBackup } from '../sync/backup';
 
-function getLatestReceiptAudit(date: string) {
-  return db.prepare(`
-    SELECT *
-    FROM receipt_audit_sessions
-    WHERE audit_date = ?
-    ORDER BY created_at DESC
-    LIMIT 1
-  `).get(date) as any;
-}
-
 export function registerShiftsIPC() {
   ipcMain.handle('shifts:getCurrent', () => {
     return db.prepare(`
@@ -128,15 +118,6 @@ export function registerShiftsIPC() {
         const shift = db.prepare("SELECT * FROM shifts WHERE status = 'OPEN' ORDER BY opened_at DESC LIMIT 1").get() as any;
         if (!shift) return { success: false, error: 'No open shift found' };
 
-        const receiptAudit = getLatestReceiptAudit(shift.shift_date);
-        if (!receiptAudit) {
-          return {
-            success: false,
-            requiresReceiptAudit: true,
-            error: 'Please complete Receipt Audit before closing the shift'
-          };
-        }
-
         const now = new Date().toISOString();
         const closedById = getCurrentUser()?.id || 'system';
         const expectedCash = getCashRegisterExpected(shift.shift_date, shift.id).expectedCash;
@@ -156,7 +137,7 @@ export function registerShiftsIPC() {
         db.prepare(`
           UPDATE shifts
           SET closed_by_id = ?, closed_at = ?, expected_cash = ?, closing_cash = ?,
-              cash_variance = ?, receipt_audit_session_id = ?, status = 'CLOSED',
+              cash_variance = ?, receipt_audit_session_id = NULL, status = 'CLOSED',
               notes = ?, synced = 0
           WHERE id = ?
         `).run(
@@ -165,7 +146,6 @@ export function registerShiftsIPC() {
           expectedCash,
           closingCash,
           variance,
-          receiptAudit.id,
           data?.notes || shift.notes || null,
           shift.id
         );
@@ -183,7 +163,7 @@ export function registerShiftsIPC() {
           expected_cash: expectedCash,
           closing_cash: closingCash,
           cash_variance: variance,
-          receipt_audit_session_id: receiptAudit.id,
+          receipt_audit_session_id: null,
           status: 'CLOSED',
           notes: data?.notes || shift.notes || null
         });

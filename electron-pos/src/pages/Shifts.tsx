@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Clock, Lock, PlayCircle, RefreshCw, ShieldCheck, UserCheck } from "lucide-react";
+import { AlertTriangle, Clock, Lock, PlayCircle, RefreshCw, ShieldCheck, Scale } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "../lib/utils";
 import type { PageId } from "../App";
@@ -12,7 +12,6 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
   const [currentShift, setCurrentShift] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [cashRegister, setCashRegister] = useState<any>(null);
-  const [receiptAudit, setReceiptAudit] = useState<any>(null);
   const [openingCash, setOpeningCash] = useState("0");
   const [closingCash, setClosingCash] = useState("");
   const [notes, setNotes] = useState("");
@@ -25,28 +24,20 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
     return Number(cashRegister.opening_balance || 0) + Number(cashRegister.cash_in || 0) - Number(cashRegister.cash_out || 0);
   }, [cashRegister]);
 
-  const receiptAuditHasIssues = receiptAudit && (
-    Number(receiptAudit.missing_count || 0) > 0 ||
-    Number(receiptAudit.extra_count || 0) > 0 ||
-    Number(receiptAudit.duplicate_count || 0) > 0
-  );
-
   async function loadData() {
     setIsLoading(true);
     try {
       const day = await window.electronAPI?.system?.getBusinessDate();
       const activeDate = day?.date || businessDate;
-      const [shift, shifts, register, audit] = await Promise.all([
+      const [shift, shifts, register] = await Promise.all([
         window.electronAPI?.shifts?.getCurrent(),
         window.electronAPI?.shifts?.getHistory(30),
         window.electronAPI?.cashRegister?.getToday(),
-        window.electronAPI?.receiptAudit?.getLatestForDate(activeDate),
       ]);
       setBusinessDate(activeDate);
       setCurrentShift(shift || null);
       setHistory(shifts || []);
       setCashRegister(register || null);
-      setReceiptAudit(audit || null);
       if (register) setClosingCash(String(Number(register.opening_balance || 0) + Number(register.cash_in || 0) - Number(register.cash_out || 0)));
     } finally {
       setIsLoading(false);
@@ -73,11 +64,6 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
     setMessage(null);
     const result = await window.electronAPI?.shifts?.close({ closingCash: Number(closingCash || 0), notes });
     if (!result?.success) {
-      if (result?.requiresReceiptAudit) {
-        setMessage({ type: "error", text: "Receipt Audit is required before closing shift." });
-        setPage?.("receipt-audit");
-        return;
-      }
       setMessage({ type: "error", text: result?.error || "Failed to close shift." });
       return;
     }
@@ -95,7 +81,7 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Shift Management</h1>
-          <p className="text-text-secondary mt-1">Track who opened, who closed, cash difference, and receipt audit status for shop day {businessDate}.</p>
+          <p className="text-text-secondary mt-1">Track who opened, who closed, expected cash, counted cash, and cash difference for shop day {businessDate}.</p>
         </div>
         <button onClick={loadData} className="btn-secondary flex items-center justify-center gap-2">
           <RefreshCw className="w-4 h-4" />
@@ -132,23 +118,14 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
                   <InfoCard label="Expected Cash" value={toMoney(expectedCash)} tone="success" />
                 </div>
 
-                <div className={cn(
-                  "rounded-xl border p-4",
-                  !receiptAudit ? "border-warning/30 bg-warning/5" : receiptAuditHasIssues ? "border-danger/30 bg-danger/5" : "border-success/30 bg-success/5"
-                )}>
-                  <p className="font-bold text-text-primary">Receipt Audit</p>
-                  {!receiptAudit ? (
-                    <p className="text-sm text-warning mt-1">Required before closing this shift.</p>
-                  ) : receiptAuditHasIssues ? (
-                    <p className="text-sm text-danger mt-1">
-                      Has issues: {receiptAudit.missing_count} missing, {receiptAudit.extra_count} extra, {receiptAudit.duplicate_count} duplicate.
-                    </p>
-                  ) : (
-                    <p className="text-sm text-success mt-1">Completed and matched.</p>
-                  )}
-                  <button onClick={() => setPage?.("receipt-audit")} className="btn-secondary mt-3 text-sm">
-                    Open Receipt Audit
-                  </button>
+                <div className="rounded-xl border border-info/30 bg-info/5 p-4">
+                  <p className="font-bold text-text-primary flex items-center gap-2">
+                    <Scale className="w-4 h-4 text-info" />
+                    Cash Count Audit
+                  </p>
+                  <p className="text-sm text-text-secondary mt-1">
+                    Count the drawer cash below. The app compares your counted cash with expected cash and records the difference.
+                  </p>
                 </div>
 
                 <div>

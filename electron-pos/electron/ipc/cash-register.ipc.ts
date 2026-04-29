@@ -57,7 +57,7 @@ export function registerCashRegisterIPC() {
     }
   });
 
-  ipcMain.handle('cashRegister:close', (_event, data: { closingBalance: number }) => {
+  ipcMain.handle('cashRegister:close', (_event, data: { closingBalance: number; notes?: string }) => {
     try {
       const now = new Date().toISOString();
       const openShift = getOpenShift();
@@ -68,22 +68,6 @@ export function registerCashRegisterIPC() {
       if (!row) return { success: false, error: 'Cash register is not opened for today' };
       if (Number(row.is_closed_for_day) === 1) return { success: false, error: 'Cash register is already closed' };
 
-      const receiptAudit = db.prepare(`
-        SELECT *
-        FROM receipt_audit_sessions
-        WHERE audit_date = ?
-        ORDER BY created_at DESC
-        LIMIT 1
-      `).get(date) as any;
-
-      if (!receiptAudit) {
-        return {
-          success: false,
-          requiresReceiptAudit: true,
-          error: 'Please complete Receipt Audit before closing the cash register'
-        };
-      }
-
       const physicalCash = Number(data.closingBalance);
       if (!Number.isFinite(physicalCash) || physicalCash < 0) {
         return { success: false, error: 'Please enter a valid counted cash amount' };
@@ -91,6 +75,7 @@ export function registerCashRegisterIPC() {
 
       const { expectedCash } = getCashRegisterExpected(date, openShift?.id);
       const variance = Number((physicalCash - expectedCash).toFixed(2));
+      const closeNotes = String(data.notes || '').trim();
 
       db.prepare(`
         UPDATE cash_register
@@ -112,9 +97,10 @@ export function registerCashRegisterIPC() {
         db.prepare(`
           UPDATE shifts
           SET closed_by_id = ?, closed_at = ?, expected_cash = ?, closing_cash = ?,
-              cash_variance = ?, receipt_audit_session_id = ?, status = 'CLOSED', synced = 0
+              cash_variance = ?, receipt_audit_session_id = NULL, status = 'CLOSED',
+              notes = ?, synced = 0
           WHERE id = ?
-        `).run(closedById, now, expectedCash, physicalCash, variance, receiptAudit.id, openShift.id);
+        `).run(closedById, now, expectedCash, physicalCash, variance, closeNotes || openShift.notes || null, openShift.id);
 
         createOutboxEntry('shifts', 'UPDATE', openShift.id, {
           id: openShift.id,
@@ -123,8 +109,9 @@ export function registerCashRegisterIPC() {
           expected_cash: expectedCash,
           closing_cash: physicalCash,
           cash_variance: variance,
-          receipt_audit_session_id: receiptAudit.id,
-          status: 'CLOSED'
+          receipt_audit_session_id: null,
+          status: 'CLOSED',
+          notes: closeNotes || openShift.notes || null
         });
       }
 

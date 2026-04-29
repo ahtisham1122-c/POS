@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ClipboardCheck, Lock, Unlock, TrendingUp, TrendingDown, RefreshCw, AlertTriangle, Printer } from "lucide-react";
+import { Lock, Unlock, TrendingUp, TrendingDown, RefreshCw, AlertTriangle, Printer, Scale } from "lucide-react";
 import { cn } from "../lib/utils";
 import { format } from "date-fns";
 import type { PageId } from "../App";
@@ -13,9 +13,9 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
   const [isLoading, setIsLoading] = useState(true);
   const [openingBalance, setOpeningBalance] = useState("0");
   const [closingBalance, setClosingBalance] = useState("");
+  const [closingNotes, setClosingNotes] = useState("");
   const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
-  const [receiptAudit, setReceiptAudit] = useState<any>(null);
   const [zReport, setZReport] = useState<any>(null);
   const [currentShift, setCurrentShift] = useState<any>(null);
   const [businessDate, setBusinessDate] = useState(format(new Date(), "yyyy-MM-dd"));
@@ -45,16 +45,6 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
     }
   };
 
-  const loadReceiptAudit = async () => {
-    try {
-      const day = await window.electronAPI?.system?.getBusinessDate();
-      const data = await window.electronAPI?.receiptAudit?.getLatestForDate(day?.date || businessDate);
-      setReceiptAudit(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   const loadZReport = async () => {
     try {
       const day = await window.electronAPI?.system?.getBusinessDate();
@@ -68,7 +58,6 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
   useEffect(() => {
     loadRegister();
     loadHistory();
-    loadReceiptAudit();
     loadZReport();
   }, []);
 
@@ -134,19 +123,17 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
 
   const handleCloseRegister = async () => {
     try {
-      const res = await window.electronAPI?.cashRegister?.close({ closingBalance: Number(closingBalance) });
+      const res = await window.electronAPI?.cashRegister?.close({
+        closingBalance: Number(closingBalance),
+        notes: closingNotes.trim()
+      });
       if (res?.success) {
         setIsClosingModalOpen(false);
+        setClosingNotes("");
         loadRegister();
         loadHistory();
         loadZReport();
       } else {
-        if (res?.requiresReceiptAudit) {
-          alert("Receipt Audit is required before closing the register.");
-          setIsClosingModalOpen(false);
-          setPage?.("receipt-audit");
-          return;
-        }
         alert(res?.error || "Failed to close register");
       }
     } catch (err) {
@@ -170,11 +157,9 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
   const currentExpectedCash = registerData 
     ? Number(registerData.opening_balance) + Number(registerData.cash_in) - Number(registerData.cash_out)
     : 0;
-  const receiptAuditHasIssues = receiptAudit && (
-    Number(receiptAudit.missing_count || 0) > 0 ||
-    Number(receiptAudit.extra_count || 0) > 0 ||
-    Number(receiptAudit.duplicate_count || 0) > 0
-  );
+  const countedCash = Number(closingBalance || 0);
+  const cashVariance = Number((countedCash - currentExpectedCash).toFixed(2));
+  const varianceLabel = cashVariance === 0 ? "Cash matched" : cashVariance > 0 ? "Cash extra" : "Cash short";
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto animate-slide-up">
@@ -185,9 +170,9 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
         </div>
         {registerData && !registerData.is_closed_for_day && (
           <button 
-            onClick={async () => {
-              await loadReceiptAudit();
+            onClick={() => {
               setClosingBalance(String(currentExpectedCash));
+              setClosingNotes("");
               setIsClosingModalOpen(true);
             }}
             className="btn-primary bg-danger hover:bg-danger/90 flex items-center gap-2"
@@ -252,32 +237,24 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
           )}
 
           {!registerData.is_closed_for_day && (
-            <div className={cn(
-              "card p-4 border flex flex-col md:flex-row md:items-center justify-between gap-4",
-              !receiptAudit ? "border-warning/30 bg-warning/5" : receiptAuditHasIssues ? "border-danger/30 bg-danger/5" : "border-success/30 bg-success/5"
-            )}>
+            <div className="card p-4 border border-info/30 bg-info/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex items-start gap-3">
-                {!receiptAudit || receiptAuditHasIssues ? (
-                  <AlertTriangle className={cn("w-5 h-5 mt-0.5", receiptAuditHasIssues ? "text-danger" : "text-warning")} />
-                ) : (
-                  <ClipboardCheck className="w-5 h-5 mt-0.5 text-success" />
-                )}
+                <Scale className="w-5 h-5 mt-0.5 text-info" />
                 <div>
-                  <p className="font-bold text-text-primary">Receipt Audit</p>
-                  {!receiptAudit ? (
-                    <p className="text-sm text-text-secondary">Not completed yet. Count paper receipts before closing the day.</p>
-                  ) : receiptAuditHasIssues ? (
-                    <p className="text-sm text-danger">
-                      Audit has issues: {receiptAudit.missing_count} missing, {receiptAudit.extra_count} extra, {receiptAudit.duplicate_count} duplicate.
-                    </p>
-                  ) : (
-                    <p className="text-sm text-success">Completed and matched. POS bills and collected receipts are balanced.</p>
-                  )}
+                  <p className="font-bold text-text-primary">Cash Count Audit</p>
+                  <p className="text-sm text-text-secondary">At closing, count the real cash in the drawer. The app will show extra or short cash against expected sale cash.</p>
                 </div>
               </div>
-              <button onClick={() => setPage?.("receipt-audit")} className="btn-secondary flex items-center justify-center gap-2">
-                <ClipboardCheck className="w-4 h-4" />
-                Open Receipt Audit
+              <button
+                onClick={() => {
+                  setClosingBalance(String(currentExpectedCash));
+                  setClosingNotes("");
+                  setIsClosingModalOpen(true);
+                }}
+                className="btn-secondary flex items-center justify-center gap-2"
+              >
+                <Scale className="w-4 h-4" />
+                Count Cash
               </button>
             </div>
           )}
@@ -371,41 +348,31 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
       {/* CLOSE REGISTER MODAL */}
       {isClosingModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-slide-up">
-          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-sm overflow-hidden flex flex-col border border-surface-4">
+          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-lg overflow-hidden flex flex-col border border-surface-4">
             <div className="p-4 border-b border-surface-4 flex justify-between items-center bg-surface-3">
-              <h3 className="font-semibold text-lg flex items-center gap-2"><Lock className="w-5 h-5 text-danger" /> Close Register</h3>
+              <h3 className="font-semibold text-lg flex items-center gap-2"><Scale className="w-5 h-5 text-primary" /> Count Cash & Close Register</h3>
               <button onClick={() => setIsClosingModalOpen(false)} className="text-text-secondary hover:text-text-primary">✕</button>
             </div>
             <div className="p-6 space-y-4">
-              <div className="bg-surface-3 p-4 rounded-lg text-center mb-2">
-                <p className="text-xs font-bold text-text-secondary uppercase">Expected Cash</p>
-                <p className="text-2xl font-mono font-bold text-text-primary">{toMoney(currentExpectedCash)}</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-surface-3 p-4 rounded-lg text-center">
+                  <p className="text-xs font-bold text-text-secondary uppercase">Expected Cash</p>
+                  <p className="text-2xl font-mono font-bold text-text-primary">{toMoney(currentExpectedCash)}</p>
+                </div>
+                <div className={cn(
+                  "p-4 rounded-lg text-center border",
+                  cashVariance === 0 ? "bg-success/10 border-success/20" : cashVariance > 0 ? "bg-warning/10 border-warning/20" : "bg-danger/10 border-danger/20"
+                )}>
+                  <p className="text-xs font-bold text-text-secondary uppercase">{varianceLabel}</p>
+                  <p className={cn("text-2xl font-mono font-bold", cashVariance === 0 ? "text-success" : cashVariance > 0 ? "text-warning" : "text-danger")}>
+                    {cashVariance > 0 ? "+" : ""}{toMoney(cashVariance)}
+                  </p>
+                </div>
               </div>
 
-              <div className={cn(
-                "p-3 rounded-md text-sm border",
-                !receiptAudit ? "bg-warning/10 border-warning/20 text-warning" :
-                receiptAuditHasIssues ? "bg-danger/10 border-danger/20 text-danger" :
-                "bg-success/10 border-success/20 text-success"
-              )}>
-                {!receiptAudit ? (
-                  <div>
-                    <p className="font-bold">Receipt Audit Required</p>
-                    <p className="text-xs opacity-80 mt-1">Close is blocked until today's receipt audit is saved.</p>
-                  </div>
-                ) : receiptAuditHasIssues ? (
-                  <div>
-                    <p className="font-bold">Receipt Audit Has Issues</p>
-                    <p className="text-xs opacity-80 mt-1">
-                      Missing {receiptAudit.missing_count}, extra {receiptAudit.extra_count}, duplicate {receiptAudit.duplicate_count}. Manager should review before closing.
-                    </p>
-                  </div>
-                ) : (
-                  <div>
-                    <p className="font-bold">Receipt Audit Completed</p>
-                    <p className="text-xs opacity-80 mt-1">All collected receipts match POS bills.</p>
-                  </div>
-                )}
+              <div className="p-3 rounded-md text-sm border border-info/20 bg-info/10 text-info">
+                <p className="font-bold">How expected cash is calculated</p>
+                <p className="text-xs opacity-90 mt-1">Opening cash + cash received from sales/khata - cash paid out for expenses/refunds/suppliers.</p>
               </div>
 
               <div>
@@ -421,11 +388,24 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
               </div>
 
               {Number(closingBalance) !== currentExpectedCash && (
-                <div className="p-3 bg-danger/10 border border-danger/20 rounded-md text-sm text-danger text-center font-medium animate-slide-up">
-                  Difference: {toMoney(Number(closingBalance) - currentExpectedCash)}
-                  <p className="text-xs opacity-80 mt-1">Please add a note explaining the discrepancy.</p>
+                <div className={cn(
+                  "p-3 border rounded-md text-sm text-center font-medium animate-slide-up",
+                  cashVariance > 0 ? "bg-warning/10 border-warning/20 text-warning" : "bg-danger/10 border-danger/20 text-danger"
+                )}>
+                  {varianceLabel}: {cashVariance > 0 ? "+" : ""}{toMoney(cashVariance)}
+                  <p className="text-xs opacity-80 mt-1">Add a short note if cash is extra or short.</p>
                 </div>
               )}
+
+              <div>
+                <label className="text-xs font-bold text-text-secondary uppercase mb-2 block">Closing Note</label>
+                <textarea
+                  value={closingNotes}
+                  onChange={e => setClosingNotes(e.target.value)}
+                  className="input min-h-20 resize-none"
+                  placeholder="Example: Rs. 50 short, cashier checked drawer..."
+                />
+              </div>
             </div>
             
             <div className="p-4 bg-surface-3 border-t border-surface-4 flex gap-3">
