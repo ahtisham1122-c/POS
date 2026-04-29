@@ -22,6 +22,7 @@ import { registerSystemIPC } from './ipc/system.ipc';
 import { registerSuppliersIPC } from './ipc/suppliers.ipc';
 import { registerAuditIPC } from './ipc/audit.ipc';
 import { registerExportsIPC } from './ipc/exports.ipc';
+import { registerEmployeesIPC } from './ipc/employees.ipc';
 import { SyncEngine } from './sync/syncEngine';
 import { pullSync } from './sync/pullSync';
 import { getDeviceInfo } from './sync/deviceInfo';
@@ -179,6 +180,7 @@ app.whenReady().then(() => {
   registerSuppliersIPC();
   registerAuditIPC();
   registerExportsIPC();
+  registerEmployeesIPC();
   registerSyncIPC(syncEngine, () => mainWindow);
 
   log.info('Starting sync engine & background tasks...');

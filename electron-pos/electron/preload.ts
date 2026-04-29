@@ -138,6 +138,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     printReceipt: (receiptData: any) => ipcRenderer.invoke('printer:printReceipt', receiptData),
     printStatement: (statementData: any) => ipcRenderer.invoke('printer:printStatement', statementData),
   },
+  employees: {
+    getAll: (showInactive?: boolean) => ipcRenderer.invoke('employees:getAll', showInactive),
+    getOne: (id: string) => ipcRenderer.invoke('employees:getOne', id),
+    create: (data: any) => ipcRenderer.invoke('employees:create', data),
+    update: (id: string, data: any) => ipcRenderer.invoke('employees:update', id, data),
+    updateSalary: (id: string, salary: number, effectiveDate: string, notes?: string) => ipcRenderer.invoke('employees:updateSalary', id, salary, effectiveDate, notes),
+    markLeft: (id: string, leftDate: string) => ipcRenderer.invoke('employees:markLeft', id, leftDate),
+    addAdvance: (data: any) => ipcRenderer.invoke('employees:addAdvance', data),
+    addLeave: (data: any) => ipcRenderer.invoke('employees:addLeave', data),
+    calculateSalary: (employeeId: string, periodStart: string, periodEnd: string) => ipcRenderer.invoke('employees:calculateSalary', employeeId, periodStart, periodEnd),
+    paySalary: (data: any) => ipcRenderer.invoke('employees:paySalary', data),
+    getDefaultPeriod: (startDate: string, targetMonth?: string) => ipcRenderer.invoke('employees:getDefaultPeriod', startDate, targetMonth),
+    calculateLeavingPay: (employeeId: string) => ipcRenderer.invoke('employees:calculateLeavingPay', employeeId),
+  },
   onNetworkChange: (callback: (status: 'online' | 'offline') => void) => {
     ipcRenderer.on('network-status-changed', (_event, status) => callback(status));
   },

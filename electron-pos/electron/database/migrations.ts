@@ -397,6 +397,87 @@ export function runMigrations() {
           setting.run('ramadan24Hour', 'false', now);
           setting.run('24_hour_mode', 'false', now);
         }
+      },
+      {
+        version: 15,
+        up: () => {
+          log.info('Running migration v15: Adding employee management and payroll');
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS employees (
+              id TEXT PRIMARY KEY,
+              code TEXT UNIQUE NOT NULL,
+              name TEXT NOT NULL,
+              phone TEXT,
+              address TEXT,
+              start_date TEXT NOT NULL,
+              salary REAL NOT NULL DEFAULT 0,
+              is_active INTEGER DEFAULT 1,
+              left_date TEXT,
+              notes TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS employee_salary_history (
+              id TEXT PRIMARY KEY,
+              employee_id TEXT NOT NULL,
+              salary REAL NOT NULL,
+              effective_date TEXT NOT NULL,
+              notes TEXT,
+              changed_by_id TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (employee_id) REFERENCES employees(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS employee_advances (
+              id TEXT PRIMARY KEY,
+              employee_id TEXT NOT NULL,
+              amount REAL NOT NULL,
+              advance_date TEXT NOT NULL,
+              description TEXT,
+              status TEXT DEFAULT 'PENDING',
+              deducted_payment_id TEXT,
+              given_by_id TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (employee_id) REFERENCES employees(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS employee_leaves (
+              id TEXT PRIMARY KEY,
+              employee_id TEXT NOT NULL,
+              leave_date TEXT NOT NULL,
+              days REAL NOT NULL DEFAULT 1,
+              reason TEXT,
+              created_by_id TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (employee_id) REFERENCES employees(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS employee_salary_payments (
+              id TEXT PRIMARY KEY,
+              employee_id TEXT NOT NULL,
+              period_start TEXT NOT NULL,
+              period_end TEXT NOT NULL,
+              base_salary REAL NOT NULL,
+              days_in_period INTEGER NOT NULL,
+              days_worked REAL NOT NULL,
+              days_off REAL NOT NULL,
+              gross_salary REAL NOT NULL,
+              advance_deduction REAL NOT NULL DEFAULT 0,
+              net_salary REAL NOT NULL,
+              paid_date TEXT NOT NULL,
+              paid_by_id TEXT,
+              notes TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (employee_id) REFERENCES employees(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_employees_active ON employees(is_active);
+            CREATE INDEX IF NOT EXISTS idx_employee_advances_emp ON employee_advances(employee_id);
+            CREATE INDEX IF NOT EXISTS idx_employee_leaves_emp ON employee_leaves(employee_id);
+            CREATE INDEX IF NOT EXISTS idx_employee_salary_payments_emp ON employee_salary_payments(employee_id);
+          `);
+        }
       }
     ];
 

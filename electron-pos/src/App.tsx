@@ -17,8 +17,9 @@ import Shifts from "./pages/Shifts";
 import BackupRestore from "./pages/BackupRestore";
 import Suppliers from "./pages/Suppliers";
 import TestCenter from "./pages/TestCenter";
+import Employees from "./pages/Employees";
 
-export type PageId = "dashboard" | "pos" | "inventory" | "suppliers" | "customers" | "khata" | "returns" | "receipt-audit" | "shifts" | "backup" | "test-center" | "expenses" | "reports" | "settings" | "cash-register";
+export type PageId = "dashboard" | "pos" | "inventory" | "suppliers" | "customers" | "khata" | "returns" | "receipt-audit" | "shifts" | "backup" | "test-center" | "expenses" | "reports" | "settings" | "cash-register" | "employees";
 
 export default function App() {
   const [page, setPage] = useState<PageId>("pos");
@@ -70,6 +71,7 @@ export default function App() {
         {page === "expenses" && <Expenses />}
         {page === "reports" && <Reports />}
         {page === "settings" && <Settings />}
+        {page === "employees" && <Employees />}
       </Suspense>
     </AppShell>
   );
