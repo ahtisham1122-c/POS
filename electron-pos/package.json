@@ -13,6 +13,7 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run rebuild:native && npm run build:renderer && npm run build:electron && electron-builder",
     "build:win": "npm run rebuild:native && npm run build:renderer && npm run build:electron && electron-builder --win",
+    "test:sales-math": "npm run build:electron && node scripts/sales-math-smoke.cjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
   },
   "dependencies": {
