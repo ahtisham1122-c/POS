@@ -375,10 +375,8 @@ export class SyncService {
 
   private async hasRequiredParent(modelName: string, data: Record<string, any>, tx: Prisma.TransactionClient) {
     if (modelName === 'sale') {
-      if (data.shiftId) {
-        const shift = await tx.shift.findUnique({ where: { id: data.shiftId }, select: { id: true } });
-        if (!shift) return false;
-      }
+      // Shifts can arrive after sales from older outbox queues. ensureSyncDependencies()
+      // creates a safe placeholder shift, then the real shift row can update it later.
       return true;
     }
 
@@ -453,11 +451,18 @@ export class SyncService {
       // 2. Insert Logic (Idempotent)
       if (operation === 'INSERT') {
         if (existingRecord) {
-          // If sale, skip duplicate silently
-          if (table === 'sales' || table === 'saleItems') {
+          // Immutable transaction rows should not be overwritten by duplicate inserts.
+          if (modelName === 'sale' || modelName === 'saleItem') {
             return { success: true, action: 'skipped', reason: 'Duplicate sale' };
           }
-          // Fall through to update but checking timestamps is safer
+
+          const data = { ...normalizedPayload };
+          delete data.id;
+          await this.ensureSyncDependencies(modelName, normalizedPayload, db as Prisma.TransactionClient);
+          if (Object.keys(data).length > 0) {
+            await model.update({ where: { id: recordId }, data });
+          }
+          return { success: true, action: 'updated' };
         } else {
           // Transform payload string dates to Date objects where appropriate
           const data = { ...normalizedPayload };

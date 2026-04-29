@@ -221,10 +221,15 @@ export default function Employees() {
     if (!selected) return;
     setCalcLoading(true);
     const period = await window.electronAPI?.employees?.getDefaultPeriod(selected.start_date, salaryMonth);
-    const res = await window.electronAPI?.employees?.calculateSalary(selected.id, period.start, period.end);
+    if (!period) {
+      setCalcLoading(false);
+      return flash("error", "Could not calculate salary period");
+    }
+    const normalizedPeriod = { start: period.periodStart, end: period.periodEnd };
+    const res = await window.electronAPI?.employees?.calculateSalary(selected.id, normalizedPeriod.start, normalizedPeriod.end);
     setCalcLoading(false);
     if (res?.success) {
-      setSalaryCalc({ ...res.data, period });
+      setSalaryCalc({ ...res.data, period: normalizedPeriod });
     } else {
       flash("error", res?.error || "Calculation failed");
     }
