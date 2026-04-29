@@ -17,9 +17,9 @@ warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
 info "Starting deployment update..."
 
-# Install any new packages
+# Install all dependencies (including devDeps needed for build)
 info "Installing dependencies..."
-npm install --omit=dev --silent
+npm install --silent
 
 # Run any new database migrations
 info "Running database migrations..."
@@ -28,6 +28,10 @@ npx prisma migrate deploy
 # Rebuild the app
 info "Building application..."
 npm run build
+
+# Prune dev dependencies after build
+info "Pruning dev dependencies..."
+npm prune --omit=dev --silent
 
 # Make sure log directory exists
 mkdir -p logs
