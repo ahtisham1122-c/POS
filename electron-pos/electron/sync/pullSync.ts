@@ -38,6 +38,7 @@ export async function pullSync(mainWindow?: BrowserWindow) {
     settings = payload?.settings || [];
     
     const SYSTEM_PRODUCT_CODES = new Set(['MILK', 'YOGT']);
+    const SYSTEM_PRODUCT_IDS = new Set(['p1', 'p2']);
     let hasUpdates = false;
 
     db.transaction(() => {
@@ -53,7 +54,25 @@ export async function pullSync(mainWindow?: BrowserWindow) {
 
       for (const p of products) {
         const code = String(p.code || '').toUpperCase();
-        // Never allow cloud to deactivate system products
+        // Milk and Yogurt are local fixed POS products. Cloud may contain older
+        // placeholder rows for p1/p2, so never let pull overwrite them.
+        if (SYSTEM_PRODUCT_IDS.has(String(p.id || '')) || SYSTEM_PRODUCT_CODES.has(code)) {
+          db.prepare(`
+            UPDATE products
+            SET name = CASE code WHEN 'MILK' THEN 'Fresh Milk' WHEN 'YOGT' THEN 'Fresh Yogurt' ELSE name END,
+                category = 'Dairy',
+                unit = 'kg',
+                selling_price = CASE WHEN code = 'MILK' AND selling_price <= 0 THEN 180 WHEN code = 'YOGT' AND selling_price <= 0 THEN 220 ELSE selling_price END,
+                cost_price = CASE WHEN code = 'MILK' AND cost_price <= 0 THEN 160 WHEN code = 'YOGT' AND cost_price <= 0 THEN 190 ELSE cost_price END,
+                low_stock_threshold = COALESCE(low_stock_threshold, 5),
+                tax_exempt = 1,
+                is_active = 1,
+                synced = 1
+            WHERE id = ? OR code = ?
+          `).run(p.id, code);
+          continue;
+        }
+
         const isActive = SYSTEM_PRODUCT_CODES.has(code)
           ? 1
           : ((p.isActive ?? p.is_active) ? 1 : 0);
