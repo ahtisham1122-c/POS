@@ -353,10 +353,28 @@ export class SyncService {
       return Boolean(sale);
     }
 
+    if (modelName === 'splitPayment' || modelName === 'saleVoid') {
+      if (!data.saleId) return false;
+      const sale = await tx.sale.findUnique({ where: { id: data.saleId }, select: { id: true } });
+      return Boolean(sale);
+    }
+
     if (modelName === 'returnItem') {
       if (!data.returnId) return false;
       const returnRecord = await tx.return.findUnique({ where: { id: data.returnId }, select: { id: true } });
       return Boolean(returnRecord);
+    }
+
+    if (modelName === 'receiptAuditEntry') {
+      if (!data.sessionId) return false;
+      const session = await tx.receiptAuditSession.findUnique({ where: { id: data.sessionId }, select: { id: true } });
+      return Boolean(session);
+    }
+
+    if (modelName === 'supplierLedgerEntry' || modelName === 'supplierPayment' || modelName === 'milkCollection') {
+      if (!data.supplierId) return false;
+      const supplier = await tx.supplier.findUnique({ where: { id: data.supplierId }, select: { id: true } });
+      return Boolean(supplier);
     }
 
     return true;
