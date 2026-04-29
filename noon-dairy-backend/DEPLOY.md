@@ -1,172 +1,255 @@
-# Noon Dairy Backend — Production Deployment Guide
+# Noon Dairy Backend — VPS Deployment Guide
 
-## Server Requirements
-- Ubuntu 22.04 LTS (or similar)
-- Node.js 20 LTS
-- PM2 (process manager)
-- Nginx (reverse proxy)
-- A PostgreSQL database (Supabase recommended)
+## What This Guide Covers
 
----
-
-## One-Time Server Setup
-
-### 1. Install Node.js 20
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
-
-### 2. Install PM2
-```bash
-sudo npm install -g pm2
-pm2 startup   # follow the printed command to enable autostart
-```
-
-### 3. Install Nginx
-```bash
-sudo apt install nginx -y
-```
-
-### 4. Install Certbot (free SSL)
-```bash
-sudo apt install certbot python3-certbot-nginx -y
-```
+Deploying the Noon Dairy NestJS backend to a VPS (Hetzner or DigitalOcean)
+with local PostgreSQL, PM2, Nginx, and free SSL. Everything runs on one server.
+Cost: ~$6-7/month. No Supabase. No external database service.
 
 ---
 
-## First Deployment
+## Step 1 — Create a VPS
 
-### 1. Clone / copy the backend to the server
+**Recommended providers:**
+- **Hetzner** → https://www.hetzner.com/cloud  (cheapest, Germany/Finland)
+- **DigitalOcean** → https://www.digitalocean.com  (Singapore = faster for Pakistan)
+- **Vultr** → https://www.vultr.com  (has Mumbai/Singapore regions)
+
+**Server specs to select:**
+- OS: Ubuntu 22.04 LTS
+- Plan: 2 vCPU / 4 GB RAM (Hetzner CX22 ~EUR4/mo, DigitalOcean Basic ~$12/mo)
+- Storage: 40 GB SSD
+- Region: Singapore or Mumbai for Pakistan
+
+After creating, you get a server **IP address** like `167.99.123.45`.
+
+---
+
+## Step 2 — Point a Domain at the Server (Recommended)
+
+If you have a domain (e.g. `noonapi.com`):
+1. Go to your registrar (Namecheap, GoDaddy, etc.)
+2. Add an A record: `@` pointing to your server IP
+3. Add an A record: `api` pointing to your server IP
+
+No domain? You can use the raw IP — just skip the SSL step later.
+
+---
+
+## Step 3 — Push Your Code to GitHub
+
 ```bash
-git clone <your-repo> /var/www/noon-dairy-backend
+# On your local machine from the backend folder:
+git add .
+git commit -m "production ready"
+git push
+```
+
+---
+
+## Step 4 — SSH into Your Server
+
+```bash
+ssh root@YOUR_SERVER_IP
+```
+
+On Windows use PuTTY or Windows Terminal with SSH.
+
+---
+
+## Step 5 — Run the Setup Script
+
+This single script installs everything: Node.js 20, PostgreSQL, PM2, Nginx, Certbot,
+and creates the database user and database automatically.
+
+```bash
+# Clone your repo onto the server
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git /var/www/noon-dairy-backend
 cd /var/www/noon-dairy-backend/noon-dairy-backend
+
+# Run setup (takes about 3-4 minutes)
+sudo bash scripts/server-setup.sh
 ```
 
-### 2. Create your .env file
+**The script prints a database password at the end — copy it, you need it in the next step.**
+
+---
+
+## Step 6 — Create the .env File
+
 ```bash
 cp .env.production.example .env
-nano .env   # fill in all values
+nano .env
 ```
 
-**Generate strong secrets:**
+Fill in these values:
+
+```
+DATABASE_URL="postgresql://noon_dairy:PASTE_DB_PASSWORD_HERE@localhost:5432/noon_dairy_db"
+JWT_SECRET="GENERATE_RANDOM_VALUE_SEE_BELOW"
+JWT_REFRESH_SECRET="GENERATE_DIFFERENT_RANDOM_VALUE"
+SYNC_DEVICE_SECRET="GENERATE_RANDOM_VALUE"
+PORT=3001
+NODE_ENV=production
+CORS_ORIGINS="https://your-domain.com"
+```
+
+**Generate random secrets** — run this command 3 times, use a different output for each secret:
 ```bash
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
-Run this 3 times — one value each for `JWT_SECRET`, `JWT_REFRESH_SECRET`, `SYNC_DEVICE_SECRET`.
 
-**Important:** Copy the `SYNC_DEVICE_SECRET` value into the Electron app's
-`Settings > Sync` page so the desktop can authenticate with this server.
+Save and exit nano: `Ctrl+X` then `Y` then `Enter`
 
-### 3. Install dependencies
+---
+
+## Step 7 — Install, Migrate, Build, Start
+
 ```bash
+# Install production Node packages
 npm install --omit=dev
-```
 
-### 4. Set up the database
-
-**If this is a brand-new Supabase database:**
-```bash
+# Create all database tables
 npx prisma migrate deploy
-```
 
-**If the database already has tables from `db push`:**
-```bash
-# Mark the initial migration as already applied (no SQL will run)
-npx prisma migrate resolve --applied 20260429000000_init_production_schema
-```
-
-### 5. Build the app
-```bash
+# Build the TypeScript app
 npm run build
-```
 
-### 6. Create log directory
-```bash
+# Create log folder
 mkdir -p logs
-```
 
-### 7. Start with PM2
-```bash
+# Start with PM2
 pm2 start ecosystem.config.js --env production
 pm2 save
+
+# Verify it's running
+pm2 status
 ```
 
-### 8. Configure Nginx
-```bash
-sudo cp nginx.conf /etc/nginx/sites-available/noon-dairy
-# Edit the file and replace "your-domain.com" with your actual domain
-sudo nano /etc/nginx/sites-available/noon-dairy
+You should see `noon-dairy-api` with status `online`.
 
-sudo ln -s /etc/nginx/sites-available/noon-dairy /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
+---
 
-### 9. Get SSL certificate
+## Step 8 — Configure Nginx
+
 ```bash
-sudo certbot --nginx -d your-domain.com
+# Copy the config file
+cp nginx.conf /etc/nginx/sites-available/noon-dairy
+
+# Edit: replace every "your-domain.com" with your actual domain
+nano /etc/nginx/sites-available/noon-dairy
+
+# Enable it
+ln -s /etc/nginx/sites-available/noon-dairy /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
 ```
 
 ---
 
-## Verifying the Deployment
+## Step 9 — Get Free SSL (Only if You Have a Domain)
 
 ```bash
-# Check the server is running
+certbot --nginx -d your-domain.com
+```
+
+Follow the prompts. Certbot auto-renews every 90 days — nothing to maintain.
+
+---
+
+## Step 10 — Set Up Daily Backups
+
+```bash
+sudo bash scripts/backup-setup.sh
+```
+
+Creates daily compressed PostgreSQL backups at 3 AM server time.
+Keeps the last 30 days. Stored in `/var/backups/noon-dairy/`.
+
+---
+
+## Step 11 — Test Everything
+
+```bash
+# Health check
 curl https://your-domain.com/api/health
 
-# Expected response:
+# Expected:
 # {"status":"ok","uptime":42,"services":{"database":"ok"}}
 
-# Check PM2 status
+# PM2 status
 pm2 status
 
-# Watch live logs
-pm2 logs noon-dairy-api --lines 50
+# Live logs
+pm2 logs noon-dairy-api --lines 30
 ```
 
 ---
 
-## Updating the Backend (Subsequent Deploys)
+## Step 12 — Connect the Electron App
+
+In the Electron app go to **Settings > Sync** and enter:
+- **API URL:** `https://your-domain.com/api`
+- **Device Secret:** the exact value of `SYNC_DEVICE_SECRET` from your server `.env`
+
+Click **Sync Now** — status badge turns green.
+
+---
+
+## Pushing Updates (Every Time You Change Code)
 
 ```bash
+# On your VPS:
 cd /var/www/noon-dairy-backend/noon-dairy-backend
-
-# Pull latest code
 git pull
-
-# Install any new packages
-npm install --omit=dev
-
-# Run any new migrations
-npx prisma migrate deploy
-
-# Build
-npm run build
-
-# Reload PM2 (zero-downtime)
-pm2 reload noon-dairy-api
+bash scripts/deploy-update.sh
 ```
+
+The script handles: install packages, run migrations, build, reload PM2 with zero downtime.
 
 ---
 
-## Connecting the Electron App
+## Restore a Backup
 
-In the Electron app go to **Settings > Sync** and set:
-- **API URL:** `https://your-domain.com/api`
-- **Sync Secret:** must match `SYNC_DEVICE_SECRET` in the server `.env`
+```bash
+# List backups
+ls /var/backups/noon-dairy/
 
-Then click **Sync Now** — the status badge should turn green.
+# Restore a specific backup
+gunzip -c /var/backups/noon-dairy/noon_dairy_db_2026-04-29_03-00.sql.gz \
+  | sudo -u postgres psql noon_dairy_db
+```
 
 ---
 
 ## Troubleshooting
 
-| Problem | Command |
-|---------|---------|
-| App won't start | `pm2 logs noon-dairy-api --err` |
-| Database error | Check `DATABASE_URL` in `.env`, run `npx prisma db pull` to test connection |
-| Sync 401 error | `SYNC_DEVICE_SECRET` mismatch between Electron and server |
-| Sync 429 error | Rate limit hit — check Electron sync interval (should be 5 s, not ms) |
-| Nginx 502 | `pm2 status` — app may be crashed, check `pm2 logs` |
+| Problem | Fix |
+|---------|-----|
+| App won't start | `pm2 logs noon-dairy-api --err` — look for missing .env values |
+| Startup fails: "JWT_SECRET must be set" | Replace placeholder secrets in `.env` with real random values |
+| Database connection refused | `systemctl status postgresql` — restart if stopped |
+| Nginx 502 Bad Gateway | App crashed — run `pm2 restart noon-dairy-api` and check `pm2 logs` |
+| Sync 401 error | `SYNC_DEVICE_SECRET` mismatch between server and Electron app |
+| Sync 429 error | Rate limit hit — check Electron sync interval is `5000` ms not `5` ms |
+| SSL cert failed | DNS A record must point to server IP before running certbot |
+| Migrations fail | Run `npx prisma db push` as fallback for first-time deploy |
+
+---
+
+## Useful Daily Commands
+
+```bash
+pm2 status                     # Is the app running?
+pm2 logs noon-dairy-api        # Live log stream
+pm2 logs noon-dairy-api --err  # Errors only
+pm2 restart noon-dairy-api     # Restart (brief downtime)
+pm2 reload noon-dairy-api      # Zero-downtime reload
+
+systemctl status postgresql    # Is the database running?
+systemctl restart postgresql   # Restart database
+
+nginx -t                       # Test Nginx config before reloading
+systemctl reload nginx         # Apply Nginx config changes
+
+ls /var/backups/noon-dairy/    # List available backups
+```
