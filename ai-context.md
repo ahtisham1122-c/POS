@@ -29,6 +29,25 @@ Use this file to continue development in a new Codex/Antigravity chat. Keep answ
 - `532ba4e fix: held bill shows subtotal and correct time format in POS hold picker`
 - `a774617 codex: speed up cash checkout` (previous)
 
+## Latest Production-Hardening Summary (2026-05-01)
+- Latest important commits:
+  - `d3d9ed8 fix: issue per-terminal sync credentials`
+  - `87c349f fix: harden production readiness gaps`
+  - `84df44e fix: cash register CONSTRAINT FAILED + add Reopen Register`
+  - `13d702f fix: returns FK violation - insert parent row before children`
+  - `bdd25b8 chore: upgrade electron-builder to 26.8.1`
+- Current software-side readiness after latest hardening: about 8/10.
+- Still not final commercial sign-off until the real shop flow and physical printer are tested on the HP Engage One setup.
+- Installer rebuilt after latest hardening: `electron-pos/dist/Noon Dairy POS Setup 1.0.0.exe`.
+- Supabase/PostgreSQL schema migrated successfully with `20260430000000_add_device_sync_tokens`.
+- Production audits were clean after fixes:
+  - root Next prototype: `npm audit --omit=dev` -> 0 vulnerabilities
+  - Electron: `npm audit --omit=dev` -> 0 vulnerabilities
+  - Backend: `npm audit --omit=dev` -> 0 vulnerabilities
+- Root Next prototype upgraded to `next@15.5.15` and builds successfully.
+- `next.config.mjs` sets explicit `outputFileTracingRoot` to avoid workspace-root warnings.
+- Check `git status --short` before editing. There may be Claude/user dirty files; do not revert unrelated changes.
+
 ## Architecture
 - Electron desktop app is offline-first:
   - React + Vite renderer.
@@ -36,6 +55,12 @@ Use this file to continue development in a new Codex/Antigravity chat. Keep answ
   - SQLite via `better-sqlite3`.
   - Local DB lives in Electron `userData` folder as `noon-dairy.db`.
   - Outbox table `sync_outbox` stores pending cloud sync operations.
+- Data storage policy already built:
+  - Local SQLite is the main working database for counter sale.
+  - Sync outbox is the safety bridge when internet/backend/cloud is down.
+  - NestJS + PostgreSQL/Supabase is the online copy for backup/reporting/sync.
+  - Local backup files are the emergency recovery copy.
+  - Sale always saves locally first, then syncs online later.
 - Cloud backend:
   - NestJS + Prisma + PostgreSQL.
   - Runs at local default `http://localhost:3001/api`.
@@ -43,7 +68,8 @@ Use this file to continue development in a new Codex/Antigravity chat. Keep answ
 - Cloud sync design:
   - Electron must sync through Nest backend, not directly to Supabase REST.
   - Supabase anon key was removed from source/default seed because direct REST table sync returned 404.
-  - For real Supabase later, backend `DATABASE_URL` should point to Supabase PostgreSQL connection string. Electron should only know backend URL + sync secret.
+  - Backend `DATABASE_URL` should point to Supabase PostgreSQL connection string.
+  - Electron should know backend URL plus registration secret only. Normal sync now uses a per-terminal device token.
 
 ## Important Commands
 Backend:
@@ -51,7 +77,9 @@ Backend:
 cd "C:\Users\Ahtisham Ul Haq\Documents\Codex\2026-04-23-files-mentioned-by-the-user-noon\noon-dairy-pos\noon-dairy-backend"
 npm run build
 npx prisma validate
-npx prisma db push
+npx prisma migrate status
+npx prisma migrate deploy
+npm run test:sync-token
 npm run start
 ```
 
@@ -60,8 +88,18 @@ Electron:
 cd "C:\Users\Ahtisham Ul Haq\Documents\Codex\2026-04-23-files-mentioned-by-the-user-noon\noon-dairy-pos\electron-pos"
 npm run build:electron
 npm run build:renderer
+npm run typecheck
+npm run test:sales-math
+npm run test:sync-security
 npm run dev:electron
 npm run build:win
+```
+
+Root old Next prototype:
+```powershell
+cd "C:\Users\Ahtisham Ul Haq\Documents\Codex\2026-04-23-files-mentioned-by-the-user-noon\noon-dairy-pos"
+npm run build
+npm audit --omit=dev
 ```
 
 ## Config Rules
@@ -74,8 +112,15 @@ npm run build:win
   - `CORS_ORIGINS`
 - Electron `.env` / SQLite settings:
   - `APP_API_URL=http://localhost:3001/api`
-  - `SYNC_DEVICE_SECRET` must match backend.
+  - `SYNC_DEVICE_SECRET` is used only to register this terminal with backend.
+  - `SYNC_DEVICE_TOKEN` is issued by backend and stored internally in SQLite settings. Do not expose it in UI/chat/docs.
 - Backend startup now refuses weak/missing JWT/sync secrets.
+- Known weak/example sync secrets are blocked:
+  - `noon-dairy-local-sync-secret-change-me`
+  - `change-this...`
+  - `PASTE_...`
+  - `YOUR_...`
+- Settings audit log redacts sync secrets/tokens.
 
 ## Business-Day / Shift Rules Implemented
 - Business day is shift-based, not midnight-based.
@@ -95,6 +140,8 @@ npm run build:win
 - Sync engine: `electron-pos/electron/sync/syncEngine.ts`
 - Pull sync: `electron-pos/electron/sync/pullSync.ts`
 - API config: `electron-pos/electron/sync/apiConfig.ts`
+- Device registration: `electron-pos/electron/sync/deviceRegistration.ts`
+- Sync secret validation: `electron-pos/electron/sync/secretValidation.ts`
 - Outbox helper: `electron-pos/electron/sync/outboxHelper.ts`
 - IPC files:
   - Sales: `electron-pos/electron/ipc/sales.ipc.ts`
@@ -124,13 +171,22 @@ npm run build:win
 - Sync guard: `noon-dairy-backend/src/sync/sync-secret.guard.ts`
 - Sync controller: `noon-dairy-backend/src/sync/sync.controller.ts`
 - Sync service: `noon-dairy-backend/src/sync/sync.service.ts`
+- Sync token utility: `noon-dairy-backend/src/sync/sync-token.util.ts`
+- Device sync token migration: `noon-dairy-backend/prisma/migrations/20260430000000_add_device_sync_tokens/migration.sql`
 - Sales: `noon-dairy-backend/src/sales/sales.module.ts`
 - Cash register: `noon-dairy-backend/src/cash-register/cash-register.module.ts`
 
 ## Sync Work Completed
 - Direct Supabase REST sync removed from Electron.
 - Electron now posts outbox records to Nest backend `/api/sync/ingest`.
-- Backend `/sync` guarded by `X-Sync-Secret`.
+- Backend sync registration is guarded by `X-Sync-Secret`.
+- Normal backend sync is guarded by per-terminal credentials:
+  - request header `X-Device-Id`
+  - request header `X-Device-Token`
+  - backend stores only `Device.syncTokenHash`, not the raw token.
+- `sync:syncNow` tries device registration first, so after owner saves Sync settings it does not require app restart.
+- `settings:getAll` does not return `SYNC_DEVICE_TOKEN`.
+- Old shared secret now acts as registration credential, not the everyday sync credential.
 - Backend sync normalizes:
   - snake_case to camelCase.
   - discount `RS` -> `FLAT`, `PERCENT` -> `PERCENTAGE`.
@@ -169,6 +225,9 @@ npm run build:win
   - receipt audit entry
   - return
   - return item
+- Latest automated sync/security tests passed:
+  - Electron `npm run test:sync-security`
+  - Backend `npm run test:sync-token`
 
 ## Commercial Blockers Already Addressed
 - Duplicate sale protection via `transaction_id`.
@@ -180,6 +239,32 @@ npm run build:win
 - Backup/restore safety work exists in `electron-pos/electron/sync/backup.ts`.
 - Audit log system exists in `electron-pos/electron/audit/auditLog.ts`.
 - Export IPC exists for reports.
+- Weak/default cloud sync secrets blocked.
+- Per-terminal sync credential flow implemented.
+- Backend production dependency audit clean.
+- Electron production dependency audit clean.
+- Root Next prototype dependency audit clean.
+- Installer now uses `electron-builder@26.8.1`.
+
+## Latest Cash Register / Shift Fixes
+- Receipt Audit no longer blocks daily close.
+- Cash Register close now uses simple cash count audit:
+  - expected cash
+  - actual counted cash
+  - cash extra/short variance
+  - optional closing note
+- If yesterday's shift is still open, app tells cashier to close that shift first before opening today's shift.
+- Cash register had a CONSTRAINT FAILED issue fixed and Reopen Register was added in recent commit `84df44e`.
+- Returns FK violation fixed in recent commit `13d702f`; parent return row is inserted before child return items.
+
+## User / Role Fixes
+- Settings > Users & Roles > Add User now creates a real login user.
+- Only ADMIN can add login users.
+- User roles:
+  - `CASHIER`
+  - `MANAGER`
+  - `ADMIN`
+- PINs are hashed. Do not sync real PIN hashes from Electron to cloud.
 
 ## Recent POS Cash Checkout Work
 - Commit `a774617 codex: speed up cash checkout` updated `electron-pos/src/pages/POS.tsx`.
@@ -205,29 +290,43 @@ npm run build:win
   - create sale
   - print/reprint receipt
   - create return
-  - receipt audit
-  - close shift
+  - close shift/register with counted cash
   - sync now
   - verify backend DB records.
+- Physical printer test still must be done on real HP Engage One / thermal printer hardware.
 - Production VPS/Supabase deployment still needs final `.env`, migrations, PM2/Nginx setup.
 - Backend sync is robust but not a full conflict-resolution system. Since single-counter only, acceptable for now.
 - Backend reports are still thin compared with Electron reports. If cloud dashboard is needed, build shift-based cloud reports.
 - Code signing for installer not configured (Windows Defender may warn). For production distribution, purchase a code signing certificate.
 - SetupWizard step 2 saves rates to settings table (not daily_rates table directly) — daily_rates IPC requires manager PIN which blocks wizard flow. Consider adding a setup-only rate seeding IPC if this is a problem.
 
+## Test Coverage Notes
+- Automated tests are better than before but still thin for real money software. Current focused tests:
+  - `electron-pos/scripts/sales-math-smoke.cjs`
+  - `electron-pos/scripts/sync-security-smoke.cjs`
+  - `noon-dairy-backend/scripts/sync-token-smoke.cjs`
+- After 6-12 months of data, consider adding report/archive optimization if reports feel slow. SQLite is fine for single-counter daily POS, but long report queries may eventually need indexes/archive screens.
+
 ## Manual Verification Checklist
 - Backend:
   - `npm run build`
   - `npx prisma validate`
-  - `npx prisma db push`
+  - `npx prisma migrate status`
+  - `npx prisma migrate deploy` when new migrations exist
+  - `npm run test:sync-token`
   - `npm run start`
   - visit `http://localhost:3001/api/docs`
 - Electron:
+  - `npm run typecheck`
   - `npm run build:electron`
   - `npm run build:renderer`
+  - `npm run test:sales-math`
+  - `npm run test:sync-security`
   - `npm run dev:electron`
   - Settings > Sync: API URL is backend `/api`, not Supabase REST.
-  - Sync status shows live/online when backend is running.
+  - Settings > Sync: enter the strong registration secret matching backend `SYNC_DEVICE_SECRET`.
+  - Sync Now should register the terminal and store an internal `SYNC_DEVICE_TOKEN`.
+  - Sync status shows live/online when backend is running and terminal is registered.
 - Real sale:
   - shift open
   - cash register open
