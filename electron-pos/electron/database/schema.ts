@@ -1,5 +1,6 @@
 import db from './db';
 import bcrypt from 'bcryptjs';
+import { isKnownWeakSyncSecret, isUsableSyncSecret, normalizeSyncSecret } from '../sync/secretValidation';
 
 function verifyPasswordOrPin(secret: string, hash: string | null | undefined) {
   if (!hash) return false;
@@ -668,9 +669,11 @@ export function initializeDatabase() {
     `).run(nowForSettings);
   }
   const defaultApiUrl = process.env.APP_API_URL || 'http://localhost:3001/api';
-  const defaultSyncSecret = process.env.SYNC_DEVICE_SECRET || 'noon-dairy-local-sync-secret-change-me';
+  const configuredSyncSecret = normalizeSyncSecret(process.env.SYNC_DEVICE_SECRET);
   ensureSetting.run('APP_API_URL', defaultApiUrl, nowForSettings);
-  ensureSetting.run('SYNC_DEVICE_SECRET', defaultSyncSecret, nowForSettings);
+  if (isUsableSyncSecret(configuredSyncSecret)) {
+    ensureSetting.run('SYNC_DEVICE_SECRET', configuredSyncSecret, nowForSettings);
+  }
 
   // Older builds accidentally seeded a Supabase REST URL and anon key here.
   // The desktop app should sync through the NestJS backend instead.
@@ -678,8 +681,11 @@ export function initializeDatabase() {
   if (String(apiUrlSetting?.value || '').includes('supabase.co/rest/v1')) {
     db.prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'APP_API_URL'")
       .run(defaultApiUrl, nowForSettings);
-    db.prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'SYNC_DEVICE_SECRET'")
-      .run(defaultSyncSecret, nowForSettings);
+  }
+
+  const syncSecretSetting = db.prepare("SELECT value FROM settings WHERE key = 'SYNC_DEVICE_SECRET'").get() as any;
+  if (isKnownWeakSyncSecret(syncSecretSetting?.value)) {
+    db.prepare("DELETE FROM settings WHERE key = 'SYNC_DEVICE_SECRET'").run();
   }
 
   // Seed default categories/products

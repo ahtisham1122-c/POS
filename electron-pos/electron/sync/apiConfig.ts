@@ -1,4 +1,5 @@
 import db from '../database/db';
+import { isUsableSyncSecret, normalizeSyncSecret } from './secretValidation';
 
 function getDefaultApiBaseUrl() {
   return process.env.APP_API_URL || 'http://localhost:3001/api';
@@ -40,7 +41,8 @@ export function getSyncHeaders(deviceId?: string) {
   } catch (e) {
     console.error('Error reading SYNC_DEVICE_SECRET from settings:', e);
   }
-  if (!syncSecret) return null;
+  syncSecret = normalizeSyncSecret(syncSecret);
+  if (!isUsableSyncSecret(syncSecret)) return null;
 
   return {
     'Content-Type': 'application/json',

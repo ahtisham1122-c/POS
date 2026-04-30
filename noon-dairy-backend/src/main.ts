@@ -10,7 +10,7 @@ const logger = new Logger('Bootstrap');
 
 function requireStrongSecret(name: string, minLength = 24) {
   const value = process.env[name];
-  const looksLikePlaceholder = !value || /change-this|default|secret$/i.test(value);
+  const looksLikePlaceholder = !value || /change-this|default|local-sync-secret|paste[_-]|generate_random|your[_-]|secret$/i.test(value);
   if (looksLikePlaceholder || value.length < minLength) {
     throw new Error(`${name} must be set to a strong random value of at least ${minLength} characters`);
   }

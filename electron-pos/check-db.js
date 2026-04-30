@@ -3,6 +3,11 @@ const now = new Date().toISOString();
 
 function updateDb(path) {
   try {
+    const syncSecret = String(process.env.SYNC_DEVICE_SECRET || '').trim();
+    if (!syncSecret || syncSecret === 'noon-dairy-local-sync-secret-change-me' || syncSecret.length < 24) {
+      throw new Error('Set a strong SYNC_DEVICE_SECRET env value before updating the local database');
+    }
+
     const db = new Database(path);
     const stmt = db.prepare(`
       INSERT INTO settings (key, value, updated_at)
@@ -11,7 +16,7 @@ function updateDb(path) {
     `);
 
     stmt.run('APP_API_URL', process.env.APP_API_URL || 'http://localhost:3001/api', now);
-    stmt.run('SYNC_DEVICE_SECRET', process.env.SYNC_DEVICE_SECRET || 'noon-dairy-local-sync-secret-change-me', now);
+    stmt.run('SYNC_DEVICE_SECRET', syncSecret, now);
 
     console.log('Successfully updated:', path);
     db.close();

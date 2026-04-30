@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import db from '../database/db';
 import { getCurrentUser, requireCurrentUser } from './auth.ipc';
 import { logAudit } from '../audit/auditLog';
+import { getSyncSecretValidationError, normalizeSyncSecret } from '../sync/secretValidation';
 
 const SETUP_ALLOWED_KEYS = new Set(['shop_name', 'shop_address', 'shop_phone', 'milk_rate', 'yogurt_rate']);
 
@@ -58,6 +59,13 @@ export function registerSettingsIPC() {
       if (payload['24_hour_mode'] !== undefined) {
         payload['24_hour_mode'] = String(String(payload['24_hour_mode']).toLowerCase() === 'true');
         payload.ramadan24Hour = payload['24_hour_mode'];
+      }
+      if (payload.SYNC_DEVICE_SECRET !== undefined) {
+        payload.SYNC_DEVICE_SECRET = normalizeSyncSecret(payload.SYNC_DEVICE_SECRET);
+        const secretError = getSyncSecretValidationError(payload.SYNC_DEVICE_SECRET, true);
+        if (secretError) {
+          throw new Error(secretError);
+        }
       }
       const now = new Date().toISOString();
       const beforeSettings = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
