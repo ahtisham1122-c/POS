@@ -47,6 +47,10 @@ Use this file to continue development in a new Codex/Antigravity chat. Keep answ
 - Root Next prototype upgraded to `next@15.5.15` and builds successfully.
 - `next.config.mjs` sets explicit `outputFileTracingRoot` to avoid workspace-root warnings.
 - Check `git status --short` before editing. There may be Claude/user dirty files; do not revert unrelated changes.
+- Cleanup tools added for removing fake/test data before live use:
+  - VPS PostgreSQL: `noon-dairy-backend/scripts/reset-transactional-data.sql`
+  - Local Windows SQLite: `electron-pos/scripts/reset-local-transactional-data.cjs`
+  - Both are destructive and require typed confirmation. Take/keep backups first.
 
 ## Architecture
 - Electron desktop app is offline-first:
@@ -91,6 +95,7 @@ npm run build:renderer
 npm run typecheck
 npm run test:sales-math
 npm run test:sync-security
+npm run reset:local-transactional-data
 npm run dev:electron
 npm run build:win
 ```

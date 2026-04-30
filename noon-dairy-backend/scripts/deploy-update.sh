@@ -25,6 +25,14 @@ npm install --silent
 info "Running database migrations..."
 npx prisma migrate deploy
 
+# Regenerate the Prisma client so the TypeScript types match the new schema.
+# `migrate deploy` updates the database but does NOT regenerate the client
+# (only `migrate dev` does). Skipping this step caused builds to fail with
+# "Property 'syncTokenHash' does not exist on type Device" after the
+# per-device-token migration was applied.
+info "Regenerating Prisma client..."
+npx prisma generate
+
 # Rebuild the app
 info "Building application..."
 npm run build
