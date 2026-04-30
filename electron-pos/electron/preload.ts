@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getToday: () => ipcRenderer.invoke('cashRegister:getToday'),
     open: (data: any) => ipcRenderer.invoke('cashRegister:open', data),
     close: (data?: any) => ipcRenderer.invoke('cashRegister:close', data),
+    reopen: (data?: { managerPin?: string }) => ipcRenderer.invoke('cashRegister:reopen', data),
     getHistory: () => ipcRenderer.invoke('cashRegister:getHistory'),
   },
   shifts: {

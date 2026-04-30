@@ -15,6 +15,8 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
   const [closingBalance, setClosingBalance] = useState("");
   const [closingNotes, setClosingNotes] = useState("");
   const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
+  const [isReopenModalOpen, setIsReopenModalOpen] = useState(false);
+  const [reopenPin, setReopenPin] = useState("");
   const [history, setHistory] = useState<any[]>([]);
   const [zReport, setZReport] = useState<any>(null);
   const [currentShift, setCurrentShift] = useState<any>(null);
@@ -138,6 +140,24 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
       }
     } catch (err) {
       alert("Error closing register");
+    }
+  };
+
+  const handleReopenRegister = async () => {
+    if (!reopenPin) return;
+    try {
+      const res = await window.electronAPI?.cashRegister?.reopen({ managerPin: reopenPin });
+      if (res?.success) {
+        setIsReopenModalOpen(false);
+        setReopenPin("");
+        loadRegister();
+        loadHistory();
+        loadZReport();
+      } else {
+        alert(res?.error || "Failed to reopen register");
+      }
+    } catch (err) {
+      alert("Error reopening register");
     }
   };
 
@@ -286,8 +306,16 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
               {toMoney(registerData.is_closed_for_day ? registerData.closing_balance : currentExpectedCash)}
             </div>
             {registerData.is_closed_for_day && (
-              <div className="mt-4 px-4 py-1.5 bg-danger/20 text-danger rounded-full text-xs font-bold flex items-center gap-2">
-                <Lock className="w-3 h-3" /> REGISTER CLOSED
+              <div className="flex flex-col items-center gap-3 mt-4">
+                <div className="px-4 py-1.5 bg-danger/20 text-danger rounded-full text-xs font-bold flex items-center gap-2">
+                  <Lock className="w-3 h-3" /> REGISTER CLOSED
+                </div>
+                <button
+                  onClick={() => { setReopenPin(""); setIsReopenModalOpen(true); }}
+                  className="flex items-center gap-2 text-sm text-warning hover:bg-warning/10 px-4 py-2 rounded-lg border border-warning/30 transition-colors font-medium"
+                >
+                  <Unlock className="w-4 h-4" /> Reopen Register
+                </button>
               </div>
             )}
           </div>
@@ -411,6 +439,51 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
             <div className="p-4 bg-surface-3 border-t border-surface-4 flex gap-3">
               <button onClick={() => setIsClosingModalOpen(false)} className="btn-secondary flex-1 font-bold">Cancel</button>
               <button onClick={handleCloseRegister} className="btn-primary bg-danger hover:bg-danger/90 flex-1 font-bold">Confirm Close ✓</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REOPEN REGISTER MODAL */}
+      {isReopenModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-slide-up">
+          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-sm overflow-hidden flex flex-col border border-warning/30">
+            <div className="p-4 border-b border-surface-4 flex justify-between items-center bg-warning/10">
+              <h3 className="font-semibold text-lg flex items-center gap-2 text-warning">
+                <Unlock className="w-5 h-5" /> Reopen Register
+              </h3>
+              <button onClick={() => setIsReopenModalOpen(false)} className="text-text-secondary hover:text-text-primary">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-text-secondary">
+                This will reopen today's closed register and restore the shift so sales can continue. Manager PIN is required.
+              </p>
+              <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 text-xs text-warning">
+                ⚠ Only use this if the register was closed by mistake. The Z-Report will be voided until you close again properly.
+              </div>
+              <div>
+                <label className="text-xs font-bold text-text-secondary uppercase mb-2 block">Manager PIN</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  value={reopenPin}
+                  onChange={e => setReopenPin(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleReopenRegister()}
+                  className="input font-mono text-2xl text-center tracking-widest py-4"
+                  placeholder="••••"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="p-4 bg-surface-3 border-t border-surface-4 flex gap-3">
+              <button onClick={() => setIsReopenModalOpen(false)} className="btn-secondary flex-1">Cancel</button>
+              <button
+                onClick={handleReopenRegister}
+                disabled={!reopenPin}
+                className="flex-1 bg-warning hover:bg-warning/80 text-black font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-40"
+              >
+                Reopen Register
+              </button>
             </div>
           </div>
         </div>

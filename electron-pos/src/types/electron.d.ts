@@ -106,6 +106,7 @@ export interface ElectronAPI {
     getToday: () => Promise<any>;
     open: (data: any) => Promise<any>;
     close: (data?: any) => Promise<any>;
+    reopen: (data?: { managerPin?: string }) => Promise<{ success: boolean; error?: string }>;
     getHistory: () => Promise<any[]>;
   };
   shifts: {

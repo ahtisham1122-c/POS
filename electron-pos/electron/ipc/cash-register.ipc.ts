@@ -2,10 +2,11 @@ import { ipcMain } from 'electron';
 import db from '../database/db';
 import * as crypto from 'crypto';
 import { createOutboxEntry } from '../sync/outboxHelper';
-import { getCurrentUser } from './auth.ipc';
+import { getCurrentUser, requireManagerApproval } from './auth.ipc';
 import { getCashRegisterExpected } from '../database/cashRegister';
 import { formatLocalDate, getActiveBusinessDate, getOpenShift } from '../database/businessDay';
 import { performBackup } from '../sync/backup';
+import { logAudit } from '../audit/auditLog';
 
 export function registerCashRegisterIPC() {
   ipcMain.handle('cashRegister:getToday', () => {
@@ -28,10 +29,20 @@ export function registerCashRegisterIPC() {
       const now = new Date().toISOString();
       const openShift = getOpenShift();
       const date = openShift?.shift_date || formatLocalDate(new Date());
-      const existing = openShift
+
+      // Check for ANY existing register for this shift/date (open OR closed)
+      // before attempting INSERT — the shift_id UNIQUE constraint would otherwise
+      // throw a raw "CONSTRAINT FAILED" with no useful message.
+      const anyExisting = openShift
         ? db.prepare('SELECT * FROM cash_register WHERE shift_id = ?').get(openShift.id) as any
-        : db.prepare('SELECT * FROM cash_register WHERE date = ? AND is_closed_for_day = 0').get(date) as any;
-      if (existing) return { success: false, error: 'Cash register is already opened for today' };
+        : db.prepare('SELECT * FROM cash_register WHERE date = ? ORDER BY created_at DESC LIMIT 1').get(date) as any;
+
+      if (anyExisting) {
+        if (Number(anyExisting.is_closed_for_day) === 1) {
+          return { success: false, error: 'Register was already closed today. Use "Reopen Register" to continue.' };
+        }
+        return { success: false, error: 'Cash register is already open for today' };
+      }
 
       const id = crypto.randomUUID();
       const openingBalance = Number(data?.openingBalance || 0);
@@ -118,6 +129,72 @@ export function registerCashRegisterIPC() {
       performBackup(false);
 
       return { success: true, closingBalance: physicalCash, expectedCash, variance };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('cashRegister:reopen', (_event, data: { managerPin?: string } = {}) => {
+    try {
+      const now = new Date().toISOString();
+      const approver = requireManagerApproval(data.managerPin, 'reopening cash register');
+      const user = getCurrentUser();
+
+      // Find the most recently closed register for today
+      const today = getActiveBusinessDate();
+      const row = db.prepare(`
+        SELECT * FROM cash_register
+        WHERE date = ? AND is_closed_for_day = 1
+        ORDER BY created_at DESC LIMIT 1
+      `).get(today) as any;
+
+      if (!row) {
+        return { success: false, error: 'No closed register found for today to reopen' };
+      }
+
+      // Reopen the cash register
+      db.prepare(`
+        UPDATE cash_register SET is_closed_for_day = 0, synced = 0 WHERE id = ?
+      `).run(row.id);
+
+      createOutboxEntry('cash_register', 'UPDATE', row.id, {
+        id: row.id,
+        is_closed_for_day: 0,
+        updated_at: now
+      });
+
+      // Reopen the associated shift if it was closed
+      if (row.shift_id) {
+        const shift = db.prepare(`SELECT * FROM shifts WHERE id = ? AND status = 'CLOSED'`).get(row.shift_id) as any;
+        if (shift) {
+          db.prepare(`
+            UPDATE shifts
+            SET status = 'OPEN', closed_at = NULL, closed_by_id = NULL,
+                expected_cash = NULL, closing_cash = NULL, cash_variance = NULL,
+                synced = 0
+            WHERE id = ?
+          `).run(shift.id);
+
+          createOutboxEntry('shifts', 'UPDATE', shift.id, {
+            id: shift.id,
+            status: 'OPEN',
+            closed_at: null,
+            closed_by_id: null
+          });
+        }
+      }
+
+      logAudit({
+        actionType: 'REGISTER_REOPENED',
+        entityType: 'cash_register',
+        entityId: row.id,
+        before: { is_closed_for_day: 1 },
+        after: { is_closed_for_day: 0, reopened_at: now },
+        reason: 'Accidental close — register reopened',
+        approvedBy: approver
+      });
+
+      return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message };
     }
