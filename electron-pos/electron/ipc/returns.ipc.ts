@@ -126,6 +126,16 @@ export function registerReturnsIPC() {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `);
 
+        // ── PASS 1: validate all items and calculate total refund amount ──
+        // We must know refundAmount before inserting the `returns` parent row,
+        // because return_items FK → returns.id requires the parent to exist first.
+        type ResolvedItem = {
+          saleItem: any;
+          qty: number;
+          lineTotal: number;
+        };
+        const resolvedItems: ResolvedItem[] = [];
+
         for (const returnItem of input.items) {
           const qty = Number(returnItem.quantity || 0);
           if (qty <= 0) throw new Error('Returned quantity must be greater than zero');
@@ -142,7 +152,53 @@ export function registerReturnsIPC() {
 
           const lineTotal = Number((qty * Number(saleItem.unit_price || 0)).toFixed(2));
           refundAmount += lineTotal;
+          resolvedItems.push({ saleItem, qty, lineTotal });
+        }
 
+        refundAmount = Number(refundAmount.toFixed(2));
+        if (refundAmount <= 0) throw new Error('Refund amount must be greater than zero');
+
+        // ── INSERT returns PARENT ROW first (FK parent must exist before children) ──
+        db.prepare(`
+          INSERT INTO returns (
+            id, return_number, sale_id, shift_id, bill_number, customer_id, cashier_id,
+            return_date, refund_method, refund_amount, reason, restock_items,
+            status, created_at, synced
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, 0)
+        `).run(
+          returnId,
+          returnNumber,
+          sale.id,
+          actionShift?.id || sale.shift_id || null,
+          sale.bill_number,
+          sale.customer_id || null,
+          cashierId,
+          now,
+          input.refundMethod,
+          refundAmount,
+          input.reason.trim(),
+          restockItems ? 1 : 0,
+          now
+        );
+
+        createOutboxEntry('returns', 'INSERT', returnId, {
+          id: returnId,
+          return_number: returnNumber,
+          sale_id: sale.id,
+          shift_id: actionShift?.id || sale.shift_id || null,
+          bill_number: sale.bill_number,
+          customer_id: sale.customer_id || null,
+          cashier_id: cashierId,
+          return_date: now,
+          refund_method: input.refundMethod,
+          refund_amount: refundAmount,
+          reason: input.reason.trim(),
+          restock_items: restockItems ? 1 : 0,
+          created_at: now
+        });
+
+        // ── PASS 2: insert return_items now that the parent exists ──
+        for (const { saleItem, qty, lineTotal } of resolvedItems) {
           const returnItemId = crypto.randomUUID();
           insertReturnItem.run(
             returnItemId,
@@ -209,9 +265,6 @@ export function registerReturnsIPC() {
           }
         }
 
-        refundAmount = Number(refundAmount.toFixed(2));
-        if (refundAmount <= 0) throw new Error('Refund amount must be greater than zero');
-
         if (input.refundMethod === 'CASH') {
           addCashOut(refundAmount, actionShift?.shift_date || getActiveBusinessDate(new Date(now)), actionShift?.id || null);
         }
@@ -262,44 +315,6 @@ export function registerReturnsIPC() {
             created_at: now
           });
         }
-
-        db.prepare(`
-          INSERT INTO returns (
-            id, return_number, sale_id, shift_id, bill_number, customer_id, cashier_id,
-            return_date, refund_method, refund_amount, reason, restock_items,
-            status, created_at, synced
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, 0)
-        `).run(
-          returnId,
-          returnNumber,
-          sale.id,
-          actionShift?.id || sale.shift_id || null,
-          sale.bill_number,
-          sale.customer_id || null,
-          cashierId,
-          now,
-          input.refundMethod,
-          refundAmount,
-          input.reason.trim(),
-          restockItems ? 1 : 0,
-          now
-        );
-
-        createOutboxEntry('returns', 'INSERT', returnId, {
-          id: returnId,
-          return_number: returnNumber,
-          sale_id: sale.id,
-          shift_id: actionShift?.id || sale.shift_id || null,
-          bill_number: sale.bill_number,
-          customer_id: sale.customer_id || null,
-          cashier_id: cashierId,
-          return_date: now,
-          refund_method: input.refundMethod,
-          refund_amount: refundAmount,
-          reason: input.reason.trim(),
-          restock_items: restockItems ? 1 : 0,
-          created_at: now
-        });
 
         logAudit({
           actionType: 'REFUND_CREATED',
