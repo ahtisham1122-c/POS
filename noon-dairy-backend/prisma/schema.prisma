@@ -288,6 +288,9 @@ model Device {
   deviceId       String    @unique
   deviceName     String
   terminalNumber Int
+  syncTokenHash  String?
+  tokenIssuedAt  DateTime?
+  revokedAt      DateTime?
   lastSeenAt     DateTime?
   lastSyncedAt   DateTime?
   createdAt      DateTime  @default(now())

@@ -1,0 +1,3 @@
+ALTER TABLE "Device" ADD COLUMN "syncTokenHash" TEXT;
+ALTER TABLE "Device" ADD COLUMN "tokenIssuedAt" TIMESTAMP(3);
+ALTER TABLE "Device" ADD COLUMN "revokedAt" TIMESTAMP(3);

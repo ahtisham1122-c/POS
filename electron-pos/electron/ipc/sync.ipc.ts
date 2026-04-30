@@ -3,6 +3,7 @@ import db from '../database/db';
 import { pullSync } from '../sync/pullSync';
 import { networkMonitor } from '../sync/networkMonitor';
 import { SyncEngine } from '../sync/syncEngine';
+import { registerDeviceWithCloud } from '../sync/deviceRegistration';
 
 export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => BrowserWindow | null) {
   ipcMain.handle('sync:getPendingCount', () => {
@@ -42,6 +43,7 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
 
   ipcMain.handle('sync:syncNow', async () => {
     try {
+      await registerDeviceWithCloud().catch(() => null);
       db.prepare(`
         UPDATE sync_outbox
         SET status = 'pending', last_attempted_at = NULL

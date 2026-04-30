@@ -26,11 +26,10 @@ import { registerEmployeesIPC } from './ipc/employees.ipc';
 import { registerRidersIPC } from './ipc/riders.ipc';
 import { SyncEngine } from './sync/syncEngine';
 import { pullSync } from './sync/pullSync';
-import { getDeviceInfo } from './sync/deviceInfo';
 import { networkMonitor } from './sync/networkMonitor';
-import { fetchWithTimeout, getApiBaseUrl, getSyncHeaders } from './sync/apiConfig';
 import { performBackup, scheduleDailyBackup } from './sync/backup';
 import { setupAutoUpdater } from './updater';
+import { registerDeviceWithCloud } from './sync/deviceRegistration';
 import log from './utils/logger';
 
 let mainWindow: BrowserWindow | null = null;
@@ -128,22 +127,10 @@ function createWindow() {
   });
 }
 
-function registerDeviceWithCloud() {
+function registerDeviceSoon() {
   setTimeout(async () => {
     try {
-      const info = getDeviceInfo();
-      const apiUrl = getApiBaseUrl();
-      const syncHeaders = getSyncHeaders(info.deviceId);
-      if (!syncHeaders) {
-        log.warn('Cloud device registration skipped because SYNC_DEVICE_SECRET is not configured.');
-        return;
-      }
-      await fetchWithTimeout(`${apiUrl}/sync/register-device`, {
-        method: 'POST',
-        headers: syncHeaders,
-        body: JSON.stringify(info)
-      }, 15000);
-      log.info('Registered device with cloud.');
+      await registerDeviceWithCloud();
       
       // Attempt first pull
       await pullSync(mainWindow || undefined);
@@ -197,7 +184,7 @@ app.whenReady().then(() => {
   networkMonitor.on('online', sendOnlineStatus);
   networkMonitor.on('offline', sendOfflineStatus);
 
-  registerDeviceWithCloud();
+  registerDeviceSoon();
 
   // Simulate startup delay for splash
   setTimeout(() => {

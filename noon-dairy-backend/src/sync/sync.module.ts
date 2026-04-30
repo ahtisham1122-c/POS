@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
 import { SyncController } from './sync.controller';
 import { SyncService } from './sync.service';
-// import { PrismaService } from '../prisma/prisma.service'; // Adjust path if needed
+import { SyncSecretGuard } from './sync-secret.guard';
 
 @Module({
   controllers: [SyncController],
-  providers: [SyncService],
+  providers: [SyncService, SyncSecretGuard],
   exports: [SyncService],
 })
 export class SyncModule {}

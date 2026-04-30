@@ -33,7 +33,7 @@ function getLatestRecord(tableName: string, label: string, orderBy = 'created_at
 async function verifyLatestRecordsWithBackend(records: Array<{ table: string; id: string }>) {
   const syncHeaders = getSyncHeaders(getDeviceInfo().deviceId);
   if (!syncHeaders) {
-    return { success: false, skipped: true, error: 'SYNC_DEVICE_SECRET is not configured.' };
+    return { success: false, skipped: true, error: 'This terminal is not registered for cloud sync yet.' };
   }
 
   const apiUrl = getApiBaseUrl();

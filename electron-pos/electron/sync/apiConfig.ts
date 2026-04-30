@@ -16,6 +16,16 @@ function normalizeApiBaseUrl(value: string) {
   return trimmed;
 }
 
+function getSettingValue(key: string) {
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any;
+    return row?.value ? String(row.value) : '';
+  } catch (e) {
+    console.error(`Error reading ${key} from settings:`, e);
+    return '';
+  }
+}
+
 export function getApiBaseUrl() {
   try {
     const row = db.prepare("SELECT value FROM settings WHERE key = 'APP_API_URL'").get() as any;
@@ -34,13 +44,18 @@ export function getApiBaseUrl() {
 }
 
 export function getSyncHeaders(deviceId?: string) {
-  let syncSecret = process.env.SYNC_DEVICE_SECRET;
-  try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'SYNC_DEVICE_SECRET'").get() as any;
-    if (row?.value) syncSecret = row.value;
-  } catch (e) {
-    console.error('Error reading SYNC_DEVICE_SECRET from settings:', e);
-  }
+  const deviceToken = getSettingValue('SYNC_DEVICE_TOKEN').trim();
+  if (!deviceId || !deviceToken) return null;
+
+  return {
+    'Content-Type': 'application/json',
+    'X-Device-Id': deviceId,
+    'X-Device-Token': deviceToken
+  };
+}
+
+export function getRegistrationHeaders(deviceId?: string) {
+  let syncSecret = process.env.SYNC_DEVICE_SECRET || getSettingValue('SYNC_DEVICE_SECRET');
   syncSecret = normalizeSyncSecret(syncSecret);
   if (!isUsableSyncSecret(syncSecret)) return null;
 

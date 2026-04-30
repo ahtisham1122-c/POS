@@ -73,7 +73,7 @@ export class SyncEngine {
       const deviceInfo = getDeviceInfo();
       const syncHeaders = getSyncHeaders(deviceInfo.deviceId);
       if (!syncHeaders) {
-        console.warn('Cloud sync skipped because SYNC_DEVICE_SECRET is not configured.');
+        console.warn('Cloud sync skipped because this terminal is not registered.');
         this.isSyncing = false;
         return;
       }

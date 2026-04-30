@@ -5,6 +5,14 @@ import { logAudit } from '../audit/auditLog';
 import { getSyncSecretValidationError, normalizeSyncSecret } from '../sync/secretValidation';
 
 const SETUP_ALLOWED_KEYS = new Set(['shop_name', 'shop_address', 'shop_phone', 'milk_rate', 'yogurt_rate']);
+const REDACTED_SETTING_KEYS = new Set(['SYNC_DEVICE_SECRET', 'SYNC_DEVICE_TOKEN']);
+
+function redactSettingsForAudit(settings: Record<string, any>) {
+  return Object.entries(settings).reduce<Record<string, any>>((acc, [key, value]) => {
+    acc[key] = REDACTED_SETTING_KEYS.has(key) ? '[REDACTED]' : value;
+    return acc;
+  }, {});
+}
 
 function isSetupCompleted() {
   const setting = db.prepare("SELECT value FROM settings WHERE key = 'setup_completed'").get() as any;
@@ -13,7 +21,7 @@ function isSetupCompleted() {
 
 export function registerSettingsIPC() {
   ipcMain.handle('settings:getAll', () => {
-    return db.prepare('SELECT key, value, updated_at FROM settings ORDER BY key ASC').all();
+    return db.prepare("SELECT key, value, updated_at FROM settings WHERE key <> 'SYNC_DEVICE_TOKEN' ORDER BY key ASC").all();
   });
 
   ipcMain.handle('settings:update', (_event, data: Record<string, any>) => {
@@ -29,6 +37,11 @@ export function registerSettingsIPC() {
         }
       } else {
         requireCurrentUser(['ADMIN', 'MANAGER']);
+      }
+
+      delete payload.SYNC_DEVICE_TOKEN;
+      if (payload.SYNC_DEVICE_SECRET !== undefined || payload.APP_API_URL !== undefined) {
+        requireCurrentUser(['ADMIN']);
       }
 
       if (payload.taxRate !== undefined) {
@@ -83,11 +96,11 @@ export function registerSettingsIPC() {
       logAudit({
         actionType: 'SETTINGS_CHANGED',
         entityType: 'settings',
-        before: beforeSettings.reduce<Record<string, string>>((acc, row) => {
+        before: redactSettingsForAudit(beforeSettings.reduce<Record<string, string>>((acc, row) => {
           acc[row.key] = row.value;
           return acc;
-        }, {}),
-        after: payload
+        }, {})),
+        after: redactSettingsForAudit(payload)
       });
       return { success: true };
     } catch (e: any) {

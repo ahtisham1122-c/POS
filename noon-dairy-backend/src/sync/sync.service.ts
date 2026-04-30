@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { createSyncToken, hashSyncToken } from './sync-token.util';
 
 @Injectable()
 export class SyncService {
@@ -663,18 +664,36 @@ export class SyncService {
   }
 
   async registerDevice(data: any) {
+    if (!data?.deviceId) {
+      throw new BadRequestException('Device ID is required');
+    }
+
+    const syncToken = createSyncToken();
+    const syncTokenHash = hashSyncToken(syncToken);
+    const tokenIssuedAt = new Date();
+
     const device = await this.prisma.device.upsert({
       where: { deviceId: data.deviceId },
-      update: { lastSeenAt: new Date(), deviceName: data.deviceName, terminalNumber: data.terminalNumber },
+      update: {
+        lastSeenAt: tokenIssuedAt,
+        deviceName: data.deviceName || 'Unknown terminal',
+        terminalNumber: Number(data.terminalNumber || 1),
+        syncTokenHash,
+        tokenIssuedAt,
+        revokedAt: null
+      },
       create: { 
         deviceId: data.deviceId, 
-        deviceName: data.deviceName, 
-        terminalNumber: data.terminalNumber, 
-        lastSeenAt: new Date(),
-        lastSyncedAt: new Date()
+        deviceName: data.deviceName || 'Unknown terminal',
+        terminalNumber: Number(data.terminalNumber || 1),
+        syncTokenHash,
+        tokenIssuedAt,
+        revokedAt: null,
+        lastSeenAt: tokenIssuedAt,
+        lastSyncedAt: tokenIssuedAt
       }
     });
-    return { success: true, deviceId: device.deviceId };
+    return { success: true, deviceId: device.deviceId, syncToken };
   }
 
   async getAllDevices() {
