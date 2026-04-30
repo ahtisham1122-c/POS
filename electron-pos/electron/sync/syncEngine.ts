@@ -79,23 +79,33 @@ export class SyncEngine {
       }
 
       for (const row of readyRows) {
+        // Network-level error flag — if true, abort the entire batch
+        let networkError = false;
+
         try {
-          const response = await fetchWithTimeout(`${apiUrl}/sync/ingest`, {
-            method: 'POST',
-            headers: syncHeaders,
-            body: JSON.stringify({
-              table: row.table_name,
-              operation: row.operation,
-              recordId: row.record_id,
-              payload: JSON.parse(row.payload),
-              timestamp: row.created_at,
-              device: {
-                id: deviceInfo.deviceId,
-                name: deviceInfo.deviceName,
-                terminalNumber: deviceInfo.terminalNumber
-              }
-            })
-          }, 15000);
+          let response: Response;
+          try {
+            response = await fetchWithTimeout(`${apiUrl}/sync/ingest`, {
+              method: 'POST',
+              headers: syncHeaders,
+              body: JSON.stringify({
+                table: row.table_name,
+                operation: row.operation,
+                recordId: row.record_id,
+                payload: JSON.parse(row.payload),
+                timestamp: row.created_at,
+                device: {
+                  id: deviceInfo.deviceId,
+                  name: deviceInfo.deviceName,
+                  terminalNumber: deviceInfo.terminalNumber
+                }
+              })
+            }, 15000);
+          } catch (fetchErr: any) {
+            // fetch() itself threw — network is down or server unreachable
+            networkError = true;
+            throw fetchErr;
+          }
 
           if (response.ok) {
             const result = await response.json() as any;
@@ -117,27 +127,47 @@ export class SyncEngine {
               logger.info(`SyncEngine synced row ${row.id} for table '${row.table_name}' (action: ${action}).`);
             }
           } else {
+            // Server returned an HTTP error for this specific row — record the error and
+            // continue with the next row (don't abort the batch).
             const errText = await response.text();
-            throw new Error(`Server Error (${response.status}): ${errText.substring(0, 500)}`);
+            const errMsg = `Server Error (${response.status}): ${errText.substring(0, 300)}`;
+            logger.warn(`SyncEngine server rejected row ${row.id} (${row.table_name}): ${errMsg}`);
+
+            db.prepare(`
+              UPDATE sync_outbox
+              SET attempt_count = attempt_count + 1,
+                  error_message = ?,
+                  last_attempted_at = datetime('now')
+              WHERE id = ?
+            `).run(errMsg, row.id);
+
+            const updated = db.prepare(`SELECT attempt_count FROM sync_outbox WHERE id = ?`).get(row.id) as any;
+            if (updated && updated.attempt_count >= 10) {
+              db.prepare(`UPDATE sync_outbox SET status = 'failed' WHERE id = ?`).run(row.id);
+            }
           }
 
         } catch (error: any) {
           logger.warn(`SyncEngine outbox upload failed for row ${row.id}: ${error.message}`);
 
           db.prepare(`
-            UPDATE sync_outbox 
-            SET attempt_count = attempt_count + 1, 
-                error_message = ?, 
+            UPDATE sync_outbox
+            SET attempt_count = attempt_count + 1,
+                error_message = ?,
                 last_attempted_at = datetime('now')
             WHERE id = ?
           `).run(error.message, row.id);
-          
+
           const updated = db.prepare(`SELECT attempt_count FROM sync_outbox WHERE id = ?`).get(row.id) as any;
           if (updated && updated.attempt_count >= 10) {
             db.prepare(`UPDATE sync_outbox SET status = 'failed' WHERE id = ?`).run(row.id);
           }
-          // Stop processing further rows in this batch if one fails (likely network/server issue)
-          break;
+
+          if (networkError) {
+            // Network is down — no point trying the remaining rows in this batch
+            break;
+          }
+          // Otherwise it was a row-level error — continue with next row
         }
       }
     } catch (e) {

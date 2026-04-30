@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, shell } from 'electron';
 import log from '../utils/logger';
 import fs from 'fs';
 import path from 'path';
@@ -256,17 +256,34 @@ export function registerPrinterIPC() {
 
         win.webContents.once('did-finish-load', () => {
           setTimeout(async () => {
+            // --- Helper: save receipt as PDF when no printer is available ---
+            const saveAsPdf = async (reason: string) => {
+              try {
+                const pdfDir = path.join(app.getPath('documents'), 'NoonDairyReceipts');
+                if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
+                const safeBill = String(receipt.billNumber || Date.now()).replace(/[^a-zA-Z0-9-_]/g, '-');
+                const pdfPath = path.join(pdfDir, `receipt-${safeBill}.pdf`);
+                const pdfData = await win.webContents.printToPDF({ printBackground: true });
+                fs.writeFileSync(pdfPath, pdfData);
+                shell.openPath(pdfDir);
+                log.info(`No printer (${reason}) — receipt saved as PDF: ${pdfPath}`);
+                finish({ success: true, error: undefined });
+              } catch (pdfErr: any) {
+                finish({ success: false, error: `${reason}. PDF fallback also failed: ${pdfErr.message}` });
+              }
+            };
+
             try {
               const printers = await win.webContents.getPrintersAsync();
               if (printers.length === 0) {
-                finish({ success: false, error: 'No printer is installed on this computer' });
+                await saveAsPdf('No printer installed');
                 return;
               }
 
               if (receiptSettings.printerName) {
                 const selectedPrinter = printers.find((printer) => printer.name === receiptSettings.printerName);
                 if (!selectedPrinter) {
-                  finish({ success: false, error: `Selected printer "${receiptSettings.printerName}" is not available` });
+                  await saveAsPdf(`Selected printer "${receiptSettings.printerName}" is not available`);
                   return;
                 }
                 deviceName = selectedPrinter.name;
@@ -281,10 +298,11 @@ export function registerPrinterIPC() {
               deviceName,
               printBackground: true,
               margins: { marginType: 'none' }
-            }, (success, errorType) => {
+            }, async (success, errorType) => {
               if (!success) {
                 log.error('Print failed:', errorType);
-                finish({ success: false, error: errorType || 'Printer rejected the receipt' });
+                // Printer rejected — try PDF fallback
+                await saveAsPdf(errorType || 'Printer rejected the receipt');
                 return;
               }
 

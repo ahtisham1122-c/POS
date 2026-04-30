@@ -107,7 +107,9 @@ export function registerSystemIPC() {
       userData: app.getPath('userData'),
       documents: app.getPath('documents'),
       backupDir: getBackupDir(),
-      dbPath: getDatabasePath()
+      dbPath: getDatabasePath(),
+      isPackaged: app.isPackaged,
+      isDev: !app.isPackaged
     };
   });
 

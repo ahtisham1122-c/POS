@@ -40,7 +40,21 @@ export function performBackup(isManual = false) {
     const backupFile = path.join(backupDir, `${type}-backup-${stamp}.db`);
     
     copySqliteFileWithSidecars(dbPath, backupFile);
-    log.info(`Local backup created successfully at ${backupFile}`);
+
+    // Verify the backup is a readable, valid SQLite file
+    const stats = fs.statSync(backupFile);
+    if (stats.size < 100) {
+      throw new Error(`Backup file is too small (${stats.size} bytes) — likely corrupt`);
+    }
+    const fd = fs.openSync(backupFile, 'r');
+    const headerBuf = Buffer.alloc(16);
+    fs.readSync(fd, headerBuf, 0, 16, 0);
+    fs.closeSync(fd);
+    if (!headerBuf.toString('ascii').startsWith('SQLite format 3')) {
+      throw new Error('Backup verification failed: file does not have a valid SQLite header');
+    }
+
+    log.info(`Local backup created and verified at ${backupFile} (${stats.size} bytes)`);
 
     cleanupOldBackups(backupDir);
 

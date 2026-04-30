@@ -94,6 +94,7 @@ export default function Inventory() {
   }, []);
 
   const categories = useMemo(() => ["ALL", ...new Set(products.map(p => p.category || "OTHER"))], [products]);
+  const milkProduct = useMemo(() => products.find(p => p.code === 'MILK'), [products]);
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
@@ -466,16 +467,34 @@ export default function Inventory() {
               <button onClick={() => setStockInModalOpen(false)} className="text-text-secondary hover:text-text-primary">✕</button>
             </div>
             <div className="p-6 space-y-4">
-              {selectedProduct.code === 'YOGT' && (
-                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-sm text-amber-400">
-                  ⚠ Yogurt is made from milk. Adding yogurt stock will automatically deduct the same quantity from Milk inventory.
-                  {stockInQty && Number(stockInQty) > 0 && (
-                    <div className="mt-1 font-semibold">
-                      This will use {Number(stockInQty).toFixed(2)} kg of Milk.
+              {selectedProduct.code === 'YOGT' && (() => {
+                const milkNeeded = Number(stockInQty) || 0;
+                const milkAvailable = milkProduct?.stock ?? 0;
+                const isInsufficient = milkNeeded > 0 && milkAvailable < milkNeeded;
+                const isLow = milkNeeded > 0 && !isInsufficient && milkAvailable - milkNeeded < 5;
+                return (
+                  <>
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-sm text-amber-400">
+                      ⚠ Yogurt is made from milk. Adding yogurt stock will automatically deduct the same quantity from Milk inventory.
+                      {milkNeeded > 0 && (
+                        <div className="mt-1 font-semibold">
+                          This will use {milkNeeded.toFixed(2)} kg of Milk. (Available: {milkAvailable.toFixed(2)} kg)
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              )}
+                    {isInsufficient && (
+                      <div className="bg-danger/10 border border-danger/30 rounded-lg p-3 text-sm text-danger font-semibold">
+                        🚫 Not enough milk! You need {milkNeeded.toFixed(2)} kg but only {milkAvailable.toFixed(2)} kg is in stock. Reduce quantity or stock in milk first.
+                      </div>
+                    )}
+                    {isLow && (
+                      <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3 text-sm text-orange-400">
+                        ⚠ Low milk after this batch: only {(milkAvailable - milkNeeded).toFixed(2)} kg will remain.
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               {selectedProduct.code === 'MILK' && (
                 <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-sm text-blue-400">
                   💡 Milk stock normally comes from supplier entries (Suppliers page). Use this only for manual corrections.
@@ -516,8 +535,8 @@ export default function Inventory() {
               <button onClick={() => setStockInModalOpen(false)} className="btn-secondary flex-1">Cancel</button>
               <button
                 onClick={handleStockIn}
-                className={cn("flex-1", selectedProduct.code === 'YOGT' ? "bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors" : "btn-primary")}
-                disabled={!stockInQty || Number(stockInQty) <= 0}
+                className={cn("flex-1", selectedProduct.code === 'YOGT' ? "bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed" : "btn-primary")}
+                disabled={!stockInQty || Number(stockInQty) <= 0 || (selectedProduct.code === 'YOGT' && (milkProduct?.stock ?? 0) < Number(stockInQty || 0))}
               >
                 {selectedProduct.code === 'YOGT' ? 'Confirm Production' : 'Confirm Stock In'}
               </button>

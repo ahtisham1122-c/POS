@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { Users, Search, Plus, BookOpen, Edit2, DollarSign, UserCheck, AlertTriangle } from "lucide-react";
+import { Users, Search, Plus, BookOpen, Edit2, DollarSign, UserCheck, AlertTriangle, Trash2 } from "lucide-react";
 import { cn } from "../lib/utils";
 
 type Customer = {
@@ -32,6 +32,8 @@ export default function Customers() {
   const [editForm, setEditForm] = useState(emptyForm);
   const [ledger, setLedger] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [deletePin, setDeletePin] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const loadCustomers = async () => {
     try {
@@ -107,7 +109,31 @@ export default function Customers() {
   const openEdit = (c: Customer) => {
     setSelectedCustomer(c);
     setEditForm({ name: c.name, phone: c.phone || "", card_number: c.card_number || "", opening_balance: "0" });
+    setShowDeleteConfirm(false);
+    setDeletePin("");
     setEditModalOpen(true);
+  };
+
+  const handleDeleteCustomer = async () => {
+    if (!selectedCustomer) return;
+    if (!deletePin) { alert("Manager PIN is required to delete a customer."); return; }
+    setIsSaving(true);
+    try {
+      const result = await window.electronAPI?.customers?.remove(selectedCustomer.id, { managerPin: deletePin });
+      if (result?.success === false) {
+        alert(result?.error || "Failed to delete customer");
+        return;
+      }
+      setEditModalOpen(false);
+      setShowDeleteConfirm(false);
+      setDeletePin("");
+      setSelectedCustomer(null);
+      loadCustomers();
+    } catch (err: any) {
+      alert(err?.message || "Failed to delete customer");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleUpdateCustomer = async () => {
@@ -349,6 +375,12 @@ export default function Customers() {
               <button onClick={() => setEditModalOpen(false)} className="text-text-secondary hover:text-text-primary">✕</button>
             </div>
             <div className="p-6 space-y-4">
+              {Number(selectedCustomer.current_balance) > 0 && (
+                <div className="bg-danger/10 border border-danger/30 rounded-lg p-3 flex items-center gap-2 text-sm text-danger">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>Outstanding balance: <strong>{toMoney(selectedCustomer.current_balance)}</strong>. Collect payment before removing this customer.</span>
+                </div>
+              )}
               <div>
                 <label className="text-xs font-bold text-text-secondary uppercase mb-1 block">Full Name *</label>
                 <input type="text" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} className="input" autoFocus />
@@ -361,6 +393,39 @@ export default function Customers() {
                 <label className="text-xs font-bold text-text-secondary uppercase mb-1 block">Card / Account No</label>
                 <input type="text" value={editForm.card_number} onChange={e => setEditForm(f => ({ ...f, card_number: e.target.value }))} className="input" placeholder="Optional" />
               </div>
+
+              {/* Delete section — only for customers with zero balance */}
+              {Number(selectedCustomer.current_balance) <= 0 && (
+                <div className="border-t border-surface-4 pt-4">
+                  {!showDeleteConfirm ? (
+                    <button
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="text-xs text-danger hover:bg-danger/10 px-3 py-2 rounded-md transition-colors w-full text-left flex items-center gap-2"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Remove this customer…
+                    </button>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-danger font-semibold">Enter manager PIN to confirm removal:</p>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        value={deletePin}
+                        onChange={e => setDeletePin(e.target.value)}
+                        className="input font-mono text-center tracking-widest"
+                        placeholder="Manager PIN"
+                        autoFocus
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={() => { setShowDeleteConfirm(false); setDeletePin(""); }} className="btn-secondary flex-1 text-xs">Cancel</button>
+                        <button onClick={handleDeleteCustomer} disabled={!deletePin || isSaving} className="flex-1 text-xs bg-danger hover:bg-danger/80 text-white font-semibold py-2 px-3 rounded-lg transition-colors disabled:opacity-40">
+                          {isSaving ? "Removing…" : "Confirm Remove"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="p-4 bg-surface-3 border-t border-surface-4 flex gap-3">
               <button onClick={() => setEditModalOpen(false)} className="btn-secondary flex-1">Cancel</button>

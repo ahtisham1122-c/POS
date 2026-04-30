@@ -716,6 +716,6 @@ export function initializeDatabase() {
     db.prepare(`
       INSERT INTO daily_rates (id, date, milk_rate, yogurt_rate, updated_by_id, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(crypto.randomUUID ? crypto.randomUUID() : 'initial-rate', today, 180, 220, 'admin-id', now);
+    `).run(crypto.randomUUID(), today, 180, 220, 'admin-id', now);
   }
 }

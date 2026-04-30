@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Store, Tag, Users, RefreshCw, Database, Save, CheckCircle2, Monitor, ShieldCheck, Printer } from "lucide-react";
+import { Store, Tag, Users, RefreshCw, Database, Save, CheckCircle2, Monitor, ShieldCheck, Printer, AlertOctagon, XCircle } from "lucide-react";
 import { cn } from "../lib/utils";
 
 type SettingsTab = "SHOP" | "POS" | "RATES" | "USERS" | "AUDIT" | "SYNC" | "BACKUP";
@@ -73,6 +73,11 @@ export default function Settings() {
     lastSyncedAt: string | null;
   } | null>(null);
 
+  const [failedRows, setFailedRows] = useState<Array<{
+    id: string; table_name: string; record_id: string; operation: string;
+    error_message: string; attempt_count: number; last_attempted_at: string | null; created_at: string;
+  }>>([]);
+
   const loadSyncStatus = async () => {
     try {
       const status = await window.electronAPI?.sync?.getStatus();
@@ -80,6 +85,21 @@ export default function Settings() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const loadFailedRows = async () => {
+    try {
+      const rows = await window.electronAPI?.sync?.getFailedRows();
+      setFailedRows(rows || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDismissRow = async (id: string) => {
+    await window.electronAPI?.sync?.dismissRow(id);
+    await loadFailedRows();
+    await loadSyncStatus();
   };
 
   const handleSyncNow = async () => {
@@ -92,6 +112,7 @@ export default function Settings() {
         alert(result?.error || 'Sync failed');
       }
       await loadSyncStatus();
+      await loadFailedRows();
     } catch (err) {
       alert('Failed to trigger sync');
     } finally {
@@ -128,6 +149,7 @@ export default function Settings() {
     loadUsers();
     loadAuditLogs();
     loadSyncStatus();
+    loadFailedRows();
     loadRateHistory();
     loadBackupList();
   }, []);
@@ -1055,13 +1077,60 @@ export default function Settings() {
                 </div>
               )}
 
-              {syncStatus?.latestError && (
-                <div className="rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
-                  <p className="font-bold">Latest Sync Error:</p>
-                  <p className="mt-1 font-mono">{syncStatus.latestError}</p>
-                  <p className="text-xs mt-1 text-text-secondary">
-                    Table: {syncStatus.latestErrorTable} | Last Attempt: {syncStatus.lastSyncedAt ? new Date(syncStatus.lastSyncedAt).toLocaleString() : 'Never'}
-                  </p>
+              {failedRows.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="font-bold text-danger flex items-center gap-2">
+                      <AlertOctagon className="w-4 h-4" />
+                      {failedRows.length} Record{failedRows.length !== 1 ? 's' : ''} Stuck in Outbox
+                    </p>
+                    <button
+                      onClick={handleSyncNow}
+                      disabled={isLoading}
+                      className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5"
+                    >
+                      <RefreshCw className={cn("w-3.5 h-3.5", isLoading ? "animate-spin" : "")} />
+                      Reset & Retry All
+                    </button>
+                  </div>
+                  <div className="rounded-xl border border-danger/20 overflow-hidden">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-surface-3 text-text-secondary uppercase tracking-wider">
+                        <tr>
+                          <th className="px-3 py-2">Table</th>
+                          <th className="px-3 py-2">Record ID</th>
+                          <th className="px-3 py-2">Op</th>
+                          <th className="px-3 py-2">Tries</th>
+                          <th className="px-3 py-2">Error</th>
+                          <th className="px-3 py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-surface-4">
+                        {failedRows.map(row => (
+                          <tr key={row.id} className="hover:bg-surface-3/50">
+                            <td className="px-3 py-2 font-mono font-bold text-text-primary">{row.table_name}</td>
+                            <td className="px-3 py-2 font-mono text-text-secondary">{String(row.record_id).slice(0, 12)}…</td>
+                            <td className="px-3 py-2">
+                              <span className={cn("badge text-[10px]", row.operation === 'INSERT' ? 'bg-success/15 text-success' : row.operation === 'DELETE' ? 'bg-danger/15 text-danger' : 'bg-info/15 text-info')}>
+                                {row.operation}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-text-secondary">{row.attempt_count}</td>
+                            <td className="px-3 py-2 text-danger max-w-xs truncate">{row.error_message}</td>
+                            <td className="px-3 py-2">
+                              <button
+                                onClick={() => handleDismissRow(row.id)}
+                                className="text-text-secondary hover:text-danger transition-colors"
+                                title="Dismiss this record"
+                              >
+                                <XCircle className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 

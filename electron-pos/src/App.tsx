@@ -44,8 +44,10 @@ export const PAGE_ACCESS: Record<PageId, UserRole[]> = {
   "test-center":   [],
 };
 
-export function canAccessPage(role: string | undefined, page: PageId): boolean {
+export function canAccessPage(role: string | undefined, page: PageId, isDev = false): boolean {
   if (!role) return false;
+  // test-center is only accessible to ADMIN in dev/development mode
+  if (page === 'test-center') return isDev && role === 'ADMIN';
   return PAGE_ACCESS[page]?.includes(role as UserRole) ?? false;
 }
 
@@ -54,6 +56,7 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [setupCompleted, setSetupCompleted] = useState(true);
+  const [isDev, setIsDev] = useState(false);
 
   useEffect(() => {
     const init = async () => {
@@ -64,6 +67,10 @@ export default function App() {
       const completedSetting = settings?.find((s: any) => s.key === "setup_completed");
       setSetupCompleted(completedSetting?.value === "true");
 
+      // Check if running in dev mode — only then allow test-center for ADMIN
+      const paths = await window.electronAPI?.system?.getPaths?.();
+      setIsDev(Boolean(paths?.isDev));
+
       setAuthChecking(false);
     };
     init();
@@ -73,14 +80,14 @@ export default function App() {
   // bounce them to a landing page their role can access (POS for cashiers, dashboard otherwise).
   useEffect(() => {
     if (!user) return;
-    if (!canAccessPage(user.role, page)) {
+    if (!canAccessPage(user.role, page, isDev)) {
       const fallback: PageId = user.role === "CASHIER" ? "pos" : "dashboard";
       setPage(fallback);
     }
-  }, [user, page]);
+  }, [user, page, isDev]);
 
   const guardedSetPage = (next: PageId) => {
-    if (user && !canAccessPage(user.role, next)) return;
+    if (user && !canAccessPage(user.role, next, isDev)) return;
     setPage(next);
   };
 
@@ -96,7 +103,7 @@ export default function App() {
     return <Login />;
   }
 
-  const allowed = (p: PageId) => canAccessPage(user.role, p);
+  const allowed = (p: PageId) => canAccessPage(user.role, p, isDev);
 
   return (
     <AppShell page={page} setPage={guardedSetPage} userRole={user.role}>

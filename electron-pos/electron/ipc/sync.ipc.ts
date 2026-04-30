@@ -56,4 +56,20 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
       return { success: false, error: e.message };
     }
   });
+
+  ipcMain.handle('sync:getFailedRows', () => {
+    return db.prepare(`
+      SELECT id, table_name, record_id, operation, error_message, attempt_count,
+             last_attempted_at, created_at
+      FROM sync_outbox
+      WHERE status IN ('failed', 'pending') AND error_message IS NOT NULL
+      ORDER BY COALESCE(last_attempted_at, created_at) DESC
+      LIMIT 100
+    `).all();
+  });
+
+  ipcMain.handle('sync:dismissRow', (_event, id: string) => {
+    db.prepare(`UPDATE sync_outbox SET status = 'failed', error_message = 'Dismissed by user' WHERE id = ?`).run(id);
+    return { success: true };
+  });
 }
