@@ -28,8 +28,8 @@ type PosConfigState = {
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("RATES");
-  const [milkRate, setMilkRate] = useState("220");
-  const [yogurtRate, setYogurtRate] = useState("180");
+  const [milkRate, setMilkRate] = useState("180");
+  const [yogurtRate, setYogurtRate] = useState("220");
   const [users, setUsers] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [printers, setPrinters] = useState<Array<{ name: string; displayName: string; isDefault?: boolean }>>([]);

@@ -20,13 +20,12 @@ export function requireNonNegativeNumber(value: unknown, fieldName: string) {
 
 export function resolveSaleUnitPrice(product: any, dailyRate: any) {
   const code = String(product.code || '').toUpperCase();
-  const name = String(product.name || '').toUpperCase();
 
-  if ((code === 'MILK' || name.includes('MILK')) && Number(dailyRate?.milk_rate) > 0) {
+  if (code === 'MILK' && Number(dailyRate?.milk_rate) > 0) {
     return Number(dailyRate.milk_rate);
   }
 
-  if ((code === 'YOGT' || code === 'YOGURT' || name.includes('YOGURT')) && Number(dailyRate?.yogurt_rate) > 0) {
+  if ((code === 'YOGT' || code === 'YOGURT') && Number(dailyRate?.yogurt_rate) > 0) {
     return Number(dailyRate.yogurt_rate);
   }
 

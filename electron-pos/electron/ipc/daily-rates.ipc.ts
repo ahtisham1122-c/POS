@@ -91,6 +91,14 @@ export function registerDailyRatesIPC() {
         db.prepare(`UPDATE products SET selling_price = ?, updated_at = ?, synced = 0 WHERE id = ?`).run(yogurtRate, now, yogurtProduct.id);
       }
 
+      const upsertSetting = db.prepare(`
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `);
+      upsertSetting.run('milk_rate', String(milkRate), now);
+      upsertSetting.run('yogurt_rate', String(yogurtRate), now);
+
       // Record every rate change in history (even multiple changes in the same day)
       const historyId = crypto.randomUUID();
       db.prepare(`

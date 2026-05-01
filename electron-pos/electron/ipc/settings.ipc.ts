@@ -1,8 +1,11 @@
 import { ipcMain } from 'electron';
 import db from '../database/db';
+import * as crypto from 'crypto';
 import { getCurrentUser, requireCurrentUser } from './auth.ipc';
 import { logAudit } from '../audit/auditLog';
 import { getSyncSecretValidationError, normalizeSyncSecret } from '../sync/secretValidation';
+import { getBusinessDate } from '../database/businessDay';
+import { createOutboxEntry } from '../sync/outboxHelper';
 
 const SETUP_ALLOWED_KEYS = new Set(['shop_name', 'shop_address', 'shop_phone', 'milk_rate', 'yogurt_rate']);
 const REDACTED_SETTING_KEYS = new Set(['SYNC_DEVICE_SECRET', 'SYNC_DEVICE_TOKEN']);
@@ -17,6 +20,64 @@ function redactSettingsForAudit(settings: Record<string, any>) {
 function isSetupCompleted() {
   const setting = db.prepare("SELECT value FROM settings WHERE key = 'setup_completed'").get() as any;
   return String(setting?.value || '').toLowerCase() === 'true';
+}
+
+function parsePositiveRate(value: unknown, fieldName: string) {
+  const rate = Number(value);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new Error(`${fieldName} must be greater than zero`);
+  }
+  return rate;
+}
+
+function syncSetupRatesToDailyRates(payload: Record<string, any>, userId?: string) {
+  if (payload.milk_rate === undefined && payload.yogurt_rate === undefined) return;
+
+  const existingLatest = db.prepare('SELECT * FROM daily_rates ORDER BY date DESC LIMIT 1').get() as any;
+  const milkRate = parsePositiveRate(payload.milk_rate ?? existingLatest?.milk_rate, 'Milk rate');
+  const yogurtRate = parsePositiveRate(payload.yogurt_rate ?? existingLatest?.yogurt_rate, 'Yogurt rate');
+  const date = getBusinessDate();
+  const now = new Date().toISOString();
+  const existingToday = db.prepare('SELECT * FROM daily_rates WHERE date = ?').get(date) as any;
+  const id = existingToday?.id || crypto.randomUUID();
+  const updatedById = userId || existingToday?.updated_by_id || existingLatest?.updated_by_id || 'admin-id';
+
+  if (existingToday) {
+    db.prepare(`
+      UPDATE daily_rates
+      SET milk_rate = ?, yogurt_rate = ?, updated_by_id = ?, synced = 0
+      WHERE id = ?
+    `).run(milkRate, yogurtRate, updatedById, id);
+    createOutboxEntry('daily_rates', 'UPDATE', id, {
+      id,
+      date,
+      milk_rate: milkRate,
+      yogurt_rate: yogurtRate,
+      updated_by_id: updatedById,
+      created_at: existingToday.created_at
+    });
+  } else {
+    db.prepare(`
+      INSERT INTO daily_rates (id, date, milk_rate, yogurt_rate, updated_by_id, created_at, synced)
+      VALUES (?, ?, ?, ?, ?, ?, 0)
+    `).run(id, date, milkRate, yogurtRate, updatedById, now);
+    createOutboxEntry('daily_rates', 'INSERT', id, {
+      id,
+      date,
+      milk_rate: milkRate,
+      yogurt_rate: yogurtRate,
+      updated_by_id: updatedById,
+      created_at: now
+    });
+  }
+
+  const updateProductRate = db.prepare(`
+    UPDATE products
+    SET selling_price = ?, updated_at = ?, synced = 0
+    WHERE code = ? AND is_active = 1
+  `);
+  updateProductRate.run(milkRate, now, 'MILK');
+  updateProductRate.run(yogurtRate, now, 'YOGT');
 }
 
 export function registerSettingsIPC() {
@@ -91,6 +152,7 @@ export function registerSettingsIPC() {
         Object.entries(payload || {}).forEach(([key, value]) => {
           statement.run(key, String(value ?? ''), now);
         });
+        syncSetupRatesToDailyRates(payload, currentUser?.id);
       });
       tx(payload);
       logAudit({

@@ -105,7 +105,7 @@ export default function POS() {
   // Global Data
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [rates, setRates] = useState<DailyRate>({ milk_rate: 220, yogurt_rate: 180 });
+  const [rates, setRates] = useState<DailyRate>({ milk_rate: 180, yogurt_rate: 220 });
   const [syncStatus, setSyncStatus] = useState("Online");
   const [taxConfig, setTaxConfig] = useState<TaxConfig>({ enabled: false, label: "GST", rate: 0 });
   const [autoPrintReceipt, setAutoPrintReceipt] = useState(true);

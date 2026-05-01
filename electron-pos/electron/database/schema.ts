@@ -121,6 +121,84 @@ function ensureSystemProducts() {
   });
 }
 
+function repairSetupRatesIfNeeded() {
+  const historyCount = (db.prepare('SELECT COUNT(*) as count FROM rate_change_history').get() as any).count;
+  if (Number(historyCount || 0) > 0) return;
+
+  const settings = db.prepare(`
+    SELECT key, value
+    FROM settings
+    WHERE key IN ('milk_rate', 'yogurt_rate')
+  `).all() as Array<{ key: string; value: string }>;
+  const settingsMap = settings.reduce<Record<string, string>>((acc, row) => {
+    acc[row.key] = row.value;
+    return acc;
+  }, {});
+  const milkRate = Number(settingsMap.milk_rate || 0);
+  const yogurtRate = Number(settingsMap.yogurt_rate || 0);
+  if (!Number.isFinite(milkRate) || milkRate <= 0 || !Number.isFinite(yogurtRate) || yogurtRate <= 0) return;
+
+  const today = new Date().toISOString().split('T')[0];
+  const existingRate = db.prepare('SELECT * FROM daily_rates WHERE date = ?').get(today) as any;
+  const milkProductBefore = db.prepare("SELECT id, selling_price FROM products WHERE code = 'MILK'").get() as any;
+  const yogurtProductBefore = db.prepare("SELECT id, selling_price FROM products WHERE code = 'YOGT'").get() as any;
+  const rateAlreadyMatches = existingRate
+    && Number(existingRate.milk_rate || 0) === milkRate
+    && Number(existingRate.yogurt_rate || 0) === yogurtRate;
+  const productsAlreadyMatch = Number(milkProductBefore?.selling_price || 0) === milkRate
+    && Number(yogurtProductBefore?.selling_price || 0) === yogurtRate;
+  if (rateAlreadyMatches && productsAlreadyMatch) return;
+
+  const now = new Date().toISOString();
+  const enqueueOutbox = (table: string, operation: string, recordId: string, payload: Record<string, unknown>) => {
+    db.prepare(`
+      INSERT INTO sync_outbox (id, table_name, operation, record_id, payload, status, created_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?)
+    `).run(crypto.randomUUID(), table, operation, recordId, JSON.stringify(payload), now);
+  };
+
+  if (existingRate) {
+    db.prepare(`
+      UPDATE daily_rates
+      SET milk_rate = ?, yogurt_rate = ?, synced = 0
+      WHERE id = ?
+    `).run(milkRate, yogurtRate, existingRate.id);
+    enqueueOutbox('daily_rates', 'UPDATE', existingRate.id, {
+      id: existingRate.id,
+      date: today,
+      milk_rate: milkRate,
+      yogurt_rate: yogurtRate,
+      updated_by_id: existingRate.updated_by_id || 'admin-id',
+      created_at: existingRate.created_at
+    });
+  } else {
+    const rateId = crypto.randomUUID();
+    db.prepare(`
+      INSERT INTO daily_rates (id, date, milk_rate, yogurt_rate, updated_by_id, created_at, synced)
+      VALUES (?, ?, ?, ?, ?, ?, 0)
+    `).run(rateId, today, milkRate, yogurtRate, 'admin-id', now);
+    enqueueOutbox('daily_rates', 'INSERT', rateId, {
+      id: rateId,
+      date: today,
+      milk_rate: milkRate,
+      yogurt_rate: yogurtRate,
+      updated_by_id: 'admin-id',
+      created_at: now
+    });
+  }
+
+  db.prepare("UPDATE products SET selling_price = ?, updated_at = ?, synced = 0 WHERE code = 'MILK'")
+    .run(milkRate, now);
+  db.prepare("UPDATE products SET selling_price = ?, updated_at = ?, synced = 0 WHERE code = 'YOGT'")
+    .run(yogurtRate, now);
+  if (milkProductBefore?.id) {
+    enqueueOutbox('products', 'UPDATE', milkProductBefore.id, { id: milkProductBefore.id, selling_price: milkRate, updated_at: now });
+  }
+  if (yogurtProductBefore?.id) {
+    enqueueOutbox('products', 'UPDATE', yogurtProductBefore.id, { id: yogurtProductBefore.id, selling_price: yogurtRate, updated_at: now });
+  }
+}
+
 const schema = `
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -724,4 +802,5 @@ export function initializeDatabase() {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(crypto.randomUUID(), today, 180, 220, 'admin-id', now);
   }
+  repairSetupRatesIfNeeded();
 }

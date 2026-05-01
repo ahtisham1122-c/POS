@@ -15,6 +15,8 @@ function money(value) {
 assert.equal(resolveSaleUnitPrice({ code: 'MILK', name: 'Fresh Milk', selling_price: 0 }, { milk_rate: 220 }), 220);
 assert.equal(resolveSaleUnitPrice({ code: 'YOGT', name: 'Fresh Yogurt', selling_price: 0 }, { yogurt_rate: 260 }), 260);
 assert.equal(resolveSaleUnitPrice({ code: 'BRED', name: 'Bread', selling_price: 120 }, {}), 120);
+assert.equal(resolveSaleUnitPrice({ code: 'MLKP', name: 'Milk Powder', selling_price: 950 }, { milk_rate: 220 }), 950);
+assert.equal(resolveSaleUnitPrice({ code: 'YOGDR', name: 'Yogurt Drink', selling_price: 140 }, { yogurt_rate: 260 }), 140);
 
 assert.deepEqual(calculateItemDiscount(1000, 'PERCENT', 10), {
   discountType: 'PERCENT',

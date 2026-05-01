@@ -19,6 +19,12 @@ function toReceiptAmount(value: unknown) {
   return Number.isFinite(amount) ? Math.round(amount) : 0;
 }
 
+function toReceiptQuantity(value: unknown) {
+  const quantity = Number(value || 0);
+  if (!Number.isFinite(quantity)) return '0';
+  return quantity.toFixed(3).replace(/\.?0+$/, '');
+}
+
 function normalizeReceiptData(input: any) {
   if (input?.sale) {
     const sale = input.sale;
@@ -142,6 +148,7 @@ export function registerPrinterIPC() {
               .item-row { margin: 1px 0; width: 100%; }
               .item-name { font-size: 15px; text-transform: uppercase; flex-shrink: 0; }
               .item-amount { font-size: 15px; flex-shrink: 0; }
+              .item-detail { font-size: 11px; margin-top: 1px; }
               .leader { flex-grow: 1; border-bottom: 1px dotted black; margin: 0 4px; position: relative; top: -4px; }
               .total-row { font-size: 17px; margin-top: 3px; border-top: 3px solid black; padding-top: 2px; }
               .handover { font-size: 12px; margin-top: 6px; border: 2px solid black; padding: 4px; text-align: center; }
@@ -168,6 +175,9 @@ export function registerPrinterIPC() {
                   <span class="item-name">${escapeHtml(item.name)}</span>
                   <span class="leader"></span>
                   <span class="item-amount">${toReceiptAmount(item.lineTotal)}</span>
+                </div>
+                <div class="item-detail">
+                  ${toReceiptQuantity(item.quantity)} ${escapeHtml(item.unit || 'kg')} x Rs.${toReceiptAmount(item.price)}
                 </div>
               </div>
             `).join('')}
