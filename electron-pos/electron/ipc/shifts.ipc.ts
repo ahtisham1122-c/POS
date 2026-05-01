@@ -52,12 +52,29 @@ export function registerShiftsIPC() {
         const now = new Date().toISOString();
         const nowDate = new Date();
         const date = formatLocalDate(nowDate);
+
+        // Soft warn before the configured shop-day start (e.g. before 5 AM) ONLY
+        // if the user might be confused: we already verified there is NO open
+        // shift above, so the only ambiguous case left is when the most recent
+        // CLOSED shift is from today's calendar date — meaning the user is
+        // opening a *second* shift in the same calendar day before sunrise.
+        // In every other case (including the normal "next day, fresh open"
+        // flow the cashier hits in the morning) just open the shift.
         if (shouldWarnBeforeOpeningShift(nowDate) && !data?.confirmAfterMidnightOpen) {
-          return {
-            success: false,
-            requiresPreviousShiftConfirmation: true,
-            error: "A shift from yesterday may still be open. Do you want to close yesterday's shift first before opening a new one?"
-          };
+          const lastClosed = db.prepare(`
+            SELECT shift_date
+            FROM shifts
+            WHERE status = 'CLOSED'
+            ORDER BY closed_at DESC
+            LIMIT 1
+          `).get() as any;
+          if (lastClosed && lastClosed.shift_date === date) {
+            return {
+              success: false,
+              requiresPreviousShiftConfirmation: true,
+              error: "It is before the shop's day-start hour and a shift was already closed for today. Open a new one anyway?"
+            };
+          }
         }
         const user = getCurrentUser();
         const openedById = user?.id || 'system';
@@ -67,7 +84,29 @@ export function registerShiftsIPC() {
         }
         const shiftId = crypto.randomUUID();
 
-        const existingRegister = db.prepare('SELECT * FROM cash_register WHERE date = ? AND is_closed_for_day = 0').get(date) as any;
+        db.prepare(`
+          INSERT INTO shifts (
+            id, shift_date, opened_by_id, opened_at, opening_cash,
+            expected_cash, status, notes, synced
+          ) VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, 0)
+        `).run(shiftId, date, openedById, now, openingCash, openingCash, data?.notes || null);
+
+        createOutboxEntry('shifts', 'INSERT', shiftId, {
+          id: shiftId,
+          shift_date: date,
+          opened_by_id: openedById,
+          opened_at: now,
+          opening_cash: openingCash,
+          expected_cash: openingCash,
+          status: 'OPEN',
+          notes: data?.notes || null
+        });
+
+        // Find any *open* register for today. We deliberately ignore closed
+        // registers from earlier in the day (or from yesterday with the same
+        // calendar date if the clock skewed) — they are historical records
+        // and must not block opening a new shift.
+        const existingRegister = db.prepare('SELECT * FROM cash_register WHERE date = ? AND is_closed_for_day = 0 ORDER BY created_at DESC LIMIT 1').get(date) as any;
         if (!existingRegister) {
           const registerId = crypto.randomUUID();
           db.prepare(`
@@ -87,6 +126,20 @@ export function registerShiftsIPC() {
             created_at: now
           });
         } else if (!existingRegister.shift_id) {
+          // Register was opened with no shift attached (e.g. cashRegister:open
+          // ran before shifts:open) — link it to the new shift now.
+          db.prepare('UPDATE cash_register SET shift_id = ?, synced = 0 WHERE id = ?').run(shiftId, existingRegister.id);
+          createOutboxEntry('cash_register', 'UPDATE', existingRegister.id, {
+            id: existingRegister.id,
+            shift_id: shiftId,
+            date,
+            updated_at: now
+          });
+        } else {
+          // Register exists, is open, and is already linked to some other
+          // shift_id. The earlier `existingOpen` check guarantees that other
+          // shift is NOT open, so this is an orphaned register. Take it over
+          // for the new shift so the new shift has a register to write into.
           db.prepare('UPDATE cash_register SET shift_id = ?, synced = 0 WHERE id = ?').run(shiftId, existingRegister.id);
           createOutboxEntry('cash_register', 'UPDATE', existingRegister.id, {
             id: existingRegister.id,
@@ -95,24 +148,6 @@ export function registerShiftsIPC() {
             updated_at: now
           });
         }
-
-        db.prepare(`
-          INSERT INTO shifts (
-            id, shift_date, opened_by_id, opened_at, opening_cash,
-            expected_cash, status, notes, synced
-          ) VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, 0)
-        `).run(shiftId, date, openedById, now, openingCash, openingCash, data?.notes || null);
-
-        createOutboxEntry('shifts', 'INSERT', shiftId, {
-          id: shiftId,
-          shift_date: date,
-          opened_by_id: openedById,
-          opened_at: now,
-          opening_cash: openingCash,
-          expected_cash: openingCash,
-          status: 'OPEN',
-          notes: data?.notes || null
-        });
 
         return { success: true, shiftId };
       })();
