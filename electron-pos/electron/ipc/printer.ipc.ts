@@ -66,6 +66,35 @@ function normalizeReceiptData(input: any) {
   return input || {};
 }
 
+// Read the bundled app icon and return a data URI we can inline in the
+// receipt HTML. Inline data URI is the most reliable way to print an image
+// on a thermal printer — no external file lookups, no missing-asset issues.
+// Cached at module load so we don't re-read on every print.
+let cachedLogoDataUri: string | null = null;
+function getLogoDataUri(): string {
+  if (cachedLogoDataUri !== null) return cachedLogoDataUri;
+  try {
+    // electron/ipc/printer.ipc.ts → up to electron/ → up to electron-pos/ → assets/
+    const candidates = [
+      path.join(__dirname, '..', 'assets', 'icon.png'),
+      path.join(__dirname, '..', '..', 'assets', 'icon.png'),
+      path.join(process.resourcesPath || '', 'assets', 'icon.png'),
+      path.join(app.getAppPath(), 'assets', 'icon.png'),
+    ];
+    for (const candidate of candidates) {
+      if (candidate && fs.existsSync(candidate)) {
+        const buf = fs.readFileSync(candidate);
+        cachedLogoDataUri = `data:image/png;base64,${buf.toString('base64')}`;
+        return cachedLogoDataUri;
+      }
+    }
+  } catch (err: any) {
+    log.warn(`Logo load failed (receipt will print without logo): ${err?.message || err}`);
+  }
+  cachedLogoDataUri = '';
+  return cachedLogoDataUri;
+}
+
 function getReceiptSettings() {
   const rows = db.prepare(`SELECT key, value FROM settings`).all() as Array<{ key: string; value: string }>;
   const settings = rows.reduce<Record<string, string>>((acc, row) => {
@@ -75,9 +104,7 @@ function getReceiptSettings() {
 
   return {
     shopName: settings.shop_name || 'Gujjar Milk Shop',
-    shopAddress: settings.shop_address || 'Main Market, Faisalabad',
-    shopPhone: settings.shop_phone || '0300-1234567',
-    footer: settings.receipt_footer || 'Thank you',
+    shopPhone: settings.shop_phone || '',
     printerName: settings.printerName || settings.printer_name || ''
   };
 }
@@ -112,6 +139,7 @@ export function registerPrinterIPC() {
     try {
       const receipt = normalizeReceiptData(receiptData);
       const receiptSettings = getReceiptSettings();
+      const logoDataUri = getLogoDataUri();
       log.info(`Printing receipt ${receipt.billNumber} via temp file`);
 
       const win = new BrowserWindow({
@@ -122,120 +150,75 @@ export function registerPrinterIPC() {
         }
       });
 
+      // Format date+time once. Date was previously missing — only time printed.
+      const saleDate = new Date(receipt.date);
+      const dateStr = isNaN(saleDate.getTime())
+        ? ''
+        : saleDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      const timeStr = isNaN(saleDate.getTime())
+        ? ''
+        : saleDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      // Minimal receipt: logo, bill+date, items (name + amount only), TOTAL.
+      // Owner asked to remove shop name, phone, ITEM COUNTER box, subtotal/
+      // discount/tax/payment/change/due lines for maximum paper savings.
+      // Bigger fonts make it readable on a 58/80mm thermal printer at arm's
+      // length. Item names are uppercase + bold for unambiguous scanning.
       const receiptHtml = `
         <!DOCTYPE html>
         <html>
           <head>
             <style>
               * { box-sizing: border-box; }
-              body { 
-                width: 250px; 
-                margin: 0; 
+              body {
+                width: 250px;
+                margin: 0;
                 padding: 0;
                 background-color: white;
                 color: black !important;
                 font-family: 'Arial Black', 'Arial', sans-serif;
-                font-size: 11px;
-                line-height: 0.95;
-                font-weight: 700;
+                font-size: 14px;
+                line-height: 1.05;
+                font-weight: 900;
               }
               .center { text-align: center; }
-              .bold { font-weight: 900; }
-              .hr { border-bottom: 1px solid black; margin: 2px 0; }
+              .hr { border-bottom: 2px solid black; margin: 2px 0; }
               .flex { display: flex; justify-content: space-between; align-items: baseline; }
-              .title { font-size: 15px; margin-bottom: 0; line-height: 1; }
-              .subtitle { font-size: 9px; margin-bottom: 0; line-height: 1; }
-              .item-row { margin: 0 0 1px; width: 100%; }
-              .item-name { font-size: 13px; font-weight: 900; text-transform: uppercase; flex-shrink: 0; }
-              .item-amount { font-size: 13px; font-weight: 900; flex-shrink: 0; }
-              .item-detail { font-size: 11px; font-weight: 900; margin-top: 0; }
-              .leader { flex-grow: 1; border-bottom: 1px dotted black; margin: 0 4px; position: relative; top: -4px; }
-              .total-row { font-size: 15px; margin-top: 2px; border-top: 2px solid black; padding-top: 1px; }
-              .handover { font-size: 10px; margin-top: 3px; border: 1px solid black; padding: 2px; text-align: center; line-height: 1; }
-              .thanks { font-size: 12px; margin-top: 4px; border-top: 1px solid black; padding-top: 2px; }
-              .footer { font-size: 8px; margin-top: 1px; }
+              .logo { display: block; margin: 0 auto 2px; width: 44px; height: 44px; object-fit: contain; }
+              .meta { font-size: 12px; line-height: 1.1; margin: 1px 0; }
+              .item-row { margin: 0 0 2px; width: 100%; }
+              .item-name { font-size: 16px; font-weight: 900; text-transform: uppercase; flex-shrink: 0; }
+              .item-amount { font-size: 16px; font-weight: 900; flex-shrink: 0; }
+              .leader { flex-grow: 1; border-bottom: 2px dotted black; margin: 0 4px; position: relative; top: -5px; }
+              .total-row { margin-top: 4px; border-top: 3px double black; padding-top: 3px; }
+              .total-label { font-size: 18px; font-weight: 900; }
+              .total-amount { font-size: 22px; font-weight: 900; }
             </style>
           </head>
           <body>
-            <div class="center bold title">${escapeHtml(receiptSettings.shopName)}</div>
-            <div class="center subtitle">${escapeHtml(receiptSettings.shopAddress)} | ${escapeHtml(receiptSettings.shopPhone)}</div>
-            
-            <div class="hr"></div>
-            
-            <div class="flex" style="font-size: 10px;">
+            ${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="" />` : ''}
+
+            <div class="flex meta">
               <span>Bill: ${escapeHtml(receipt.billNumber)}</span>
-              <span>${new Date(receipt.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <span>${escapeHtml(dateStr)}${dateStr && timeStr ? ' ' : ''}${escapeHtml(timeStr)}</span>
             </div>
-            
-            <div class="hr" style="border-bottom-width: 1px;"></div>
-            
+
+            <div class="hr"></div>
+
             ${(receipt.items || []).map((item: any) => `
-              <div class="item-row">
-                <div class="flex">
-                  <span class="item-name">${escapeHtml(item.name)}</span>
-                  <span class="leader"></span>
-                  <span class="item-amount">${toReceiptAmount(item.lineTotal)}</span>
-                </div>
-                <div class="item-detail">
-                  ${toReceiptQuantity(item.quantity)} ${escapeHtml(item.unit || 'kg')} x Rs.${toReceiptAmount(item.price)}
-                </div>
+              <div class="item-row flex">
+                <span class="item-name">${escapeHtml(item.name)}</span>
+                <span class="leader"></span>
+                <span class="item-amount">${toReceiptAmount(item.lineTotal)}</span>
               </div>
             `).join('')}
 
-            <div class="hr" style="border-bottom-width: 1px;"></div>
-            <div class="flex" style="font-size: 10px;">
-              <span>Subtotal</span>
-              <span>${toReceiptAmount(receipt.subtotal)}</span>
-            </div>
-            ${toReceiptAmount(receipt.discount) > 0 ? `
-            <div class="flex" style="font-size: 10px;">
-              <span>Discount</span>
-              <span>-${toReceiptAmount(receipt.discount)}</span>
-            </div>
-            ` : ''}
-            ${toReceiptAmount(receipt.taxAmount) > 0 ? `
-            <div class="flex" style="font-size: 10px;">
-              <span>${escapeHtml(receipt.taxLabel || 'Tax')}</span>
-              <span>${toReceiptAmount(receipt.taxAmount)}</span>
-            </div>
-            ` : ''}
-            
-            <div class="flex bold total-row">
-              <span>TOTAL:</span>
-              <span style="font-size: 18px;">Rs.${toReceiptAmount(receipt.grandTotal)}</span>
-            </div>
-            
-            <div class="flex" style="font-size: 11px; margin-top: 0;">
-              <span>${escapeHtml(receipt.paymentType === 'ONLINE' ? 'Online' : receipt.paymentType === 'SPLIT' ? 'Paid' : 'Cash')}: ${toReceiptAmount(receipt.amountPaid)}</span>
-              ${receipt.changeToReturn > 0 ? `<span>Change: ${toReceiptAmount(receipt.changeToReturn)}</span>` : ''}
+            <div class="flex total-row">
+              <span class="total-label">TOTAL</span>
+              <span class="total-amount">Rs.${toReceiptAmount(receipt.grandTotal)}</span>
             </div>
 
-            ${receipt.paymentType === 'SPLIT' ? `
-            <div class="flex" style="font-size: 10px;">
-              <span>Cash:</span>
-              <span>${toReceiptAmount(receipt.cashPaid)}</span>
-            </div>
-            <div class="flex" style="font-size: 10px;">
-              <span>Online:</span>
-              <span>${toReceiptAmount(receipt.onlinePaid)}</span>
-            </div>
-            ` : ''}
-
-            ${receipt.balanceDue > 0 ? `
-            <div class="flex bold" style="font-size: 11px;">
-              <span>Due:</span>
-              <span>${toReceiptAmount(receipt.balanceDue)}</span>
-            </div>
-            ` : ''}
-
-            <div class="handover bold">
-              ITEM COUNTER: KEEP THIS RECEIPT<br/>
-              DO NOT RETURN TO CUSTOMER
-            </div>
-            
-            <div class="center bold thanks">${escapeHtml(receiptSettings.footer).toUpperCase()}</div>
-            <div class="center footer">${escapeHtml(receiptSettings.shopName)} POS</div>
-            <div style="height: 14px;"></div>
+            <div style="height: 10px;"></div>
           </body>
         </html>
       `;

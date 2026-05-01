@@ -369,6 +369,72 @@ export class SyncService {
     });
   }
 
+  // Same pattern as ensureSaleExists, but for Return rows. ReturnItem children
+  // can arrive at the cloud before the parent Return has finished syncing —
+  // without a placeholder, they get rejected with "Missing parent: returnItem"
+  // and stay stuck in the outbox forever.
+  private async ensureReturnExists(returnId: string | null | undefined, data: Record<string, any>, tx: Prisma.TransactionClient) {
+    if (!returnId) return;
+    const existing = await tx.return.findUnique({ where: { id: returnId } });
+    if (existing) return;
+
+    const placeholderUserId = `sync-return-user-${String(returnId).slice(0, 8)}`;
+    await this.ensureUserExists(placeholderUserId, tx);
+
+    // If we know which sale this return came from, make sure that exists too.
+    const saleId = data?.saleId || null;
+    if (saleId) {
+      await this.ensureSaleExists(saleId, data, tx);
+    }
+
+    const amount = Number(data.lineTotal || data.refundAmount || 0);
+    const safeAmount = Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+
+    await tx.return.create({
+      data: {
+        id: returnId,
+        returnNumber: `SYNC-RET-${String(returnId).slice(0, 14)}`,
+        saleId: saleId || `sync-missing-sale-${String(returnId).slice(0, 8)}`,
+        billNumber: data.billNumber || `SYNC-${String(returnId).slice(0, 12)}`,
+        cashierId: placeholderUserId,
+        returnDate: data.createdAt ? new Date(data.createdAt) : new Date(),
+        refundMethod: 'CASH',
+        refundAmount: safeAmount,
+        reason: 'Sync placeholder — real return row should overwrite this',
+        restockItems: false,
+        status: 'COMPLETED'
+      }
+    });
+  }
+
+  // Placeholder for ReceiptAuditSession so that ReceiptAuditEntry children
+  // arriving early aren't rejected.
+  private async ensureReceiptAuditSessionExists(sessionId: string | null | undefined, _data: Record<string, any>, tx: Prisma.TransactionClient) {
+    if (!sessionId) return;
+    const existing = await tx.receiptAuditSession.findUnique({ where: { id: sessionId } });
+    if (existing) return;
+
+    const placeholderUserId = `sync-audit-user-${String(sessionId).slice(0, 8)}`;
+    await this.ensureUserExists(placeholderUserId, tx);
+
+    await tx.receiptAuditSession.create({
+      data: {
+        id: sessionId,
+        auditDate: new Date(),
+        countedById: placeholderUserId,
+        expectedCount: 0,
+        expectedAmount: 0,
+        countedCount: 0,
+        countedAmount: 0,
+        missingCount: 0,
+        missingAmount: 0,
+        extraCount: 0,
+        duplicateCount: 0,
+        notes: 'Sync placeholder — real session should overwrite this'
+      }
+    });
+  }
+
   private async ensureSyncDependencies(modelName: string, data: Record<string, any>, tx: Prisma.TransactionClient) {
     if (modelName === 'sale') {
       await this.ensureShiftExists(data.shiftId, tx);
@@ -397,6 +463,17 @@ export class SyncService {
     if (modelName === 'return') {
       await this.ensureUserExists(data.cashierId, tx);
       await this.ensureCustomerExists(data.customerId, tx);
+      await this.ensureShiftExists(data.shiftId, tx);
+      // The Return references a Sale via saleId. Without a placeholder Sale,
+      // the Return would be orphaned and any ReturnItem children would stall.
+      await this.ensureSaleExists(data.saleId, data, tx);
+    }
+
+    if (modelName === 'returnItem') {
+      // ReturnItem is a child of Return. Build the parent Return on the fly
+      // if it hasn't synced yet so the child isn't stuck waiting.
+      await this.ensureReturnExists(data.returnId, data, tx);
+      await this.ensureProductExists(data, tx);
     }
 
     if (modelName === 'stockMovement') {
@@ -417,8 +494,18 @@ export class SyncService {
       await this.ensureUserExists(data.createdById || data.paidById, tx);
     }
 
+    if (modelName === 'expense') {
+      await this.ensureShiftExists(data.shiftId, tx);
+      await this.ensureUserExists(data.createdById, tx);
+    }
+
     if (modelName === 'receiptAuditSession') {
       await this.ensureUserExists(data.countedById, tx);
+    }
+
+    if (modelName === 'receiptAuditEntry') {
+      // ReceiptAuditEntry is a child of ReceiptAuditSession.
+      await this.ensureReceiptAuditSessionExists(data.sessionId, data, tx);
     }
   }
 
@@ -443,22 +530,22 @@ export class SyncService {
       return true;
     }
 
+    // For all child rows below: instead of rejecting with "Missing parent",
+    // we now let the request through and let `ensureSyncDependencies()` create
+    // a placeholder parent if needed. This prevents children from getting
+    // permanently stuck in the outbox waiting for a parent that may never
+    // arrive (because it hit some unrelated error and got marked failed).
     if (modelName === 'returnItem') {
-      if (!data.returnId) return false;
-      const returnRecord = await tx.return.findUnique({ where: { id: data.returnId }, select: { id: true } });
-      return Boolean(returnRecord);
+      return Boolean(data.returnId);
     }
 
     if (modelName === 'receiptAuditEntry') {
-      if (!data.sessionId) return false;
-      const session = await tx.receiptAuditSession.findUnique({ where: { id: data.sessionId }, select: { id: true } });
-      return Boolean(session);
+      return Boolean(data.sessionId);
     }
 
     if (modelName === 'supplierLedgerEntry' || modelName === 'supplierPayment' || modelName === 'milkCollection') {
-      if (!data.supplierId) return false;
-      const supplier = await tx.supplier.findUnique({ where: { id: data.supplierId }, select: { id: true } });
-      return Boolean(supplier);
+      // Supplier placeholders are created by ensureSupplierExists().
+      return Boolean(data.supplierId);
     }
 
     return true;
@@ -508,11 +595,21 @@ export class SyncService {
       // 2. Insert Logic (Idempotent)
       if (operation === 'INSERT') {
         if (existingRecord) {
-          const isPlaceholderSale = modelName === 'sale' && String(existingRecord.notes || '').includes('Temporary sync placeholder');
+          const notes = String(existingRecord.notes || '');
+          const reason = String((existingRecord as any).reason || '');
+          const isPlaceholderSale = modelName === 'sale' && notes.includes('Temporary sync placeholder');
+          const isPlaceholderReturn = modelName === 'return' && reason.includes('Sync placeholder');
+          const isPlaceholderSession = modelName === 'receiptAuditSession' && notes.includes('Sync placeholder');
           // Immutable transaction rows should not be overwritten by duplicate inserts.
-          // Placeholder sales are the exception: the real sale insert must replace them.
-          if ((modelName === 'sale' && !isPlaceholderSale) || modelName === 'saleItem') {
-            return { success: true, action: 'skipped', reason: 'Duplicate sale' };
+          // Placeholder rows are the exception: the real insert must replace them.
+          if (
+            (modelName === 'sale' && !isPlaceholderSale) ||
+            (modelName === 'return' && !isPlaceholderReturn) ||
+            (modelName === 'receiptAuditSession' && !isPlaceholderSession) ||
+            modelName === 'saleItem' ||
+            modelName === 'returnItem'
+          ) {
+            return { success: true, action: 'skipped', reason: `Duplicate ${modelName}` };
           }
 
           const data = { ...normalizedPayload };
