@@ -339,6 +339,36 @@ export class SyncService {
     });
   }
 
+  private async ensureSaleExists(saleId: string | null | undefined, data: Record<string, any>, tx: Prisma.TransactionClient) {
+    if (!saleId) return;
+    const existing = await tx.sale.findUnique({ where: { id: saleId } });
+    if (existing) return;
+
+    const saleUserId = `sync-sale-user-${String(saleId).slice(0, 8)}`;
+    await this.ensureUserExists(saleUserId, tx);
+
+    const amount = Number(data.lineTotal || data.amount || 0);
+    const safeAmount = Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+
+    await tx.sale.create({
+      data: {
+        id: saleId,
+        billNumber: `SYNC-MISSING-${String(saleId).slice(0, 16)}`,
+        saleDate: data.createdAt ? new Date(data.createdAt) : new Date(),
+        cashierId: saleUserId,
+        paymentType: 'CASH',
+        subtotal: safeAmount,
+        grandTotal: safeAmount,
+        amountPaid: 0,
+        cashTendered: 0,
+        changeReturned: 0,
+        balanceDue: safeAmount,
+        status: 'COMPLETED',
+        notes: 'Temporary sync placeholder. Real sale row should update this record when it arrives.'
+      }
+    });
+  }
+
   private async ensureSyncDependencies(modelName: string, data: Record<string, any>, tx: Prisma.TransactionClient) {
     if (modelName === 'sale') {
       await this.ensureShiftExists(data.shiftId, tx);
@@ -356,7 +386,12 @@ export class SyncService {
     }
 
     if (modelName === 'saleItem') {
+      await this.ensureSaleExists(data.saleId, data, tx);
       await this.ensureProductExists(data, tx);
+    }
+
+    if (modelName === 'splitPayment' || modelName === 'saleVoid') {
+      await this.ensureSaleExists(data.saleId, data, tx);
     }
 
     if (modelName === 'return') {
@@ -370,6 +405,9 @@ export class SyncService {
     }
 
     if (modelName === 'ledgerEntry' || modelName === 'payment' || modelName === 'splitPayment') {
+      if (modelName === 'payment') {
+        await this.ensureSaleExists(data.saleId, data, tx);
+      }
       await this.ensureCustomerExists(data.customerId, tx);
       await this.ensureUserExists(data.collectedById || data.receivedById, tx);
     }
@@ -393,21 +431,15 @@ export class SyncService {
 
     if (modelName === 'saleItem') {
       if (!data.saleId) return false;
-      const sale = await tx.sale.findUnique({ where: { id: data.saleId }, select: { id: true } });
-      return Boolean(sale);
+      return true;
     }
 
     if (modelName === 'splitPayment' || modelName === 'saleVoid') {
       if (!data.saleId) return false;
-      const sale = await tx.sale.findUnique({ where: { id: data.saleId }, select: { id: true } });
-      return Boolean(sale);
+      return true;
     }
 
     if (modelName === 'payment') {
-      if (data.saleId) {
-        const sale = await tx.sale.findUnique({ where: { id: data.saleId }, select: { id: true } });
-        if (!sale) return false;
-      }
       return true;
     }
 
@@ -476,8 +508,10 @@ export class SyncService {
       // 2. Insert Logic (Idempotent)
       if (operation === 'INSERT') {
         if (existingRecord) {
+          const isPlaceholderSale = modelName === 'sale' && String(existingRecord.notes || '').includes('Temporary sync placeholder');
           // Immutable transaction rows should not be overwritten by duplicate inserts.
-          if (modelName === 'sale' || modelName === 'saleItem') {
+          // Placeholder sales are the exception: the real sale insert must replace them.
+          if ((modelName === 'sale' && !isPlaceholderSale) || modelName === 'saleItem') {
             return { success: true, action: 'skipped', reason: 'Duplicate sale' };
           }
 
