@@ -323,14 +323,60 @@ export default function Settings() {
   const handleSavePosConfig = async () => {
     try {
       setIsLoading(true);
-      await window.electronAPI?.settings?.update({
-        ...posConfig,
+      const result = await window.electronAPI?.settings?.update({
+        autoPrint: posConfig.autoPrint,
+        receiptDelay: posConfig.receiptDelay,
+        defaultPayment: posConfig.defaultPayment,
+        cashierPinReq: posConfig.cashierPinReq,
+        taxEnabled: posConfig.taxEnabled,
+        taxRate: posConfig.taxRate,
+        taxLabel: posConfig.taxLabel,
+        shopDayStartHour: posConfig.shopDayStartHour,
+        ramadan24Hour: posConfig.ramadan24Hour,
         "24_hour_mode": posConfig.ramadan24Hour
       });
+      if (!result?.success) {
+        alert(result?.error || "Failed to save configuration");
+        return;
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch (err) {
-      alert("Failed to save configuration");
+    } catch (err: any) {
+      alert(err?.message || "Failed to save configuration");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSaveSyncConfig = async () => {
+    try {
+      setIsLoading(true);
+
+      const apiUrl = String(posConfig.APP_API_URL || "").trim();
+      const syncSecret = String(posConfig.SYNC_DEVICE_SECRET || "").trim();
+
+      if (!apiUrl) {
+        alert("Cloud API URL is required");
+        return;
+      }
+
+      const syncPayload: Record<string, string> = {
+        APP_API_URL: apiUrl
+      };
+
+      if (syncSecret) {
+        syncPayload.SYNC_DEVICE_SECRET = syncSecret;
+      }
+
+      const result = await window.electronAPI?.settings?.update(syncPayload);
+      if (!result?.success) {
+        alert(result?.error || "Failed to save sync settings");
+        return;
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err: any) {
+      alert(err?.message || "Failed to save sync settings");
     } finally {
       setIsLoading(false);
     }
@@ -1158,7 +1204,7 @@ export default function Settings() {
                   <span className="text-xs text-text-secondary mt-1 block">Authentication token assigned to this terminal.</span>
                 </div>
                 <button 
-                  onClick={handleSavePosConfig} 
+                  onClick={handleSaveSyncConfig} 
                   disabled={isLoading} 
                   className={cn("btn-primary mt-4 flex items-center justify-center gap-2", saved ? "bg-success hover:bg-success" : "")}
                 >

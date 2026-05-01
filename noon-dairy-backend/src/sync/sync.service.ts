@@ -432,6 +432,20 @@ export class SyncService {
     return true;
   }
 
+  private async hasConflictingUserName(modelName: string, data: Record<string, any>, recordId: string, db: any) {
+    if (modelName !== 'user' || !data.username) return false;
+
+    const username = String(data.username).trim();
+    if (!username) return false;
+
+    const existingByUsername = await db.user.findUnique({
+      where: { username },
+      select: { id: true }
+    });
+
+    return Boolean(existingByUsername && existingByUsername.id !== recordId);
+  }
+
   async processOperation(op: any, tx?: Prisma.TransactionClient) {
     const { table, operation, recordId, payload, deviceId, timestamp } = op;
     const db = tx || this.prisma;
@@ -469,6 +483,9 @@ export class SyncService {
 
           const data = { ...normalizedPayload };
           delete data.id;
+          if (await this.hasConflictingUserName(modelName, data, recordId, db)) {
+            return { success: true, action: 'skipped', reason: 'Duplicate username' };
+          }
           await this.ensureSyncDependencies(modelName, normalizedPayload, db as Prisma.TransactionClient);
           if (Object.keys(data).length > 0) {
             await model.update({ where: { id: recordId }, data });
@@ -479,6 +496,9 @@ export class SyncService {
           const data = { ...normalizedPayload };
           if (!(await this.hasRequiredParent(modelName, data, db as Prisma.TransactionClient))) {
             return { success: true, action: 'skipped', reason: `Missing parent for ${modelName}` };
+          }
+          if (await this.hasConflictingUserName(modelName, data, recordId, db)) {
+            return { success: true, action: 'skipped', reason: 'Duplicate username' };
           }
           await this.ensureSyncDependencies(modelName, data, db as Prisma.TransactionClient);
           
@@ -514,6 +534,9 @@ export class SyncService {
            if (!(await this.hasRequiredParent(modelName, normalizedPayload, db as Prisma.TransactionClient))) {
             return { success: true, action: 'skipped', reason: `Missing parent for ${modelName}` };
            }
+           if (await this.hasConflictingUserName(modelName, normalizedPayload, recordId, db)) {
+            return { success: true, action: 'skipped', reason: 'Duplicate username' };
+           }
            await this.ensureSyncDependencies(modelName, normalizedPayload, db as Prisma.TransactionClient);
            await model.create({ data: normalizedPayload });
            return { success: true, action: 'created' };
@@ -525,6 +548,9 @@ export class SyncService {
         const incomingDate = new Date(incomingDateRaw).getTime();
 
         if (!Number.isFinite(existingDate) || !Number.isFinite(incomingDate) || incomingDate > existingDate) {
+          if (await this.hasConflictingUserName(modelName, normalizedPayload, recordId, db)) {
+            return { success: true, action: 'skipped', reason: 'Duplicate username' };
+          }
           await model.update({
              where: { id: recordId },
              data: normalizedPayload
