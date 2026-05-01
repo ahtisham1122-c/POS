@@ -66,6 +66,47 @@ export class SyncEngine {
     return true;
   }
 
+  repairMissingParentsFromOutbox() {
+    const childRows = db.prepare(`
+      SELECT id, table_name, payload
+      FROM sync_outbox
+      WHERE status IN ('pending', 'failed')
+        AND table_name IN (
+          'sale_items',
+          'saleItems',
+          'split_payments',
+          'splitPayments',
+          'payments',
+          'sale_voids',
+          'saleVoids',
+          'return_items',
+          'returnItems',
+          'receipt_audit_entries',
+          'receiptAuditEntries'
+        )
+      ORDER BY created_at ASC
+      LIMIT 1000
+    `).all() as any[];
+
+    let repaired = 0;
+    for (const row of childRows) {
+      try {
+        const payload = JSON.parse(row.payload || '{}');
+        if (this.requeueMissingParent(row.table_name, payload)) {
+          repaired += 1;
+        }
+      } catch (error: any) {
+        logger.warn(`Could not inspect child sync row ${row.id}: ${error?.message || error}`);
+      }
+    }
+
+    if (repaired > 0) {
+      logger.info(`SyncEngine requeued ${repaired} missing parent record(s) before sync.`);
+    }
+
+    return repaired;
+  }
+
   private async refreshSyncToken(deviceId: string) {
     try {
       await registerDeviceWithCloud();
@@ -108,6 +149,8 @@ export class SyncEngine {
 
     this.isSyncing = true;
     try {
+      this.repairMissingParentsFromOutbox();
+
       const pendingRows = db.prepare(`
         SELECT * FROM sync_outbox 
         WHERE status = 'pending' 
@@ -130,7 +173,7 @@ export class SyncEngine {
             ELSE 30
           END,
           created_at ASC 
-        LIMIT 50
+        LIMIT 500
       `).all() as any[];
 
       const nowMs = Date.now();
@@ -141,7 +184,7 @@ export class SyncEngine {
           if (!Number.isFinite(lastAttemptMs)) return true;
           return nowMs - lastAttemptMs >= this.getRetryDelayMs(Number(row.attempt_count || 0));
         })
-        .slice(0, 10);
+        .slice(0, 25);
 
       if (readyRows.length === 0) {
         this.isSyncing = false;

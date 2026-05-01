@@ -44,6 +44,7 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
   ipcMain.handle('sync:syncNow', async () => {
     try {
       await registerDeviceWithCloud().catch(() => null);
+      syncEngine.repairMissingParentsFromOutbox();
       db.prepare(`
         UPDATE sync_outbox
         SET status = 'pending',
@@ -53,6 +54,7 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
         WHERE status = 'failed'
            OR (status = 'pending' AND error_message IS NOT NULL)
       `).run();
+      syncEngine.repairMissingParentsFromOutbox();
       await syncEngine.processPendingOutbox();
       await pullSync(getMainWindow() || undefined);
       const pending = db.prepare(`SELECT COUNT(*) as count FROM sync_outbox WHERE status = 'pending'`).get() as any;
