@@ -46,8 +46,12 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
       await registerDeviceWithCloud().catch(() => null);
       db.prepare(`
         UPDATE sync_outbox
-        SET status = 'pending', last_attempted_at = NULL
+        SET status = 'pending',
+            attempt_count = 0,
+            error_message = NULL,
+            last_attempted_at = NULL
         WHERE status = 'failed'
+           OR (status = 'pending' AND error_message IS NOT NULL)
       `).run();
       await syncEngine.processPendingOutbox();
       await pullSync(getMainWindow() || undefined);

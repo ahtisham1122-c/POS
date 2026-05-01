@@ -2,6 +2,8 @@ import db from '../database/db';
 import { networkMonitor } from './networkMonitor';
 import { fetchWithTimeout, getApiBaseUrl, getSyncHeaders } from './apiConfig';
 import { getDeviceInfo } from './deviceInfo';
+import { registerDeviceWithCloud } from './deviceRegistration';
+import { createOutboxEntry } from './outboxHelper';
 import logger from '../utils/logger';
 
 
@@ -11,7 +13,11 @@ export class SyncEngine {
   private isSyncing = false;
   private readonly handleNetworkOnline = () => {
     console.log('Network is back online, triggering sync');
-    this.processPendingOutbox();
+    // Always swallow the rejection — an unhandled rejection here would crash
+    // the main process. The sync body has its own retry/error handling.
+    this.processPendingOutbox().catch((err) => {
+      logger.warn('processPendingOutbox (online trigger) failed:', err?.message || err);
+    });
   };
 
   private getRetryDelayMs(attemptCount: number) {
@@ -19,10 +25,67 @@ export class SyncEngine {
     return minutes * 60 * 1000;
   }
 
+  private getParentReference(tableName: string, payload: any) {
+    const saleId = payload?.sale_id || payload?.saleId;
+    if (['sale_items', 'saleItems', 'split_payments', 'splitPayments', 'payments', 'sale_voids', 'saleVoids'].includes(tableName) && saleId) {
+      return { outboxTable: 'sales', localTable: 'sales', id: String(saleId) };
+    }
+
+    const returnId = payload?.return_id || payload?.returnId;
+    if (['return_items', 'returnItems'].includes(tableName) && returnId) {
+      return { outboxTable: 'returns', localTable: 'returns', id: String(returnId) };
+    }
+
+    const sessionId = payload?.session_id || payload?.sessionId;
+    if (['receipt_audit_entries', 'receiptAuditEntries'].includes(tableName) && sessionId) {
+      return { outboxTable: 'receipt_audit_sessions', localTable: 'receipt_audit_sessions', id: String(sessionId) };
+    }
+
+    return null;
+  }
+
+  private requeueMissingParent(tableName: string, payload: any) {
+    const parent = this.getParentReference(tableName, payload);
+    if (!parent) return false;
+
+    const existingOutbox = db.prepare(`
+      UPDATE sync_outbox
+      SET status = 'pending',
+          attempt_count = 0,
+          error_message = NULL,
+          last_attempted_at = NULL
+      WHERE table_name = ? AND record_id = ?
+    `).run(parent.outboxTable, parent.id);
+
+    if (existingOutbox.changes > 0) return true;
+
+    const parentRow = db.prepare(`SELECT * FROM ${parent.localTable} WHERE id = ?`).get(parent.id);
+    if (!parentRow) return false;
+
+    createOutboxEntry(parent.outboxTable, 'INSERT', parent.id, parentRow);
+    return true;
+  }
+
+  private async refreshSyncToken(deviceId: string) {
+    try {
+      await registerDeviceWithCloud();
+      return Boolean(getSyncHeaders(deviceId));
+    } catch (error: any) {
+      logger.warn('Cloud device re-registration failed:', error?.message || error);
+      return false;
+    }
+  }
+
   start() {
     if (this.interval) return;
     console.log('SyncEngine started');
-    this.interval = setInterval(() => this.processPendingOutbox(), 5000);
+    this.interval = setInterval(() => {
+      // Same crash protection here: setInterval doesn't catch promise
+      // rejections, so without .catch a single unexpected throw kills Electron.
+      this.processPendingOutbox().catch((err) => {
+        logger.warn('processPendingOutbox (interval) failed:', err?.message || err);
+      });
+    }, 5000);
     networkMonitor.on('online', this.handleNetworkOnline);
   }
 
@@ -48,7 +111,25 @@ export class SyncEngine {
       const pendingRows = db.prepare(`
         SELECT * FROM sync_outbox 
         WHERE status = 'pending' 
-        ORDER BY created_at ASC 
+        ORDER BY
+          CASE table_name
+            WHEN 'users' THEN 1
+            WHEN 'products' THEN 2
+            WHEN 'customers' THEN 3
+            WHEN 'suppliers' THEN 4
+            WHEN 'shifts' THEN 5
+            WHEN 'cash_register' THEN 6
+            WHEN 'sales' THEN 7
+            WHEN 'returns' THEN 8
+            WHEN 'receipt_audit_sessions' THEN 9
+            WHEN 'sale_items' THEN 20
+            WHEN 'split_payments' THEN 21
+            WHEN 'payments' THEN 22
+            WHEN 'return_items' THEN 23
+            WHEN 'receipt_audit_entries' THEN 24
+            ELSE 30
+          END,
+          created_at ASC 
         LIMIT 50
       `).all() as any[];
 
@@ -71,28 +152,45 @@ export class SyncEngine {
 
 
       const deviceInfo = getDeviceInfo();
-      const syncHeaders = getSyncHeaders(deviceInfo.deviceId);
+      let syncHeaders = getSyncHeaders(deviceInfo.deviceId);
       if (!syncHeaders) {
-        console.warn('Cloud sync skipped because this terminal is not registered.');
-        this.isSyncing = false;
-        return;
+        const registered = await this.refreshSyncToken(deviceInfo.deviceId);
+        syncHeaders = registered ? getSyncHeaders(deviceInfo.deviceId) : null;
+        if (!syncHeaders) {
+          console.warn('Cloud sync skipped because this terminal is not registered.');
+          this.isSyncing = false;
+          return;
+        }
       }
 
       for (const row of readyRows) {
         // Network-level error flag — if true, abort the entire batch
         let networkError = false;
 
+        // Parse payload once outside fetch so a corrupt JSON row never crashes
+        // the engine and never re-tries forever. If parse fails we mark this
+        // single row as failed and move on.
+        let parsedPayload: any;
+        try {
+          parsedPayload = JSON.parse(row.payload);
+        } catch (parseErr: any) {
+          logger.error(`SyncEngine outbox row ${row.id} has corrupt payload, marking failed: ${parseErr?.message}`);
+          db.prepare(`UPDATE sync_outbox SET status = 'failed', error_message = ? WHERE id = ?`)
+            .run(`Corrupt payload: ${parseErr?.message || parseErr}`, row.id);
+          continue;
+        }
+
         try {
           let response: Response;
           try {
             response = await fetchWithTimeout(`${apiUrl}/sync/ingest`, {
               method: 'POST',
-              headers: syncHeaders,
+              headers: syncHeaders as Record<string, string>,
               body: JSON.stringify({
                 table: row.table_name,
                 operation: row.operation,
                 recordId: row.record_id,
-                payload: JSON.parse(row.payload),
+                payload: parsedPayload,
                 timestamp: row.created_at,
                 device: {
                   id: deviceInfo.deviceId,
@@ -100,19 +198,66 @@ export class SyncEngine {
                   terminalNumber: deviceInfo.terminalNumber
                 }
               })
-            }, 15000);
+            }, 30000);
           } catch (fetchErr: any) {
             // fetch() itself threw — network is down or server unreachable
             networkError = true;
             throw fetchErr;
           }
 
+          if (response.status === 401 || response.status === 403) {
+            const refreshed = await this.refreshSyncToken(deviceInfo.deviceId);
+            syncHeaders = refreshed ? getSyncHeaders(deviceInfo.deviceId) : null;
+
+            if (syncHeaders) {
+              response = await fetchWithTimeout(`${apiUrl}/sync/ingest`, {
+                method: 'POST',
+                headers: syncHeaders as Record<string, string>,
+                body: JSON.stringify({
+                  table: row.table_name,
+                  operation: row.operation,
+                  recordId: row.record_id,
+                  payload: parsedPayload,
+                  timestamp: row.created_at,
+                  device: {
+                    id: deviceInfo.deviceId,
+                    name: deviceInfo.deviceName,
+                    terminalNumber: deviceInfo.terminalNumber
+                  }
+                })
+              }, 30000);
+            }
+
+            if (!syncHeaders || response.status === 401 || response.status === 403) {
+              const errText = await response.text().catch(() => '');
+              logger.warn(`SyncEngine got ${response.status}; aborting batch after re-registration attempt. ${errText.substring(0, 200)}`);
+              db.prepare(`
+                UPDATE sync_outbox
+                SET attempt_count = attempt_count + 1,
+                    error_message = ?,
+                    last_attempted_at = datetime('now')
+                WHERE id = ?
+              `).run(`Auth failed (${response.status}). Check Sync Device Secret.`, row.id);
+              networkError = true;
+              throw new Error(`Sync auth failed (${response.status})`);
+            }
+          }
+
           if (response.ok) {
-            const result = await response.json() as any;
+            // Server may return HTML (e.g., Nginx 502 error page styled as a
+            // 200 from a misconfigured proxy). Guard the JSON parse so it
+            // doesn't crash sync — treat as a row-level error and retry.
+            let result: any;
+            try {
+              result = await response.json();
+            } catch (jsonErr: any) {
+              throw new Error(`Server returned non-JSON response: ${jsonErr?.message || jsonErr}`);
+            }
             const action = result?.data?.action ?? result?.action;
             const reason = result?.data?.reason ?? result?.reason ?? '';
 
             if (action === 'skipped' && typeof reason === 'string' && reason.startsWith('Missing parent')) {
+              const parentRequeued = this.requeueMissingParent(row.table_name, parsedPayload);
               // Parent not synced yet — keep pending so it retries after parent arrives
               db.prepare(`
                 UPDATE sync_outbox
@@ -120,7 +265,7 @@ export class SyncEngine {
                     error_message = ?,
                     last_attempted_at = datetime('now')
                 WHERE id = ?
-              `).run(`Waiting for parent: ${reason}`, row.id);
+              `).run(parentRequeued ? `Waiting for parent: ${reason}. Parent was queued again.` : `Waiting for parent: ${reason}`, row.id);
               logger.info(`SyncEngine deferred row ${row.id} (${row.table_name}): ${reason}`);
             } else {
               db.prepare(`UPDATE sync_outbox SET status = 'synced', error_message = NULL WHERE id = ?`).run(row.id);
