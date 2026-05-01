@@ -129,31 +129,31 @@ export function registerPrinterIPC() {
             <style>
               * { box-sizing: border-box; }
               body { 
-                width: 260px; 
+                width: 250px; 
                 margin: 0; 
                 padding: 0;
                 background-color: white;
                 color: black !important;
                 font-family: 'Arial Black', 'Arial', sans-serif;
-                font-size: 13px;
-                line-height: 1.0;
-                font-weight: 900;
+                font-size: 11px;
+                line-height: 0.95;
+                font-weight: 700;
               }
               .center { text-align: center; }
               .bold { font-weight: 900; }
-              .hr { border-bottom: 2px solid black; margin: 3px 0; }
+              .hr { border-bottom: 1px solid black; margin: 2px 0; }
               .flex { display: flex; justify-content: space-between; align-items: baseline; }
-              .title { font-size: 18px; margin-bottom: 0px; }
-              .subtitle { font-size: 11px; margin-bottom: 0px; }
-              .item-row { margin: 1px 0; width: 100%; }
-              .item-name { font-size: 15px; text-transform: uppercase; flex-shrink: 0; }
-              .item-amount { font-size: 15px; flex-shrink: 0; }
-              .item-detail { font-size: 11px; margin-top: 1px; }
+              .title { font-size: 15px; margin-bottom: 0; line-height: 1; }
+              .subtitle { font-size: 9px; margin-bottom: 0; line-height: 1; }
+              .item-row { margin: 0 0 1px; width: 100%; }
+              .item-name { font-size: 13px; font-weight: 900; text-transform: uppercase; flex-shrink: 0; }
+              .item-amount { font-size: 13px; font-weight: 900; flex-shrink: 0; }
+              .item-detail { font-size: 11px; font-weight: 900; margin-top: 0; }
               .leader { flex-grow: 1; border-bottom: 1px dotted black; margin: 0 4px; position: relative; top: -4px; }
-              .total-row { font-size: 17px; margin-top: 3px; border-top: 3px solid black; padding-top: 2px; }
-              .handover { font-size: 12px; margin-top: 6px; border: 2px solid black; padding: 4px; text-align: center; }
-              .thanks { font-size: 15px; margin-top: 8px; border-top: 1px solid black; padding-top: 4px; }
-              .footer { font-size: 10px; margin-top: 2px; }
+              .total-row { font-size: 15px; margin-top: 2px; border-top: 2px solid black; padding-top: 1px; }
+              .handover { font-size: 10px; margin-top: 3px; border: 1px solid black; padding: 2px; text-align: center; line-height: 1; }
+              .thanks { font-size: 12px; margin-top: 4px; border-top: 1px solid black; padding-top: 2px; }
+              .footer { font-size: 8px; margin-top: 1px; }
             </style>
           </head>
           <body>
@@ -162,7 +162,7 @@ export function registerPrinterIPC() {
             
             <div class="hr"></div>
             
-            <div class="flex" style="font-size: 12px;">
+            <div class="flex" style="font-size: 10px;">
               <span>Bill: ${escapeHtml(receipt.billNumber)}</span>
               <span>${new Date(receipt.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
@@ -183,18 +183,18 @@ export function registerPrinterIPC() {
             `).join('')}
 
             <div class="hr" style="border-bottom-width: 1px;"></div>
-            <div class="flex" style="font-size: 12px;">
+            <div class="flex" style="font-size: 10px;">
               <span>Subtotal</span>
               <span>${toReceiptAmount(receipt.subtotal)}</span>
             </div>
             ${toReceiptAmount(receipt.discount) > 0 ? `
-            <div class="flex" style="font-size: 12px;">
+            <div class="flex" style="font-size: 10px;">
               <span>Discount</span>
               <span>-${toReceiptAmount(receipt.discount)}</span>
             </div>
             ` : ''}
             ${toReceiptAmount(receipt.taxAmount) > 0 ? `
-            <div class="flex" style="font-size: 12px;">
+            <div class="flex" style="font-size: 10px;">
               <span>${escapeHtml(receipt.taxLabel || 'Tax')}</span>
               <span>${toReceiptAmount(receipt.taxAmount)}</span>
             </div>
@@ -202,27 +202,27 @@ export function registerPrinterIPC() {
             
             <div class="flex bold total-row">
               <span>TOTAL:</span>
-              <span style="font-size: 22px;">Rs.${toReceiptAmount(receipt.grandTotal)}</span>
+              <span style="font-size: 18px;">Rs.${toReceiptAmount(receipt.grandTotal)}</span>
             </div>
             
-            <div class="flex" style="font-size: 13px; margin-top: 1px;">
+            <div class="flex" style="font-size: 11px; margin-top: 0;">
               <span>${escapeHtml(receipt.paymentType === 'ONLINE' ? 'Online' : receipt.paymentType === 'SPLIT' ? 'Paid' : 'Cash')}: ${toReceiptAmount(receipt.amountPaid)}</span>
               ${receipt.changeToReturn > 0 ? `<span>Change: ${toReceiptAmount(receipt.changeToReturn)}</span>` : ''}
             </div>
 
             ${receipt.paymentType === 'SPLIT' ? `
-            <div class="flex" style="font-size: 12px;">
+            <div class="flex" style="font-size: 10px;">
               <span>Cash:</span>
               <span>${toReceiptAmount(receipt.cashPaid)}</span>
             </div>
-            <div class="flex" style="font-size: 12px;">
+            <div class="flex" style="font-size: 10px;">
               <span>Online:</span>
               <span>${toReceiptAmount(receipt.onlinePaid)}</span>
             </div>
             ` : ''}
 
             ${receipt.balanceDue > 0 ? `
-            <div class="flex bold" style="font-size: 13px;">
+            <div class="flex bold" style="font-size: 11px;">
               <span>Due:</span>
               <span>${toReceiptAmount(receipt.balanceDue)}</span>
             </div>
@@ -235,7 +235,7 @@ export function registerPrinterIPC() {
             
             <div class="center bold thanks">${escapeHtml(receiptSettings.footer).toUpperCase()}</div>
             <div class="center footer">${escapeHtml(receiptSettings.shopName)} POS</div>
-            <div style="height: 30px;"></div>
+            <div style="height: 14px;"></div>
           </body>
         </html>
       `;
