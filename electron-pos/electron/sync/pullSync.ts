@@ -119,9 +119,8 @@ export async function pullSync(mainWindow?: BrowserWindow) {
       const upsertRate = db.prepare(`
         INSERT INTO daily_rates (id, date, milk_rate, yogurt_rate, updated_by_id, created_at, synced)
         VALUES (@id, @date, @milkRate, @yogurtRate, @updatedById, @createdAt, 1)
-        ON CONFLICT(date) DO UPDATE SET
-          milk_rate = @milkRate, yogurt_rate = @yogurtRate, updated_by_id = @updatedById, synced = 1
-      `); // No updated_at in daily_rates schema, overwrite if fetched
+        ON CONFLICT(date) DO NOTHING
+      `);
       
       for (const r of dailyRates) {
         upsertRate.run({

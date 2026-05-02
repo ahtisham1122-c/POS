@@ -14,6 +14,33 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
   ipcMain.handle('sync:getStatus', () => {
     const pending = db.prepare(`SELECT COUNT(*) as count FROM sync_outbox WHERE status = 'pending'`).get() as any;
     const failed = db.prepare(`SELECT COUNT(*) as count FROM sync_outbox WHERE status = 'failed'`).get() as any;
+    const waitingParent = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM sync_outbox
+      WHERE status IN ('pending', 'failed')
+      AND (
+        error_message LIKE 'Waiting for parent:%'
+        OR error_message LIKE '%Missing parent%'
+      )
+    `).get() as any;
+    const authErrors = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM sync_outbox
+      WHERE status IN ('pending', 'failed')
+      AND (
+        error_message LIKE '%Auth failed%'
+        OR error_message LIKE '%401%'
+        OR error_message LIKE '%403%'
+        OR error_message LIKE '%Sync Device Secret%'
+      )
+    `).get() as any;
+    const backendErrors = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM sync_outbox
+      WHERE status IN ('pending', 'failed')
+      AND error_message LIKE 'Server Error%'
+      AND error_message NOT LIKE '%Missing parent%'
+    `).get() as any;
     const stuck = db.prepare(`
       SELECT COUNT(*) as count, MIN(created_at) as oldestCreatedAt
       FROM sync_outbox
@@ -29,11 +56,37 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
     `).get() as any;
     const lastPull = db.prepare(`SELECT value FROM settings WHERE key = 'last_pull_timestamp'`).get() as any;
     const failedCount = Number(failed?.count || 0);
+    const waitingParentCount = Number(waitingParent?.count || 0);
+    const authErrorCount = Number(authErrors?.count || 0);
+    const backendErrorCount = Number(backendErrors?.count || 0);
+    const pendingCount = Number(pending?.count || 0);
+    const stuckCount = Number(stuck?.count || 0);
+    const nonRecoverableFailedCount = Math.max(0, failedCount - waitingParentCount);
+    let status = networkMonitor.isOnline ? 'online' : 'offline';
+    let statusReason = networkMonitor.isOnline ? 'Connected' : 'Backend/network is offline';
+    if (authErrorCount > 0) {
+      status = 'config_error';
+      statusReason = 'Sync secret or device registration is wrong';
+    } else if (backendErrorCount > 0 || nonRecoverableFailedCount > 0) {
+      status = 'error';
+      statusReason = 'Backend rejected one or more records';
+    } else if (waitingParentCount > 0) {
+      status = 'recovering';
+      statusReason = 'Waiting for parent records to sync first';
+    } else if (pendingCount > 0 || stuckCount > 0) {
+      status = 'syncing';
+      statusReason = 'Records are waiting to sync';
+    }
+
     return {
-      status: failedCount > 0 || Number(stuck?.count || 0) > 0 ? 'error' : (networkMonitor.isOnline ? 'online' : 'offline'),
-      pendingCount: Number(pending?.count || 0),
+      status,
+      statusReason,
+      pendingCount,
       failedCount,
-      stuckCount: Number(stuck?.count || 0),
+      stuckCount,
+      waitingParentCount,
+      authErrorCount,
+      backendErrorCount,
       oldestStuckCreatedAt: stuck?.oldestCreatedAt || null,
       latestError: latestError?.error_message || null,
       latestErrorTable: latestError?.table_name || null,

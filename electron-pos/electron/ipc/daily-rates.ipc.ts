@@ -17,8 +17,10 @@ function requirePositiveRate(value: unknown, fieldName: string) {
 export function registerDailyRatesIPC() {
   ipcMain.handle('dailyRates:getToday', () => {
     const today = getBusinessDate();
-    const row = db.prepare('SELECT * FROM daily_rates WHERE date = ?').get(today) as any;
-    if (row) return row;
+    return db.prepare('SELECT * FROM daily_rates WHERE date = ?').get(today) || null;
+  });
+
+  ipcMain.handle('dailyRates:getLatest', () => {
     return db.prepare('SELECT * FROM daily_rates ORDER BY date DESC LIMIT 1').get() || null;
   });
 

@@ -67,6 +67,10 @@ export default function Settings() {
     pendingCount: number;
     failedCount: number;
     stuckCount: number;
+    waitingParentCount?: number;
+    authErrorCount?: number;
+    backendErrorCount?: number;
+    statusReason?: string;
     oldestStuckCreatedAt: string | null;
     latestError: string | null;
     latestErrorTable: string | null;
@@ -208,7 +212,7 @@ export default function Settings() {
 
   const loadSettings = async () => {
     try {
-      const rates = await window.electronAPI?.dailyRates?.getToday();
+      const rates = await window.electronAPI?.dailyRates?.getToday() || await window.electronAPI?.dailyRates?.getLatest();
       if (rates) {
         setMilkRate(String(rates.milk_rate));
         setYogurtRate(String(rates.yogurt_rate));
@@ -327,6 +331,9 @@ export default function Settings() {
         autoPrint: posConfig.autoPrint,
         receiptDelay: posConfig.receiptDelay,
         defaultPayment: posConfig.defaultPayment,
+        printerType: posConfig.printerType,
+        printerName: posConfig.printerName,
+        paperWidth: posConfig.paperWidth,
         cashierPinReq: posConfig.cashierPinReq,
         taxEnabled: posConfig.taxEnabled,
         taxRate: posConfig.taxRate,
@@ -581,6 +588,7 @@ export default function Settings() {
                     className="input bg-surface-3"
                   >
                     <option value="USB Thermal">USB Thermal</option>
+                    <option value="BC-105 Thermal">BC-105 Thermal</option>
                     <option value="Network IP">Network IP</option>
                     <option value="Browser Print">Browser Print</option>
                   </select>
@@ -616,12 +624,14 @@ export default function Settings() {
                           billNumber: "TEST-PRINT",
                           date: new Date(),
                           customer: "Printer Test",
-                          items: [{ id: "test", name: "Test Receipt", quantity: 1, price: 0, lineTotal: 0 }],
-                          subtotal: 0,
+                          printerName: posConfig.printerName,
+                          paperWidth: posConfig.paperWidth,
+                          items: [{ id: "test", name: "BC-105 TEST", quantity: 1, price: 10, lineTotal: 10 }],
+                          subtotal: 10,
                           discount: 0,
                           taxAmount: 0,
-                          grandTotal: 0,
-                          amountPaid: 0,
+                          grandTotal: 10,
+                          amountPaid: 10,
                           balanceDue: 0,
                           cashPaid: 0,
                           onlinePaid: 0,
@@ -1105,10 +1115,11 @@ export default function Settings() {
                     <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">Status</span>
                     <span className={cn(
                       "text-xl font-bold mt-2",
-                      syncStatus.status === 'online' ? "text-success" : syncStatus.status === 'error' ? "text-danger" : "text-text-secondary"
+                      syncStatus.status === 'online' ? "text-success" : syncStatus.status === 'error' || syncStatus.status === 'config_error' ? "text-danger" : syncStatus.status === 'recovering' || syncStatus.status === 'syncing' ? "text-warning" : "text-text-secondary"
                     )}>
-                      {syncStatus.status.toUpperCase()}
+                      {syncStatus.status.replace("_", " ").toUpperCase()}
                     </span>
+                    {syncStatus.statusReason && <span className="mt-1 text-xs text-text-secondary">{syncStatus.statusReason}</span>}
                   </div>
                   <div className="bg-surface-3 p-4 rounded-xl border border-surface-4 flex flex-col justify-between">
                     <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">Pending Items</span>
@@ -1122,6 +1133,16 @@ export default function Settings() {
                   </div>
                 </div>
               )}
+
+              {syncStatus && (syncStatus.waitingParentCount || syncStatus.authErrorCount || syncStatus.backendErrorCount) ? (
+                <div className="rounded-xl border border-surface-4 bg-surface-3/70 px-4 py-3 text-sm text-text-secondary">
+                  Waiting for parent: <strong className="text-warning">{syncStatus.waitingParentCount || 0}</strong>
+                  <span className="mx-2">|</span>
+                  Secret/config errors: <strong className="text-danger">{syncStatus.authErrorCount || 0}</strong>
+                  <span className="mx-2">|</span>
+                  Backend rejects: <strong className="text-danger">{syncStatus.backendErrorCount || 0}</strong>
+                </div>
+              ) : null}
 
               {failedRows.length > 0 && (
                 <div className="space-y-2">

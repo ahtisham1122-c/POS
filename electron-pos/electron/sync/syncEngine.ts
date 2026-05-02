@@ -366,6 +366,19 @@ export class SyncEngine {
             // Server returned an HTTP error for this specific row — record the error and
             // continue with the next row (don't abort the batch).
             const errText = await response.text();
+            if (response.status === 400 && errText.includes('Missing parent')) {
+              const parentRequeued = this.requeueMissingParent(row.table_name, parsedPayload);
+              db.prepare(`
+                UPDATE sync_outbox
+                SET status = 'pending',
+                    attempt_count = attempt_count + 1,
+                    error_message = ?,
+                    last_attempted_at = datetime('now')
+                WHERE id = ?
+              `).run(parentRequeued ? `Waiting for parent: ${errText.substring(0, 240)}. Parent was queued again.` : `Waiting for parent: ${errText.substring(0, 240)}`, row.id);
+              logger.info(`SyncEngine deferred row ${row.id} (${row.table_name}) after HTTP 400 missing-parent response.`);
+              continue;
+            }
             const errMsg = `Server Error (${response.status}): ${errText.substring(0, 300)}`;
             logger.warn(`SyncEngine server rejected row ${row.id} (${row.table_name}): ${errMsg}`);
 

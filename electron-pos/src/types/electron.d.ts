@@ -98,6 +98,7 @@ export interface ElectronAPI {
   };
   dailyRates: {
     getToday: () => Promise<any>;
+    getLatest: () => Promise<any>;
     update: (data: any) => Promise<any>;
     getHistory: () => Promise<any[]>;
     getRateChangeHistory: (limit?: number) => Promise<any[]>;

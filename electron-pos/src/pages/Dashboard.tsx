@@ -53,9 +53,11 @@ export default function Dashboard({ setPage }: { setPage: (p: any) => void }) {
   }, []);
 
   const kpis = stats ? [
-    { label: "Today's Revenue", value: `Rs. ${stats.kpis.revenue.toLocaleString()}`, trend: "Today's gross", icon: TrendingUp, color: "text-success", bg: "bg-success/15" },
+    { label: "Gross Sales", value: `Rs. ${(stats.kpis.grossSales ?? stats.kpis.revenue).toLocaleString()}`, trend: "Before refunds", icon: TrendingUp, color: "text-success", bg: "bg-success/15" },
+    { label: "Refunds", value: `Rs. ${(stats.kpis.refunds ?? 0).toLocaleString()}`, trend: "Returned money", icon: AlertCircle, color: "text-warning", bg: "bg-warning/15" },
+    { label: "Net Sales", value: `Rs. ${(stats.kpis.netSales ?? stats.kpis.revenue).toLocaleString()}`, trend: "Gross minus refunds", icon: Receipt, color: "text-info", bg: "bg-info/15" },
     { label: "Bills Today", value: stats.kpis.bills.toString(), trend: "Transactions count", icon: Receipt, color: "text-info", bg: "bg-info/15" },
-    { label: "Cash on Hand", value: `Rs. ${stats.kpis.cashOnHand.toLocaleString()}`, trend: "After expenses", icon: Banknote, color: "text-success", bg: "bg-success/15" },
+    { label: "Expected Cash", value: `Rs. ${(stats.kpis.expectedCash ?? stats.kpis.cashOnHand).toLocaleString()}`, trend: "From cash register", icon: Banknote, color: "text-success", bg: "bg-success/15" },
     { label: "Outstanding Dues", value: `Rs. ${stats.kpis.dues.toLocaleString()}`, trend: `${stats.kpis.dueCount} customers owe`, icon: AlertCircle, color: "text-danger", bg: "bg-danger/15" },
   ] : [];
 
@@ -87,7 +89,7 @@ export default function Dashboard({ setPage }: { setPage: (p: any) => void }) {
       </div>
 
       {/* KPI CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
         {kpis.map((kpi, i) => {
           const Icon = kpi.icon;
           return (

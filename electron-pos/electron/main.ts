@@ -38,6 +38,17 @@ const syncEngine = new SyncEngine();
 let pullSyncInterval: NodeJS.Timeout | null = null;
 let backupInterval: NodeJS.Timeout | null = null;
 
+// Global process error handlers — without these, ANY unhandled exception or
+// promise rejection in the main process kills Electron and the cashier loses
+// the ability to ring up sales until the app is restarted. Log it and keep
+// running. Local data is always safe in SQLite.
+process.on('uncaughtException', (err) => {
+  try { log.error('Uncaught exception in main process:', err); } catch {}
+});
+process.on('unhandledRejection', (reason) => {
+  try { log.error('Unhandled promise rejection in main process:', reason); } catch {}
+});
+
 const sendOnlineStatus = () => {
   if (mainWindow) mainWindow.webContents.send('network-status-changed', 'online');
 };
@@ -176,9 +187,12 @@ app.whenReady().then(() => {
   syncEngine.start();
   backupInterval = scheduleDailyBackup();
   
-  // Set up 60s pull interval
+  // Set up 60s pull interval — guard against unhandled rejection so a network
+  // hiccup or malformed server response can never crash the main process.
   pullSyncInterval = setInterval(() => {
-    pullSync(mainWindow || undefined);
+    pullSync(mainWindow || undefined).catch((err) => {
+      log.warn('Periodic pullSync failed:', err?.message || err);
+    });
   }, 60000);
 
   networkMonitor.on('online', sendOnlineStatus);
@@ -206,6 +220,10 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
-  performBackup(false);
-  stopBackgroundTasks();
+  try { performBackup(false); } catch (e: any) {
+    log.error('Shutdown backup failed:', e?.message || e);
+  }
+  try { stopBackgroundTasks(); } catch (e: any) {
+    log.error('stopBackgroundTasks failed:', e?.message || e);
+  }
 });

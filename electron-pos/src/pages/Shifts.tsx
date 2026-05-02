@@ -50,10 +50,26 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
     loadData();
   }, []);
 
-  async function openShift() {
+  async function openShift(confirmAfterMidnightOpen = false) {
     setMessage(null);
-    const result = await window.electronAPI?.shifts?.open({ openingCash: Number(openingCash || 0), notes });
+    const result = await window.electronAPI?.shifts?.open({
+      openingCash: Number(openingCash || 0),
+      notes,
+      confirmAfterMidnightOpen,
+    });
     if (!result?.success) {
+      // Backend asks for explicit confirmation before opening another shift
+      // in the same calendar day before sunrise. Ask the user and retry.
+      if (result?.requiresPreviousShiftConfirmation) {
+        const proceed = window.confirm(
+          (result?.error || "A previous shift may still need attention.") +
+          "\n\nClick OK to open a new shift now."
+        );
+        if (proceed) {
+          await openShift(true);
+        }
+        return;
+      }
       setMessage({ type: "error", text: result?.error || "Failed to open shift." });
       return;
     }
@@ -199,7 +215,7 @@ export default function Shifts({ setPage }: { setPage?: (page: PageId) => void }
                   />
                 </div>
 
-                <button onClick={openShift} className="btn-primary w-full h-14 flex items-center justify-center gap-2">
+                <button onClick={() => openShift()} className="btn-primary w-full h-14 flex items-center justify-center gap-2">
                   <PlayCircle className="w-5 h-5" />
                   Open Shift
                 </button>

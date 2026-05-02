@@ -4,6 +4,8 @@ import { createOutboxEntry } from '../sync/outboxHelper';
 import { getCashRegisterExpected } from '../database/cashRegister';
 import { getActiveBusinessDate, getBusinessDate } from '../database/businessDay';
 
+const ACCOUNTING_SALE_STATUSES = "'COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED'";
+
 function getShiftScope(reportDate: string) {
   const shift = db.prepare(`
     SELECT s.*, opener.name as cashier_name, closer.name as closed_by_name
@@ -143,14 +145,14 @@ export function registerReportsIPC() {
     const scope = getShiftScope(date || getBusinessDate());
     const saleWhere = saleScope('s', scope);
     const saleParams = scopeParams(scope);
-    const sales = db.prepare(`SELECT SUM(grand_total) as total, SUM(amount_paid) as collected FROM sales s WHERE ${saleWhere} AND s.status = 'COMPLETED'`).get(...saleParams) as any;
+    const sales = db.prepare(`SELECT SUM(grand_total) as total, SUM(amount_paid) as collected FROM sales s WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})`).get(...saleParams) as any;
     const tenders = db.prepare(`
       SELECT
         COALESCE(SUM(CASE WHEN sp.method = 'CASH' THEN sp.amount ELSE 0 END), 0) as cashCollected,
         COALESCE(SUM(CASE WHEN sp.method = 'ONLINE' THEN sp.amount ELSE 0 END), 0) as onlineCollected
       FROM split_payments sp
       JOIN sales s ON s.id = sp.sale_id
-      WHERE ${saleWhere} AND s.status = 'COMPLETED'
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
     const returns = db.prepare(`
       SELECT
@@ -186,21 +188,21 @@ export function registerReportsIPC() {
         SUM(grand_total) as totalSales, 
         SUM(amount_paid) as paidSales, 
         SUM(balance_due) as creditSales 
-      FROM sales s WHERE ${saleWhere} AND s.status = 'COMPLETED'
+      FROM sales s WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
 
     const milkStats = db.prepare(`
       SELECT SUM(si.quantity) as qty
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
-      WHERE si.product_name LIKE '%milk%' AND ${saleWhere} AND s.status = 'COMPLETED'
+      WHERE si.product_name LIKE '%milk%' AND ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
 
     const yogurtStats = db.prepare(`
       SELECT SUM(si.quantity) as qty
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
-      WHERE si.product_name LIKE '%yogurt%' AND ${saleWhere} AND s.status = 'COMPLETED'
+      WHERE si.product_name LIKE '%yogurt%' AND ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
 
     const expenseStats = db.prepare(`
@@ -223,7 +225,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(CASE WHEN sp.method = 'ONLINE' THEN sp.amount ELSE 0 END), 0) as onlineSales
       FROM split_payments sp
       JOIN sales s ON s.id = sp.sale_id
-      WHERE ${saleWhere} AND s.status = 'COMPLETED'
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
 
     return {
@@ -294,17 +296,33 @@ export function registerReportsIPC() {
 
   ipcMain.handle('reports:getSalesChart', (_event, days: number = 7) => {
     const safeDays = Number.isFinite(days) && days > 0 ? Math.min(days, 90) : 7;
-    return db.prepare(`
+    const salesRows = db.prepare(`
       SELECT
         COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) as date,
         COUNT(*) as orders,
         COALESCE(SUM(s.grand_total), 0) as total
       FROM sales s
       LEFT JOIN shifts sh ON sh.id = s.shift_id
-      WHERE s.sale_date >= datetime('now', ?) AND s.status = 'COMPLETED'
+      WHERE s.sale_date >= datetime('now', ?) AND s.status IN (${ACCOUNTING_SALE_STATUSES})
       GROUP BY COALESCE(sh.shift_date, substr(s.sale_date, 1, 10))
       ORDER BY date ASC
-    `).all(`-${safeDays} day`);
+    `).all(`-${safeDays} day`) as Array<{ date: string; orders: number; total: number }>;
+    const returnRows = db.prepare(`
+      SELECT
+        COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) as date,
+        COALESCE(SUM(r.refund_amount), 0) as refunds
+      FROM returns r
+      LEFT JOIN shifts sh ON sh.id = r.shift_id
+      WHERE r.return_date >= datetime('now', ?) AND r.status = 'COMPLETED'
+      GROUP BY COALESCE(sh.shift_date, substr(r.return_date, 1, 10))
+    `).all(`-${safeDays} day`) as Array<{ date: string; refunds: number }>;
+    const refundsByDate = new Map(returnRows.map((row) => [row.date, Number(row.refunds || 0)]));
+    return salesRows.map((row) => ({
+      ...row,
+      grossTotal: Number(row.total || 0),
+      refunds: refundsByDate.get(row.date) || 0,
+      total: Number(row.total || 0) - (refundsByDate.get(row.date) || 0)
+    }));
   });
 
   ipcMain.handle('reports:getProductPerformance', () => {
@@ -316,7 +334,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(si.line_total), 0) as totalSales
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
-      WHERE s.status = 'COMPLETED'
+      WHERE s.status IN (${ACCOUNTING_SALE_STATUSES})
       GROUP BY si.product_id, si.product_name
       ORDER BY totalSales DESC
       LIMIT 20
@@ -342,7 +360,7 @@ export function registerReportsIPC() {
       LEFT JOIN shifts sh ON sh.id = s.shift_id
       WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
         AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) <= ?
-        AND s.status = 'COMPLETED'
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(startDate, endDate) as any;
 
     const returnStats = db.prepare(`
@@ -363,7 +381,7 @@ export function registerReportsIPC() {
       LEFT JOIN shifts sh ON sh.id = s.shift_id
       WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
         AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) <= ?
-        AND s.status = 'COMPLETED'
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(startDate, endDate) as any;
 
     const expenseStats = db.prepare(`
@@ -386,7 +404,7 @@ export function registerReportsIPC() {
       LEFT JOIN shifts sh ON sh.id = s.shift_id
       WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
         AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) <= ?
-        AND s.status = 'COMPLETED'
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(startDate, endDate) as any;
 
     const refunds = returnStats.refunds;
@@ -420,7 +438,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(s.grand_total), 0) as revenue
       FROM sales s
       LEFT JOIN shifts sh ON sh.id = s.shift_id
-      WHERE substr(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)), 1, 4) = ? AND s.status = 'COMPLETED'
+      WHERE substr(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)), 1, 4) = ? AND s.status IN (${ACCOUNTING_SALE_STATUSES})
       GROUP BY substr(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)), 1, 7)
       ORDER BY month ASC
     `).all(year);
@@ -437,7 +455,7 @@ export function registerReportsIPC() {
         COUNT(*) as bills, 
         COALESCE(SUM(grand_total), 0) as revenue,
         COALESCE(SUM(amount_paid), 0) as paidCollected
-      FROM sales s WHERE ${saleWhere} AND s.status = 'COMPLETED'
+      FROM sales s WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
     const todayTenders = db.prepare(`
       SELECT
@@ -445,7 +463,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(CASE WHEN sp.method = 'ONLINE' THEN sp.amount ELSE 0 END), 0) as onlineCollected
       FROM split_payments sp
       JOIN sales s ON s.id = sp.sale_id
-      WHERE ${saleWhere} AND s.status = 'COMPLETED'
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
 
     const todayReturns = db.prepare(`
@@ -473,10 +491,10 @@ export function registerReportsIPC() {
         grand_total as amount,
         COALESCE((SELECT name FROM customers WHERE id = sales.customer_id), 'Walk-in') as customer
       FROM sales 
-      WHERE status = 'COMPLETED'
+      WHERE ${saleScope('sales', scope)} AND status IN (${ACCOUNTING_SALE_STATUSES})
       ORDER BY sale_date DESC 
       LIMIT 10
-    `).all();
+    `).all(...saleParams);
 
     const topProducts = db.prepare(`
       SELECT 
@@ -487,7 +505,7 @@ export function registerReportsIPC() {
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON s.id = si.sale_id
-      WHERE ${saleWhere} AND s.status = 'COMPLETED'
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
       GROUP BY si.product_id 
       ORDER BY rev DESC 
       LIMIT 5
@@ -499,11 +517,22 @@ export function registerReportsIPC() {
       WHERE stock <= low_stock_threshold AND is_active = 1
     `).all();
 
+    const drawer = getCashRegisterExpected(today, scope.shiftId);
+    const refunds = Number(todayReturns.total || 0);
+    const cashRefunds = Number(todayReturns.cashRefunds || 0);
+    const grossSales = Number(todaySales.revenue || 0);
+    const netSales = grossSales - refunds;
+
     return {
       kpis: {
-        revenue: todaySales.revenue - todayReturns.total,
+        grossSales,
+        refunds,
+        netSales,
+        revenue: netSales,
         bills: todaySales.bills,
-        cashOnHand: todayTenders.cashCollected - todayReturns.cashRefunds - todayExpenses.total,
+        cashOnHand: drawer.expectedCash,
+        expectedCash: drawer.expectedCash,
+        cashCollected: todayTenders.cashCollected - cashRefunds,
         onlineCollected: todayTenders.onlineCollected,
         dues: outstandingDues.total,
         dueCount: outstandingDues.count

@@ -171,20 +171,6 @@ function repairSetupRatesIfNeeded() {
       updated_by_id: existingRate.updated_by_id || 'admin-id',
       created_at: existingRate.created_at
     });
-  } else {
-    const rateId = crypto.randomUUID();
-    db.prepare(`
-      INSERT INTO daily_rates (id, date, milk_rate, yogurt_rate, updated_by_id, created_at, synced)
-      VALUES (?, ?, ?, ?, ?, ?, 0)
-    `).run(rateId, today, milkRate, yogurtRate, 'admin-id', now);
-    enqueueOutbox('daily_rates', 'INSERT', rateId, {
-      id: rateId,
-      date: today,
-      milk_rate: milkRate,
-      yogurt_rate: yogurtRate,
-      updated_by_id: 'admin-id',
-      created_at: now
-    });
   }
 
   db.prepare("UPDATE products SET selling_price = ?, updated_at = ?, synced = 0 WHERE code = 'MILK'")
@@ -792,15 +778,7 @@ export function initializeDatabase() {
   }
   ensureSystemProducts();
 
-  // Ensure daily rates exist for today
-  const today = new Date().toISOString().split('T')[0];
-  const rateExists = db.prepare('SELECT COUNT(*) as count FROM daily_rates WHERE date = ?').get(today) as any;
-  if (rateExists.count === 0) {
-    const now = new Date().toISOString();
-    db.prepare(`
-      INSERT INTO daily_rates (id, date, milk_rate, yogurt_rate, updated_by_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(crypto.randomUUID(), today, 180, 220, 'admin-id', now);
-  }
+  // Do not seed a daily rate automatically. The shop owner must enter the
+  // current business-day rates before sales can be made.
   repairSetupRatesIfNeeded();
 }

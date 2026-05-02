@@ -6,7 +6,7 @@ import { format } from "date-fns";
 
 type Product = { id: string; code: string; name: string; category: string; unit: string; selling_price: number; cost_price: number; stock: number; emoji?: string; low_stock_threshold?: number; tax_exempt?: number; };
 type Customer = { id: string; name: string; card_number?: string; current_balance?: number; phone?: string; };
-type DailyRate = { milk_rate: number; yogurt_rate: number; };
+type DailyRate = { date?: string; milk_rate: number; yogurt_rate: number; };
 type TaxConfig = { enabled: boolean; label: string; rate: number; };
 
 function roundMoney(value: number) {
@@ -105,7 +105,10 @@ export default function POS() {
   // Global Data
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [rates, setRates] = useState<DailyRate>({ milk_rate: 180, yogurt_rate: 220 });
+  const [rates, setRates] = useState<DailyRate>({ milk_rate: 0, yogurt_rate: 0 });
+  const [todayRateMissing, setTodayRateMissing] = useState(false);
+  const [rateEntry, setRateEntry] = useState({ milkRate: "", yogurtRate: "", managerPin: "" });
+  const [isSavingRates, setIsSavingRates] = useState(false);
   const [syncStatus, setSyncStatus] = useState("Online");
   const [taxConfig, setTaxConfig] = useState<TaxConfig>({ enabled: false, label: "GST", rate: 0 });
   const [autoPrintReceipt, setAutoPrintReceipt] = useState(true);
@@ -222,7 +225,20 @@ export default function POS() {
     setUser(currentUser);
     const todayRates = await window.electronAPI?.dailyRates?.getToday();
     if (todayRates) {
-      setRates({ milk_rate: todayRates.milk_rate, yogurt_rate: todayRates.yogurt_rate });
+      setRates({ date: todayRates.date, milk_rate: todayRates.milk_rate, yogurt_rate: todayRates.yogurt_rate });
+      setTodayRateMissing(false);
+    } else {
+      const latestRates = await window.electronAPI?.dailyRates?.getLatest();
+      const fallbackRates = latestRates || {};
+      const milkRate = Number(fallbackRates.milk_rate || 0);
+      const yogurtRate = Number(fallbackRates.yogurt_rate || 0);
+      setRates({ date: fallbackRates.date, milk_rate: milkRate, yogurt_rate: yogurtRate });
+      setRateEntry((prev) => ({
+        ...prev,
+        milkRate: prev.milkRate || (milkRate > 0 ? String(milkRate) : ""),
+        yogurtRate: prev.yogurtRate || (yogurtRate > 0 ? String(yogurtRate) : "")
+      }));
+      setTodayRateMissing(true);
     }
     const held = await window.electronAPI?.sales?.getHeld();
     if (held) {
@@ -266,7 +282,7 @@ export default function POS() {
         e.preventDefault();
         setShowOtherItems(true);
       }
-      if (e.key === "Enter" && items.length > 0 && !isSubmitting && !receiptData && !showOtherItems) {
+      if (e.key === "Enter" && ratesReady && items.length > 0 && !isSubmitting && !receiptData && !showOtherItems) {
         if (paymentMode !== "CREDIT" || selectedCustomerId) {
           handleCheckout();
         }
@@ -315,7 +331,7 @@ export default function POS() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [items, isSubmitting, receiptData, paymentMode, selectedCustomerId, showOtherItems, lastReceiptData, heldBills]);
+  }, [items, isSubmitting, receiptData, paymentMode, selectedCustomerId, showOtherItems, lastReceiptData, heldBills, ratesReady]);
 
   const loadEndOfDay = async () => {
     const day = await window.electronAPI?.system?.getBusinessDate();
@@ -328,8 +344,48 @@ export default function POS() {
   const milkProduct = useMemo(() => products.find(p => String(p.code).toUpperCase() === "MILK"), [products]);
   const yogurtProduct = useMemo(() => products.find(p => String(p.code).toUpperCase() === "YOGT"), [products]);
   const otherProducts = useMemo(() => products.filter(p => p.id !== milkProduct?.id && p.id !== yogurtProduct?.id && p.name.toLowerCase().includes(otherSearch.toLowerCase())), [products, milkProduct, yogurtProduct, otherSearch]);
+  const ratesReady = !todayRateMissing && rates.milk_rate > 0 && rates.yogurt_rate > 0;
+
+  const requireTodaysRates = () => {
+    if (ratesReady) return true;
+    addAlert("Enter today's milk and yogurt rates before making sales.");
+    return false;
+  };
+
+  const saveTodaysRates = async () => {
+    const milkRate = Number(rateEntry.milkRate);
+    const yogurtRate = Number(rateEntry.yogurtRate);
+    if (!Number.isFinite(milkRate) || milkRate <= 0 || !Number.isFinite(yogurtRate) || yogurtRate <= 0) {
+      alert("Milk and yogurt rates must be greater than zero.");
+      return;
+    }
+    if (!rateEntry.managerPin.trim()) {
+      alert("Manager PIN is required to set today's rates.");
+      return;
+    }
+
+    setIsSavingRates(true);
+    try {
+      const result = await window.electronAPI?.dailyRates?.update({
+        milkRate,
+        yogurtRate,
+        managerPin: rateEntry.managerPin.trim(),
+        notes: "Set from POS opening prompt"
+      });
+      if (!result?.success) {
+        alert(result?.error || "Could not save today's rates.");
+        return;
+      }
+      setRateEntry({ milkRate: "", yogurtRate: "", managerPin: "" });
+      await fetchData();
+      addAlert("Today's rates saved.");
+    } finally {
+      setIsSavingRates(false);
+    }
+  };
 
   const addMilk = (qty: number) => {
+    if (!requireTodaysRates()) return;
     if (!milkProduct) {
       addAlert("Milk system product is missing. Restart the app once to repair products.");
       return;
@@ -347,6 +403,7 @@ export default function POS() {
   };
 
   const addYogurtKg = (qty: number) => {
+    if (!requireTodaysRates()) return;
     if (!yogurtProduct) {
       addAlert("Yogurt system product is missing. Restart the app once to repair products.");
       return;
@@ -364,6 +421,7 @@ export default function POS() {
   };
 
   const addYogurtRs = (amount: number) => {
+    if (!requireTodaysRates()) return;
     if (!yogurtProduct) {
       addAlert("Yogurt system product is missing. Restart the app once to repair products.");
       return;
@@ -383,6 +441,7 @@ export default function POS() {
   };
 
   const addMilkRs = (amount: number) => {
+    if (!requireTodaysRates()) return;
     if (!milkProduct) {
       addAlert("Milk system product is missing. Restart the app once to repair products.");
       return;
@@ -517,6 +576,7 @@ export default function POS() {
 
   const handleCheckout = async () => {
     if (items.length === 0 || isSubmitting) return;
+    if (!requireTodaysRates()) return;
     if (paymentMode === "CREDIT" && !selectedCustomerId) {
       alert("Please select a customer for khata/credit sale.");
       return;
@@ -770,6 +830,7 @@ export default function POS() {
                     <button 
                       key={p.id}
                       onClick={() => {
+                        if (!requireTodaysRates()) return;
                         addItem({
                           id: crypto.randomUUID(), productId: p.id, name: p.name, unit: p.unit, 
                           quantity: 1, price: p.selling_price, costPrice: p.cost_price, lineTotal: p.selling_price
@@ -819,7 +880,7 @@ export default function POS() {
         <div className="flex-1 bg-[#040f09] border-r border-surface-4 flex flex-col relative">
           <div className="p-4 shrink-0 text-center border-b border-white/5">
             <h1 className="text-3xl font-black text-white tracking-wide">🥛 MILK</h1>
-            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">Rs.{rates.milk_rate}/kg</p>
+            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{ratesReady ? `Rs.${rates.milk_rate}/kg` : "Rate required"}</p>
           </div>
           
           <div className="flex-1 p-4 flex flex-col gap-4 overflow-hidden">
@@ -884,7 +945,7 @@ export default function POS() {
         <div className="flex-1 bg-[#04090f] flex flex-col relative">
           <div className="p-4 shrink-0 text-center border-b border-white/5">
             <h1 className="text-3xl font-black text-white tracking-wide">🫙 YOGURT</h1>
-            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">Rs.{rates.yogurt_rate}/kg</p>
+            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{ratesReady ? `Rs.${rates.yogurt_rate}/kg` : "Rate required"}</p>
           </div>
           
           <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
@@ -1149,10 +1210,10 @@ export default function POS() {
           <div className="border-t border-surface-4 p-4 flex flex-col gap-3 bg-surface-2 shrink-0">
             <button 
               onClick={handleCheckout} 
-              disabled={items.length === 0 || isSubmitting || (paymentMode === "CREDIT" && !selectedCustomerId)}
+              disabled={!ratesReady || items.length === 0 || isSubmitting || (paymentMode === "CREDIT" && !selectedCustomerId)}
               className="w-full h-14 bg-success hover:bg-success/90 disabled:bg-surface-4 disabled:text-text-secondary text-white font-black text-xl rounded-xl shadow-glow disabled:shadow-none transition-all flex items-center justify-center gap-2 active:scale-95"
             >
-              {isSubmitting ? "..." : (paymentMode === "CASH" ? "CASH ✓" : (paymentMode === "ONLINE" ? "ONLINE ✓" : (paymentMode === "CREDIT" ? "KHATA ✓" : "SPLIT ✓")))}
+              {!ratesReady ? "ENTER TODAY'S RATES" : isSubmitting ? "..." : (paymentMode === "CASH" ? "CASH ✓" : (paymentMode === "ONLINE" ? "ONLINE ✓" : (paymentMode === "CREDIT" ? "KHATA ✓" : "SPLIT ✓")))}
             </button>
             
             <div className="flex gap-2 h-10">
@@ -1198,6 +1259,71 @@ export default function POS() {
         </div>
 
       </div>
+
+      {todayRateMissing && (
+        <div className="fixed inset-0 z-[130] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl border border-warning/40 bg-surface-2 shadow-float overflow-hidden">
+            <div className="border-b border-surface-4 bg-surface-3 p-5">
+              <h2 className="text-xl font-black text-white">Enter Today's Rates</h2>
+              <p className="mt-1 text-sm text-text-secondary">Sales are locked until today's milk and yogurt rates are saved.</p>
+            </div>
+            <div className="p-5 space-y-4">
+              {rates.date && (
+                <div className="rounded-lg border border-surface-4 bg-surface-1 px-3 py-2 text-xs text-text-secondary">
+                  Last saved rates from {rates.date}: Milk Rs.{rates.milk_rate}, Yogurt Rs.{rates.yogurt_rate}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase text-text-secondary">Milk Rs/kg</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={rateEntry.milkRate}
+                    onChange={(event) => setRateEntry((prev) => ({ ...prev, milkRate: event.target.value }))}
+                    onFocus={() => openTouchInput({ title: "Milk rate", mode: "number", value: rateEntry.milkRate, setValue: (value) => setRateEntry((prev) => ({ ...prev, milkRate: value })), allowDecimal: true })}
+                    className="input text-xl font-mono"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase text-text-secondary">Yogurt Rs/kg</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={rateEntry.yogurtRate}
+                    onChange={(event) => setRateEntry((prev) => ({ ...prev, yogurtRate: event.target.value }))}
+                    onFocus={() => openTouchInput({ title: "Yogurt rate", mode: "number", value: rateEntry.yogurtRate, setValue: (value) => setRateEntry((prev) => ({ ...prev, yogurtRate: value })), allowDecimal: true })}
+                    className="input text-xl font-mono"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase text-text-secondary">Manager PIN</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  value={rateEntry.managerPin}
+                  onChange={(event) => setRateEntry((prev) => ({ ...prev, managerPin: event.target.value }))}
+                  onFocus={() => openTouchInput({ title: "Manager PIN", mode: "number", value: rateEntry.managerPin, setValue: (value) => setRateEntry((prev) => ({ ...prev, managerPin: value })), masked: true })}
+                  onKeyDown={(event) => event.key === "Enter" && saveTodaysRates()}
+                  className="input text-center text-2xl font-mono tracking-widest"
+                  placeholder="PIN"
+                />
+              </div>
+            </div>
+            <div className="border-t border-surface-4 bg-surface-3 p-4">
+              <button
+                onClick={saveTodaysRates}
+                disabled={isSavingRates}
+                className="btn-primary h-12 w-full text-base font-black"
+              >
+                {isSavingRates ? "Saving..." : "Save Rates and Unlock POS"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* RECEIPT MODAL */}
       {receiptData && (

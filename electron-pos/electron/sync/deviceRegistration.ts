@@ -18,14 +18,38 @@ export async function registerDeviceWithCloud() {
     body: JSON.stringify(info)
   }, 15000);
   if (!response.ok) {
-    throw new Error(`Device registration failed with status ${response.status}`);
+    let bodyText = '';
+    try { bodyText = (await response.text()).substring(0, 200); } catch {}
+    throw new Error(
+      `Device registration failed with status ${response.status}` +
+      (bodyText ? `: ${bodyText}` : '')
+    );
   }
 
-  const parsed: any = await response.json();
+  // The server may return non-JSON if a misconfigured proxy / Nginx error page
+  // is in front of the API. Guard the parse so the cashier sees a clear
+  // diagnostic instead of "Unexpected token < in JSON".
+  let parsed: any;
+  try {
+    parsed = await response.json();
+  } catch (jsonErr: any) {
+    throw new Error(
+      `Cloud responded with non-JSON content. Check your APP_API_URL and that Nginx is proxying /api correctly. (${jsonErr?.message || jsonErr})`
+    );
+  }
+
   const payload = parsed?.success ? parsed.data : parsed;
   const syncToken = String(payload?.syncToken || '').trim();
   if (!syncToken) {
-    throw new Error('Device registration did not return a sync token');
+    // Most common cause: the deployed backend is older than the per-device
+    // token migration (commit d3d9ed8). Old backend says success but doesn't
+    // return a token — we'd then have nothing to authenticate sync calls
+    // with. Tell the user exactly what to do.
+    throw new Error(
+      'Cloud server registered the device but did not return a sync token. ' +
+      'The backend on the VPS is out of date — please redeploy the latest ' +
+      'noon-dairy-backend (commit d3d9ed8 or newer).'
+    );
   }
 
   const now = new Date().toISOString();

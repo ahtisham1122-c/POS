@@ -105,7 +105,8 @@ function getReceiptSettings() {
   return {
     shopName: settings.shop_name || 'Gujjar Milk Shop',
     shopPhone: settings.shop_phone || '',
-    printerName: settings.printerName || settings.printer_name || ''
+    printerName: settings.printerName || settings.printer_name || '',
+    paperWidth: settings.paperWidth || settings.paper_width || '80mm'
   };
 }
 
@@ -139,7 +140,9 @@ export function registerPrinterIPC() {
     try {
       const receipt = normalizeReceiptData(receiptData);
       const receiptSettings = getReceiptSettings();
-      const logoDataUri = getLogoDataUri();
+      const printerName = String(receiptData?.printerName || receiptSettings.printerName || '').trim();
+      const paperWidth = String(receiptData?.paperWidth || receiptSettings.paperWidth || '80mm').trim() === '58mm' ? '58mm' : '80mm';
+      const receiptWidthPx = paperWidth === '58mm' ? 210 : 250;
       log.info(`Printing receipt ${receipt.billNumber} via temp file`);
 
       const win = new BrowserWindow({
@@ -171,7 +174,7 @@ export function registerPrinterIPC() {
             <style>
               * { box-sizing: border-box; }
               body {
-                width: 250px;
+                width: ${receiptWidthPx}px;
                 margin: 0;
                 padding: 0;
                 background-color: white;
@@ -184,7 +187,19 @@ export function registerPrinterIPC() {
               .center { text-align: center; }
               .hr { border-bottom: 2px solid black; margin: 2px 0; }
               .flex { display: flex; justify-content: space-between; align-items: baseline; }
-              .logo { display: block; margin: 0 auto 2px; width: 44px; height: 44px; object-fit: contain; }
+              .mono-logo {
+                width: 52px;
+                height: 28px;
+                margin: 0 auto 2px;
+                border: 3px solid black;
+                border-radius: 999px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 15px;
+                font-weight: 900;
+                letter-spacing: 0;
+              }
               .meta { font-size: 12px; line-height: 1.1; margin: 1px 0; }
               .item-row { margin: 0 0 2px; width: 100%; }
               .item-name { font-size: 16px; font-weight: 900; text-transform: uppercase; flex-shrink: 0; }
@@ -196,7 +211,7 @@ export function registerPrinterIPC() {
             </style>
           </head>
           <body>
-            ${logoDataUri ? `<img class="logo" src="${logoDataUri}" alt="" />` : ''}
+            <div class="mono-logo">ND</div>
 
             <div class="flex meta">
               <span>Bill: ${escapeHtml(receipt.billNumber)}</span>
@@ -259,8 +274,8 @@ export function registerPrinterIPC() {
                 const pdfData = await win.webContents.printToPDF({ printBackground: true });
                 fs.writeFileSync(pdfPath, pdfData);
                 shell.openPath(pdfDir);
-                log.info(`No printer (${reason}) — receipt saved as PDF: ${pdfPath}`);
-                finish({ success: true, error: undefined });
+                log.info(`No printer (${reason}) - receipt saved as PDF: ${pdfPath}`);
+                finish({ success: false, error: `${reason}. Receipt saved as PDF: ${pdfPath}` });
               } catch (pdfErr: any) {
                 finish({ success: false, error: `${reason}. PDF fallback also failed: ${pdfErr.message}` });
               }
@@ -273,10 +288,10 @@ export function registerPrinterIPC() {
                 return;
               }
 
-              if (receiptSettings.printerName) {
-                const selectedPrinter = printers.find((printer) => printer.name === receiptSettings.printerName);
+              if (printerName) {
+                const selectedPrinter = printers.find((printer) => printer.name === printerName);
                 if (!selectedPrinter) {
-                  await saveAsPdf(`Selected printer "${receiptSettings.printerName}" is not available`);
+                  finish({ success: false, error: `Selected printer "${printerName}" is not available. Install/select the BC-105 Windows printer driver in Settings.` });
                   return;
                 }
                 deviceName = selectedPrinter.name;

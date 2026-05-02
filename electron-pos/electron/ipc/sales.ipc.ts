@@ -33,17 +33,11 @@ function getSaleDailyRate(businessDate: string) {
   const dailyRate = db.prepare(`
     SELECT *
     FROM daily_rates
-    WHERE date <= ?
-    ORDER BY date DESC
+    WHERE date = ?
     LIMIT 1
   `).get(businessDate) as any;
   if (dailyRate) return dailyRate;
-
-  const settingsMap = getSettingsMap();
-  return {
-    milk_rate: Number(settingsMap.milk_rate || 0),
-    yogurt_rate: Number(settingsMap.yogurt_rate || 0)
-  };
+  throw new Error(`Today's milk/yogurt rates are not set for ${businessDate}. Enter Daily Rates before making sales.`);
 }
 
 export function registerSalesIPC() {
