@@ -211,6 +211,7 @@ export default function POS() {
   const changeToReturn = paymentMode === "CASH" ? Math.max(0, cashReceivedValue - grandTotal) : 0;
   const splitRemaining = paymentMode === "SPLIT" ? Math.max(0, grandTotal - cashReceivedValue - onlineReceivedValue) : 0;
   const splitTotalReceived = cashReceivedValue + onlineReceivedValue;
+  const ratesReady = !todayRateMissing && rates.milk_rate > 0 && rates.yogurt_rate > 0;
 
   useEffect(() => {
     fetchData();
@@ -344,7 +345,6 @@ export default function POS() {
   const milkProduct = useMemo(() => products.find(p => String(p.code).toUpperCase() === "MILK"), [products]);
   const yogurtProduct = useMemo(() => products.find(p => String(p.code).toUpperCase() === "YOGT"), [products]);
   const otherProducts = useMemo(() => products.filter(p => p.id !== milkProduct?.id && p.id !== yogurtProduct?.id && p.name.toLowerCase().includes(otherSearch.toLowerCase())), [products, milkProduct, yogurtProduct, otherSearch]);
-  const ratesReady = !todayRateMissing && rates.milk_rate > 0 && rates.yogurt_rate > 0;
 
   const requireTodaysRates = () => {
     if (ratesReady) return true;
