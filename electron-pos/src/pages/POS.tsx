@@ -143,6 +143,8 @@ export default function POS() {
   // Dropdown state
   const [showOtherItems, setShowOtherItems] = useState(false);
   const [otherSearch, setOtherSearch] = useState("");
+  const [customPriceProduct, setCustomPriceProduct] = useState<Product | null>(null);
+  const [customOtherPrice, setCustomOtherPrice] = useState("");
 
   // Hold bills
   const [heldBills, setHeldBills] = useState<any[]>([]);
@@ -465,7 +467,9 @@ export default function POS() {
     if (val > 0) {
       if (customMilkType === "KG") addMilk(val);
       else addMilkRs(val);
-      setCustomMilkType("KG");
+      // Keep RS as the default — the cashier rings up by rupees most of the
+      // time, so resetting to KG between sales was wasting taps.
+      setCustomMilkType("RS");
       setCustomMilkQty("");
     }
   };
@@ -476,8 +480,38 @@ export default function POS() {
     if (val > 0) {
       if (customYogurtType === "KG") addYogurtKg(val);
       else addYogurtRs(val);
+      setCustomYogurtType("RS");
       setCustomYogurtInput("");
     }
+  };
+
+  const openOtherProductPrice = (product: Product) => {
+    if (!requireTodaysRates()) return;
+    setCustomPriceProduct(product);
+    setCustomOtherPrice(String(Math.round(Number(product.selling_price || 0))));
+  };
+
+  const addOtherProductWithCustomPrice = () => {
+    if (!customPriceProduct) return;
+    const price = roundMoney(Number(customOtherPrice || 0));
+    if (price <= 0) {
+      addAlert("Enter item price before adding it.");
+      return;
+    }
+
+    addItem({
+      id: crypto.randomUUID(),
+      productId: customPriceProduct.id,
+      name: customPriceProduct.name,
+      unit: customPriceProduct.unit,
+      quantity: 1,
+      price,
+      costPrice: customPriceProduct.cost_price,
+      lineTotal: price
+    });
+    setCustomPriceProduct(null);
+    setCustomOtherPrice("");
+    setShowOtherItems(false);
   };
 
   const holdBill = async () => {
@@ -829,20 +863,17 @@ export default function POS() {
                   otherProducts.map(p => (
                     <button 
                       key={p.id}
-                      onClick={() => {
-                        if (!requireTodaysRates()) return;
-                        addItem({
-                          id: crypto.randomUUID(), productId: p.id, name: p.name, unit: p.unit, 
-                          quantity: 1, price: p.selling_price, costPrice: p.cost_price, lineTotal: p.selling_price
-                        });
-                      }}
+                      onClick={() => openOtherProductPrice(p)}
                       className="flex items-center justify-between p-2 rounded-md hover:bg-surface-3 transition-colors text-left"
                     >
                       <div>
                         <div className="font-medium text-text-primary text-sm">{p.emoji || "📦"} {p.name}</div>
-                        <div className="text-xs text-text-secondary">Stock: {p.stock}</div>
+                        <div className="text-xs text-text-secondary">Stock: {p.stock} • full {p.unit}</div>
                       </div>
-                      <div className="font-mono text-sm text-accent">{toMoney(p.selling_price)}</div>
+                      <div className="text-right">
+                        <div className="font-mono text-sm text-accent">{toMoney(p.selling_price)}</div>
+                        <div className="text-[10px] font-bold text-primary">Tap price</div>
+                      </div>
                     </button>
                   ))
                 )}
@@ -895,14 +926,14 @@ export default function POS() {
                 className="flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
               />
               <div className="flex bg-surface-1 rounded-lg p-1">
-                <button 
-                  onClick={() => setCustomMilkType("KG")} 
-                  className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customMilkType === "KG" ? "bg-success text-white" : "text-text-secondary hover:text-white")}
-                >KG</button>
-                <button 
-                  onClick={() => setCustomMilkType("RS")} 
+                <button
+                  onClick={() => setCustomMilkType("RS")}
                   className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customMilkType === "RS" ? "bg-success text-white" : "text-text-secondary hover:text-white")}
                 >RS</button>
+                <button
+                  onClick={() => setCustomMilkType("KG")}
+                  className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customMilkType === "KG" ? "bg-success text-white" : "text-text-secondary hover:text-white")}
+                >KG</button>
               </div>
               <button onClick={handleCustomMilkAdd} disabled={!customMilkQty} className="bg-success hover:bg-success/90 text-white font-bold px-6 rounded-lg transition-colors disabled:opacity-50">
                 Add
@@ -960,14 +991,14 @@ export default function POS() {
                 className="flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
               />
               <div className="flex bg-surface-1 rounded-lg p-1">
-                <button 
-                  onClick={() => setCustomYogurtType("KG")} 
-                  className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customYogurtType === "KG" ? "bg-info text-white" : "text-text-secondary hover:text-white")}
-                >KG</button>
-                <button 
-                  onClick={() => setCustomYogurtType("RS")} 
+                <button
+                  onClick={() => setCustomYogurtType("RS")}
                   className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customYogurtType === "RS" ? "bg-purple-500 text-white" : "text-text-secondary hover:text-white")}
                 >RS</button>
+                <button
+                  onClick={() => setCustomYogurtType("KG")}
+                  className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customYogurtType === "KG" ? "bg-info text-white" : "text-text-secondary hover:text-white")}
+                >KG</button>
               </div>
               <button onClick={handleCustomYogurtAdd} disabled={!customYogurtInput} className="bg-surface-3 hover:bg-surface-4 text-white font-bold px-6 rounded-lg transition-colors border border-surface-4 disabled:opacity-50">
                 Add
@@ -1605,6 +1636,54 @@ export default function POS() {
               <button onClick={() => resolveDiscountPin(null)} className="btn-secondary flex-1">Cancel</button>
               <button onClick={() => resolveDiscountPin(discountPinInput)} disabled={!discountPinInput} className="btn-primary flex-1">
                 Approve
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {customPriceProduct && (
+        <div className="fixed inset-0 z-[115] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-2 border border-surface-4 rounded-xl shadow-float w-full max-w-sm overflow-hidden animate-bounce-in">
+            <div className="p-4 border-b border-surface-4 bg-surface-3 flex justify-between items-center">
+              <div>
+                <h2 className="font-bold text-lg text-white">{customPriceProduct.name}</h2>
+                <p className="text-xs text-text-secondary">1 full {customPriceProduct.unit} • Stock {customPriceProduct.stock}</p>
+              </div>
+              <button onClick={() => setCustomPriceProduct(null)} className="text-text-secondary hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <label className="block">
+                <span className="text-xs font-bold uppercase text-text-secondary">Sale Price</span>
+                <input
+                  autoFocus
+                  type="number"
+                  inputMode="decimal"
+                  value={customOtherPrice}
+                  onChange={(event) => setCustomOtherPrice(event.target.value)}
+                  onFocus={() => openTouchInput({
+                    title: `${customPriceProduct.name} price`,
+                    mode: "number",
+                    value: customOtherPrice,
+                    setValue: setCustomOtherPrice,
+                    allowDecimal: true,
+                    onDone: addOtherProductWithCustomPrice
+                  })}
+                  onKeyDown={(event) => event.key === "Enter" && addOtherProductWithCustomPrice()}
+                  className="mt-2 w-full rounded-lg border border-surface-4 bg-surface-1 px-4 py-4 text-center text-3xl font-black text-white outline-none focus:border-primary"
+                />
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[50, 100, 200].map((amount) => (
+                  <button key={amount} onClick={() => setCustomOtherPrice(String(amount))} className="rounded-lg bg-surface-3 py-3 font-black text-white active:bg-primary/40">
+                    Rs {amount}
+                  </button>
+                ))}
+              </div>
+              <button onClick={addOtherProductWithCustomPrice} className="btn-primary w-full h-14 text-lg font-black flex items-center justify-center gap-2">
+                <Check className="w-5 h-5" />
+                Add to Cart
               </button>
             </div>
           </div>

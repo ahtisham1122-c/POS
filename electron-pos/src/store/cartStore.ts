@@ -49,10 +49,10 @@ export const useCartStore = create<CartState>((set) => ({
   items: [],
   subtotal: 0,
   addItem: (item) => set((state) => {
-    const existing = state.items.find(i => i.productId === item.productId);
+    const existing = state.items.find(i => i.productId === item.productId && i.price === item.price);
     if (existing) {
       const updated = state.items.map(i => 
-        i.productId === item.productId 
+        i.productId === item.productId && i.price === item.price
         ? calculateDiscountedLine({ ...i, quantity: i.quantity + item.quantity })
         : i
       );
