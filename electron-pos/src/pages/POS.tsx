@@ -143,8 +143,8 @@ export default function POS() {
   // Dropdown state
   const [showOtherItems, setShowOtherItems] = useState(false);
   const [otherSearch, setOtherSearch] = useState("");
-  const [customPriceProduct, setCustomPriceProduct] = useState<Product | null>(null);
-  const [customOtherPrice, setCustomOtherPrice] = useState("");
+  const [customQuantityProduct, setCustomQuantityProduct] = useState<Product | null>(null);
+  const [customOtherQuantity, setCustomOtherQuantity] = useState("");
 
   // Hold bills
   const [heldBills, setHeldBills] = useState<any[]>([]);
@@ -485,32 +485,38 @@ export default function POS() {
     }
   };
 
-  const openOtherProductPrice = (product: Product) => {
+  const openOtherProductQuantity = (product: Product) => {
     if (!requireTodaysRates()) return;
-    setCustomPriceProduct(product);
-    setCustomOtherPrice(String(Math.round(Number(product.selling_price || 0))));
+    setCustomQuantityProduct(product);
+    setCustomOtherQuantity("1");
   };
 
-  const addOtherProductWithCustomPrice = () => {
-    if (!customPriceProduct) return;
-    const price = roundMoney(Number(customOtherPrice || 0));
-    if (price <= 0) {
-      addAlert("Enter item price before adding it.");
+  const addOtherProductWithCustomQuantity = () => {
+    if (!customQuantityProduct) return;
+    const quantity = Number(customOtherQuantity || 0);
+    if (quantity <= 0) {
+      addAlert("Enter item quantity before adding it.");
       return;
     }
+    const price = Number(customQuantityProduct.selling_price || 0);
+    if (price <= 0) {
+      addAlert("Set this item price in Inventory first.");
+      return;
+    }
+    const lineTotal = roundMoney(quantity * price);
 
     addItem({
       id: crypto.randomUUID(),
-      productId: customPriceProduct.id,
-      name: customPriceProduct.name,
-      unit: customPriceProduct.unit,
-      quantity: 1,
+      productId: customQuantityProduct.id,
+      name: customQuantityProduct.name,
+      unit: customQuantityProduct.unit,
+      quantity,
       price,
-      costPrice: customPriceProduct.cost_price,
-      lineTotal: price
+      costPrice: customQuantityProduct.cost_price,
+      lineTotal
     });
-    setCustomPriceProduct(null);
-    setCustomOtherPrice("");
+    setCustomQuantityProduct(null);
+    setCustomOtherQuantity("");
     setShowOtherItems(false);
   };
 
@@ -863,7 +869,7 @@ export default function POS() {
                   otherProducts.map(p => (
                     <button 
                       key={p.id}
-                      onClick={() => openOtherProductPrice(p)}
+                      onClick={() => openOtherProductQuantity(p)}
                       className="flex items-center justify-between p-2 rounded-md hover:bg-surface-3 transition-colors text-left"
                     >
                       <div>
@@ -872,7 +878,7 @@ export default function POS() {
                       </div>
                       <div className="text-right">
                         <div className="font-mono text-sm text-accent">{toMoney(p.selling_price)}</div>
-                        <div className="text-[10px] font-bold text-primary">Tap price</div>
+                        <div className="text-[10px] font-bold text-primary">Tap qty</div>
                       </div>
                     </button>
                   ))
@@ -1641,47 +1647,53 @@ export default function POS() {
           </div>
         </div>
       )}
-      {customPriceProduct && (
+      {customQuantityProduct && (
         <div className="fixed inset-0 z-[115] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-surface-2 border border-surface-4 rounded-xl shadow-float w-full max-w-sm overflow-hidden animate-bounce-in">
             <div className="p-4 border-b border-surface-4 bg-surface-3 flex justify-between items-center">
               <div>
-                <h2 className="font-bold text-lg text-white">{customPriceProduct.name}</h2>
-                <p className="text-xs text-text-secondary">1 full {customPriceProduct.unit} • Stock {customPriceProduct.stock}</p>
+                <h2 className="font-bold text-lg text-white">{customQuantityProduct.name}</h2>
+                <p className="text-xs text-text-secondary">{toMoney(customQuantityProduct.selling_price)} per {customQuantityProduct.unit} • Stock {customQuantityProduct.stock}</p>
               </div>
-              <button onClick={() => setCustomPriceProduct(null)} className="text-text-secondary hover:text-white">
+              <button onClick={() => setCustomQuantityProduct(null)} className="text-text-secondary hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-4 space-y-4">
               <label className="block">
-                <span className="text-xs font-bold uppercase text-text-secondary">Sale Price</span>
+                <span className="text-xs font-bold uppercase text-text-secondary">Quantity</span>
                 <input
                   autoFocus
                   type="number"
                   inputMode="decimal"
-                  value={customOtherPrice}
-                  onChange={(event) => setCustomOtherPrice(event.target.value)}
+                  value={customOtherQuantity}
+                  onChange={(event) => setCustomOtherQuantity(event.target.value)}
                   onFocus={() => openTouchInput({
-                    title: `${customPriceProduct.name} price`,
+                    title: `${customQuantityProduct.name} quantity`,
                     mode: "number",
-                    value: customOtherPrice,
-                    setValue: setCustomOtherPrice,
+                    value: customOtherQuantity,
+                    setValue: setCustomOtherQuantity,
                     allowDecimal: true,
-                    onDone: addOtherProductWithCustomPrice
+                    onDone: addOtherProductWithCustomQuantity
                   })}
-                  onKeyDown={(event) => event.key === "Enter" && addOtherProductWithCustomPrice()}
+                  onKeyDown={(event) => event.key === "Enter" && addOtherProductWithCustomQuantity()}
                   className="mt-2 w-full rounded-lg border border-surface-4 bg-surface-1 px-4 py-4 text-center text-3xl font-black text-white outline-none focus:border-primary"
                 />
               </label>
               <div className="grid grid-cols-3 gap-2">
-                {[50, 100, 200].map((amount) => (
-                  <button key={amount} onClick={() => setCustomOtherPrice(String(amount))} className="rounded-lg bg-surface-3 py-3 font-black text-white active:bg-primary/40">
-                    Rs {amount}
+                {[0.5, 1, 2].map((quantity) => (
+                  <button key={quantity} onClick={() => setCustomOtherQuantity(String(quantity))} className="rounded-lg bg-surface-3 py-3 font-black text-white active:bg-primary/40">
+                    {quantity} {customQuantityProduct.unit}
                   </button>
                 ))}
               </div>
-              <button onClick={addOtherProductWithCustomPrice} className="btn-primary w-full h-14 text-lg font-black flex items-center justify-center gap-2">
+              <div className="rounded-lg bg-surface-1 border border-surface-4 px-4 py-3 text-center">
+                <div className="text-xs font-bold uppercase text-text-secondary">Amount</div>
+                <div className="mt-1 text-2xl font-black text-accent">
+                  {toMoney(Number(customOtherQuantity || 0) * Number(customQuantityProduct.selling_price || 0))}
+                </div>
+              </div>
+              <button onClick={addOtherProductWithCustomQuantity} className="btn-primary w-full h-14 text-lg font-black flex items-center justify-center gap-2">
                 <Check className="w-5 h-5" />
                 Add to Cart
               </button>
