@@ -408,6 +408,8 @@ CREATE TABLE IF NOT EXISTS suppliers (
   address TEXT,
   allowed_shifts TEXT NOT NULL DEFAULT 'BOTH',
   default_rate REAL DEFAULT 0,
+  cow_rate REAL DEFAULT 0,
+  buffalo_rate REAL DEFAULT 0,
   current_balance REAL DEFAULT 0,
   is_active INTEGER DEFAULT 1,
   created_at TEXT NOT NULL,
@@ -420,6 +422,7 @@ CREATE TABLE IF NOT EXISTS milk_collections (
   supplier_id TEXT NOT NULL,
   collection_date TEXT NOT NULL,
   shift TEXT NOT NULL,
+  milk_type TEXT NOT NULL DEFAULT 'MIXED',
   quantity REAL NOT NULL,
   rate REAL NOT NULL,
   total_amount REAL NOT NULL,
@@ -662,9 +665,21 @@ function prepareLegacyTablesForSchemaIndexes() {
   addColumnIfMissing('expenses', 'shift_id', 'TEXT');
 }
 
+function prepareSupplierMilkRateColumns() {
+  addColumnIfMissing('suppliers', 'cow_rate', 'REAL DEFAULT 0');
+  addColumnIfMissing('suppliers', 'buffalo_rate', 'REAL DEFAULT 0');
+  addColumnIfMissing('milk_collections', 'milk_type', "TEXT NOT NULL DEFAULT 'MIXED'");
+  db.prepare(`
+    UPDATE suppliers
+    SET cow_rate = CASE WHEN COALESCE(cow_rate, 0) <= 0 THEN COALESCE(default_rate, 0) ELSE cow_rate END,
+        buffalo_rate = CASE WHEN COALESCE(buffalo_rate, 0) <= 0 THEN COALESCE(default_rate, 0) ELSE buffalo_rate END
+  `).run();
+}
+
 export function initializeDatabase() {
   prepareLegacyTablesForSchemaIndexes();
   db.exec(schema);
+  prepareSupplierMilkRateColumns();
   console.log('Database schema initialized.');
 
   // Seed default admin user if none exists

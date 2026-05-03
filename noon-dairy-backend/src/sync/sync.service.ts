@@ -179,8 +179,15 @@ export class SyncService {
       if (!data.name) data.name = `Synced Supplier ${supplierId.slice(0, 8)}`;
       if (!data.allowedShifts) data.allowedShifts = 'BOTH';
       if (data.defaultRate === undefined || data.defaultRate === null) data.defaultRate = 0;
+      if (data.cowRate === undefined || data.cowRate === null) data.cowRate = data.defaultRate || 0;
+      if (data.buffaloRate === undefined || data.buffaloRate === null) data.buffaloRate = data.defaultRate || 0;
       if (data.currentBalance === undefined || data.currentBalance === null) data.currentBalance = 0;
       if (data.isActive === undefined || data.isActive === null) data.isActive = false;
+    }
+
+    if (modelName === 'milkCollection') {
+      const milkType = String(data.milkType || 'MIXED').trim().toUpperCase();
+      data.milkType = ['COW', 'BUFFALO', 'MIXED'].includes(milkType) ? milkType : 'MIXED';
     }
 
     if (modelName === 'saleItem') {
@@ -311,6 +318,10 @@ export class SyncService {
         id: supplierId,
         code: `SYNC-SUP-${String(supplierId).slice(0, 12)}`,
         name: `Synced Supplier ${String(supplierId).slice(0, 8)}`,
+        allowedShifts: 'BOTH',
+        defaultRate: 0,
+        cowRate: 0,
+        buffaloRate: 0,
         currentBalance: 0,
         isActive: false
       }

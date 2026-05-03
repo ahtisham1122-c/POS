@@ -1,0 +1,10 @@
+ALTER TABLE "Supplier"
+ADD COLUMN IF NOT EXISTS "cowRate" DECIMAL(10,2) NOT NULL DEFAULT 0,
+ADD COLUMN IF NOT EXISTS "buffaloRate" DECIMAL(10,2) NOT NULL DEFAULT 0;
+
+UPDATE "Supplier"
+SET "cowRate" = CASE WHEN COALESCE("cowRate", 0) <= 0 THEN COALESCE("defaultRate", 0) ELSE "cowRate" END,
+    "buffaloRate" = CASE WHEN COALESCE("buffaloRate", 0) <= 0 THEN COALESCE("defaultRate", 0) ELSE "buffaloRate" END;
+
+ALTER TABLE "MilkCollection"
+ADD COLUMN IF NOT EXISTS "milkType" TEXT NOT NULL DEFAULT 'MIXED';

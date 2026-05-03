@@ -364,6 +364,8 @@ model Supplier {
   address        String?
   allowedShifts  String   @default("BOTH")
   defaultRate    Decimal  @default(0) @db.Decimal(10, 2)
+  cowRate        Decimal  @default(0) @db.Decimal(10, 2)
+  buffaloRate    Decimal  @default(0) @db.Decimal(10, 2)
   currentBalance Decimal  @default(0) @db.Decimal(10, 2)
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
@@ -378,6 +380,7 @@ model MilkCollection {
   supplierId     String
   collectionDate DateTime @db.Date
   shift          String
+  milkType       String   @default("MIXED")
   quantity       Decimal  @db.Decimal(10, 3)
   rate           Decimal  @db.Decimal(10, 2)
   totalAmount    Decimal  @db.Decimal(10, 2)

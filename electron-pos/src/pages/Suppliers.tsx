@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Banknote, CalendarDays, CheckCircle2, Download, Milk, Plus, Printer, RefreshCw, Truck, UserRoundPlus } from "lucide-react";
+import { Banknote, CalendarDays, CheckCircle2, Download, Milk, Pencil, Plus, Printer, RefreshCw, Truck, UserRoundPlus, X } from "lucide-react";
 import { cn } from "../lib/utils";
 
 type Supplier = {
@@ -10,8 +10,12 @@ type Supplier = {
   address?: string;
   allowed_shifts: "MORNING" | "EVENING" | "BOTH";
   default_rate: number;
+  cow_rate?: number;
+  buffalo_rate?: number;
   current_balance: number;
 };
+
+type MilkType = "COW" | "BUFFALO" | "MIXED";
 
 function toMoney(value: number) {
   return `Rs. ${Number(value || 0).toLocaleString("en-PK", { maximumFractionDigits: 2 })}`;
@@ -21,15 +25,25 @@ function today() {
   return new Date().toISOString().split("T")[0];
 }
 
+function supplierRate(supplier: Supplier | undefined, type: MilkType) {
+  if (!supplier) return 0;
+  const fallback = Number(supplier.default_rate || 0);
+  if (type === "COW") return Number(supplier.cow_rate || fallback || 0);
+  if (type === "BUFFALO") return Number(supplier.buffalo_rate || fallback || 0);
+  return fallback;
+}
+
 export default function Suppliers() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [collections, setCollections] = useState<any[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [collectionDate, setCollectionDate] = useState(today());
   const [shift, setShift] = useState<"MORNING" | "EVENING">("MORNING");
+  const [milkType, setMilkType] = useState<MilkType>("BUFFALO");
   const [quantity, setQuantity] = useState("");
   const [rate, setRate] = useState("");
   const [notes, setNotes] = useState("");
+  const [editingCollectionId, setEditingCollectionId] = useState("");
   const [paymentSupplierId, setPaymentSupplierId] = useState("");
   const [paymentAmount, setPaymentAmount] = useState("");
   const [reportMode, setReportMode] = useState<"1-10" | "1-15" | "1-25" | "FULL" | "CUSTOM">("1-10");
@@ -43,7 +57,10 @@ export default function Suppliers() {
     address: "",
     allowedShifts: "BOTH",
     defaultRate: "0",
+    cowRate: "0",
+    buffaloRate: "0",
   });
+  const [editingSupplierId, setEditingSupplierId] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -69,10 +86,10 @@ export default function Suppliers() {
   }, []);
 
   useEffect(() => {
-    if (selectedSupplier && !rate) {
-      setRate(String(selectedSupplier.default_rate || 0));
+    if (selectedSupplier && !editingCollectionId) {
+      setRate(String(supplierRate(selectedSupplier, milkType)));
     }
-  }, [selectedSupplierId]);
+  }, [selectedSupplierId, milkType]);
 
   async function loadData() {
     setIsLoading(true);
@@ -90,22 +107,46 @@ export default function Suppliers() {
 
   async function addSupplier() {
     setMessage(null);
-    const result = await window.electronAPI?.suppliers?.create({
+    const wasEditing = Boolean(editingSupplierId);
+    const payload = {
       name: supplierForm.name,
       phone: supplierForm.phone,
       address: supplierForm.address,
       allowedShifts: supplierForm.allowedShifts,
       defaultRate: Number(supplierForm.defaultRate || 0),
-    });
+      cowRate: Number(supplierForm.cowRate || supplierForm.defaultRate || 0),
+      buffaloRate: Number(supplierForm.buffaloRate || supplierForm.defaultRate || 0),
+    };
+    const result = editingSupplierId
+      ? await window.electronAPI?.suppliers?.update(editingSupplierId, payload)
+      : await window.electronAPI?.suppliers?.create(payload);
 
     if (!result?.success) {
-      setMessage({ type: "error", text: result?.error || "Failed to add supplier." });
+      setMessage({ type: "error", text: result?.error || "Failed to save supplier." });
       return;
     }
 
-    setSupplierForm({ name: "", phone: "", address: "", allowedShifts: "BOTH", defaultRate: "0" });
-    setMessage({ type: "success", text: "Supplier/farm added successfully." });
+    resetSupplierForm();
+    setMessage({ type: "success", text: wasEditing ? "Supplier/farm updated successfully." : "Supplier/farm added successfully." });
     await loadData();
+  }
+
+  function resetSupplierForm() {
+    setEditingSupplierId("");
+    setSupplierForm({ name: "", phone: "", address: "", allowedShifts: "BOTH", defaultRate: "0", cowRate: "0", buffaloRate: "0" });
+  }
+
+  function editSupplier(supplier: Supplier) {
+    setEditingSupplierId(supplier.id);
+    setSupplierForm({
+      name: supplier.name,
+      phone: supplier.phone || "",
+      address: supplier.address || "",
+      allowedShifts: supplier.allowed_shifts,
+      defaultRate: String(supplier.default_rate || 0),
+      cowRate: String(supplier.cow_rate || supplier.default_rate || 0),
+      buffaloRate: String(supplier.buffalo_rate || supplier.default_rate || 0),
+    });
   }
 
   async function addCollection() {
@@ -115,14 +156,18 @@ export default function Suppliers() {
       return;
     }
 
-    const result = await window.electronAPI?.suppliers?.collectMilk({
+    const payload = {
       supplierId: selectedSupplierId,
       date: collectionDate,
       shift,
+      milkType,
       quantity: Number(quantity || 0),
       rate: Number(rate || 0),
       notes,
-    });
+    };
+    const result = editingCollectionId
+      ? await window.electronAPI?.suppliers?.updateCollection(editingCollectionId, payload)
+      : await window.electronAPI?.suppliers?.collectMilk(payload);
 
     if (!result?.success) {
       setMessage({ type: "error", text: result?.error || "Failed to save milk collection." });
@@ -130,9 +175,29 @@ export default function Suppliers() {
     }
 
     setMessage({ type: "success", text: `Milk collection saved: ${toMoney(result.totalAmount || 0)} payable.` });
+    setEditingCollectionId("");
+    setSelectedSupplierId("");
     setQuantity("");
     setNotes("");
     await loadData();
+  }
+
+  function editCollection(item: any) {
+    setEditingCollectionId(item.id);
+    setSelectedSupplierId(item.supplier_id);
+    setCollectionDate(item.collection_date);
+    setShift(item.shift);
+    setMilkType((item.milk_type || "MIXED") as MilkType);
+    setQuantity(String(item.quantity || ""));
+    setRate(String(item.rate || ""));
+    setNotes(item.notes || "");
+  }
+
+  function cancelCollectionEdit() {
+    setEditingCollectionId("");
+    setQuantity("");
+    setNotes("");
+    if (selectedSupplier) setRate(String(supplierRate(selectedSupplier, milkType)));
   }
 
   async function paySupplier() {
@@ -178,12 +243,14 @@ export default function Suppliers() {
   function exportCycleCsv() {
     if (!cycleReport) return;
     const rows = [
-      ["Supplier", "Phone", "Morning kg", "Evening kg", "Total kg", "Collection Amount", "Paid", "Period Balance", "Current Balance"],
+      ["Supplier", "Phone", "Morning kg", "Evening kg", "Cow kg", "Buffalo kg", "Total kg", "Collection Amount", "Paid", "Period Balance", "Current Balance"],
       ...cycleReport.suppliers.map((row: any) => [
         row.name,
         row.phone || "",
         row.morning_quantity,
         row.evening_quantity,
+        row.cow_quantity,
+        row.buffalo_quantity,
         row.total_quantity,
         row.collection_amount,
         row.paid_amount,
@@ -260,10 +327,18 @@ export default function Suppliers() {
         <div className="space-y-6">
           <div className="card overflow-hidden">
             <div className="p-5 border-b border-surface-4 bg-surface-2/70">
-              <h2 className="font-bold text-lg text-text-primary flex items-center gap-2">
-                <UserRoundPlus className="w-5 h-5 text-primary" />
-                Add Farm / Supplier
-              </h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="font-bold text-lg text-text-primary flex items-center gap-2">
+                  <UserRoundPlus className="w-5 h-5 text-primary" />
+                  {editingSupplierId ? "Edit Farm / Supplier" : "Add Farm / Supplier"}
+                </h2>
+                {editingSupplierId && (
+                  <button onClick={resetSupplierForm} className="btn-secondary px-3 py-2 text-xs flex items-center gap-1">
+                    <X className="w-3 h-3" />
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
             <div className="p-5 space-y-4">
               <input className="input" placeholder="Farm / supplier name" value={supplierForm.name} onChange={(event) => setSupplierForm((current) => ({ ...current, name: event.target.value }))} />
@@ -275,11 +350,15 @@ export default function Suppliers() {
                   <option value="MORNING">Morning only</option>
                   <option value="EVENING">Evening only</option>
                 </select>
-                <input className="input" type="number" placeholder="Default rate" value={supplierForm.defaultRate} onChange={(event) => setSupplierForm((current) => ({ ...current, defaultRate: event.target.value }))} />
+                <input className="input" type="number" placeholder="Mixed/default rate" value={supplierForm.defaultRate} onChange={(event) => setSupplierForm((current) => ({ ...current, defaultRate: event.target.value }))} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <input className="input" type="number" placeholder="Cow milk rate" value={supplierForm.cowRate} onChange={(event) => setSupplierForm((current) => ({ ...current, cowRate: event.target.value }))} />
+                <input className="input" type="number" placeholder="Buffalo milk rate" value={supplierForm.buffaloRate} onChange={(event) => setSupplierForm((current) => ({ ...current, buffaloRate: event.target.value }))} />
               </div>
               <button onClick={addSupplier} className="btn-primary w-full h-11 flex items-center justify-center gap-2">
-                <Plus className="w-4 h-4" />
-                Add Supplier
+                {editingSupplierId ? <Pencil className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                {editingSupplierId ? "Update Supplier" : "Add Supplier"}
               </button>
             </div>
           </div>
@@ -309,17 +388,30 @@ export default function Suppliers() {
         <div className="space-y-6">
           <div className="card overflow-hidden">
             <div className="p-5 border-b border-surface-4 bg-surface-2/70">
-              <h2 className="font-bold text-lg text-text-primary flex items-center gap-2">
-                <Milk className="w-5 h-5 text-primary" />
-                Milk Collection Entry
-              </h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="font-bold text-lg text-text-primary flex items-center gap-2">
+                  <Milk className="w-5 h-5 text-primary" />
+                  {editingCollectionId ? "Edit Milk Collection" : "Milk Collection Entry"}
+                </h2>
+                {editingCollectionId && (
+                  <button onClick={cancelCollectionEdit} className="btn-secondary px-3 py-2 text-xs flex items-center gap-1">
+                    <X className="w-3 h-3" />
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
             <div className="p-5 space-y-4">
-              <div className="grid md:grid-cols-3 gap-3">
+              <div className="grid md:grid-cols-4 gap-3">
                 <input className="input" type="date" value={collectionDate} onChange={(event) => setCollectionDate(event.target.value)} />
                 <select className="input" value={shift} onChange={(event) => setShift(event.target.value as any)}>
                   <option value="MORNING">Morning Shift</option>
                   <option value="EVENING">Evening Shift</option>
+                </select>
+                <select className="input" value={milkType} onChange={(event) => setMilkType(event.target.value as MilkType)}>
+                  <option value="BUFFALO">Buffalo Milk</option>
+                  <option value="COW">Cow Milk</option>
+                  <option value="MIXED">Mixed Milk</option>
                 </select>
                 <select className="input" value={selectedSupplierId} onChange={(event) => setSelectedSupplierId(event.target.value)}>
                   <option value="">Select farm</option>
@@ -338,8 +430,8 @@ export default function Suppliers() {
               </div>
               <input className="input" placeholder="Notes, optional" value={notes} onChange={(event) => setNotes(event.target.value)} />
               <button onClick={addCollection} className="btn-primary w-full h-12 flex items-center justify-center gap-2">
-                <Truck className="w-5 h-5" />
-                Save Milk Collection
+                {editingCollectionId ? <Pencil className="w-5 h-5" /> : <Truck className="w-5 h-5" />}
+                {editingCollectionId ? "Update Milk Collection" : "Save Milk Collection"}
               </button>
             </div>
           </div>
@@ -358,9 +450,11 @@ export default function Suppliers() {
                     <tr>
                       <th className="px-4 py-3">Farm</th>
                       <th className="px-4 py-3">Shift</th>
+                      <th className="px-4 py-3">Milk</th>
                       <th className="px-4 py-3 text-right">Qty</th>
                       <th className="px-4 py-3 text-right">Rate</th>
                       <th className="px-4 py-3 text-right">Total</th>
+                      <th className="px-4 py-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-4">
@@ -372,14 +466,21 @@ export default function Suppliers() {
                             {item.shift}
                           </span>
                         </td>
+                        <td className="px-4 py-3 font-bold text-text-primary">{item.milk_type || "MIXED"}</td>
                         <td className="px-4 py-3 text-right font-mono">{Number(item.quantity).toFixed(2)} kg</td>
                         <td className="px-4 py-3 text-right font-mono">{toMoney(item.rate)}</td>
                         <td className="px-4 py-3 text-right font-mono font-bold text-accent">{toMoney(item.total_amount)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button onClick={() => editCollection(item)} className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1">
+                            <Pencil className="w-3 h-3" />
+                            Edit
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {collections.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="p-10 text-center text-text-secondary">No milk collection entered for this date.</td>
+                        <td colSpan={7} className="p-10 text-center text-text-secondary">No milk collection entered for this date.</td>
                       </tr>
                     )}
                   </tbody>
@@ -432,10 +533,12 @@ export default function Suppliers() {
 
           {cycleReport ? (
             <>
-              <div className="grid md:grid-cols-4 gap-4">
+              <div className="grid md:grid-cols-6 gap-4">
                 <Stat label="Total Milk" value={`${cycleReport.totals.total_quantity.toFixed(2)} kg`} />
                 <Stat label="Morning Milk" value={`${cycleReport.totals.morning_quantity.toFixed(2)} kg`} />
                 <Stat label="Evening Milk" value={`${cycleReport.totals.evening_quantity.toFixed(2)} kg`} />
+                <Stat label="Cow Milk" value={`${cycleReport.totals.cow_quantity.toFixed(2)} kg`} />
+                <Stat label="Buffalo Milk" value={`${cycleReport.totals.buffalo_quantity.toFixed(2)} kg`} />
                 <Stat label="Cycle Payable" value={toMoney(cycleReport.totals.period_balance)} tone="warning" />
               </div>
 
@@ -446,6 +549,8 @@ export default function Suppliers() {
                       <th className="px-4 py-3">Supplier</th>
                       <th className="px-4 py-3 text-right">Morning</th>
                       <th className="px-4 py-3 text-right">Evening</th>
+                      <th className="px-4 py-3 text-right">Cow</th>
+                      <th className="px-4 py-3 text-right">Buffalo</th>
                       <th className="px-4 py-3 text-right">Total kg</th>
                       <th className="px-4 py-3 text-right">Collection</th>
                       <th className="px-4 py-3 text-right">Paid</th>
@@ -463,6 +568,8 @@ export default function Suppliers() {
                         </td>
                         <td className="px-4 py-3 text-right font-mono">{row.morning_quantity.toFixed(2)}</td>
                         <td className="px-4 py-3 text-right font-mono">{row.evening_quantity.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right font-mono">{row.cow_quantity.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right font-mono">{row.buffalo_quantity.toFixed(2)}</td>
                         <td className="px-4 py-3 text-right font-mono font-bold">{row.total_quantity.toFixed(2)}</td>
                         <td className="px-4 py-3 text-right font-mono">{toMoney(row.collection_amount)}</td>
                         <td className="px-4 py-3 text-right font-mono text-success">{toMoney(row.paid_amount)}</td>
@@ -477,7 +584,7 @@ export default function Suppliers() {
                     ))}
                     {cycleReport.suppliers.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="p-10 text-center text-text-secondary">No suppliers found for this report.</td>
+                        <td colSpan={11} className="p-10 text-center text-text-secondary">No suppliers found for this report.</td>
                       </tr>
                     )}
                   </tbody>
@@ -486,6 +593,8 @@ export default function Suppliers() {
                       <td className="px-4 py-3">TOTAL</td>
                       <td className="px-4 py-3 text-right font-mono">{cycleReport.totals.morning_quantity.toFixed(2)}</td>
                       <td className="px-4 py-3 text-right font-mono">{cycleReport.totals.evening_quantity.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right font-mono">{cycleReport.totals.cow_quantity.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right font-mono">{cycleReport.totals.buffalo_quantity.toFixed(2)}</td>
                       <td className="px-4 py-3 text-right font-mono">{cycleReport.totals.total_quantity.toFixed(2)}</td>
                       <td className="px-4 py-3 text-right font-mono">{toMoney(cycleReport.totals.collection_amount)}</td>
                       <td className="px-4 py-3 text-right font-mono text-success">{toMoney(cycleReport.totals.paid_amount)}</td>
@@ -516,8 +625,10 @@ export default function Suppliers() {
                 <th className="px-4 py-3">Code</th>
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Shifts</th>
-                <th className="px-4 py-3 text-right">Default Rate</th>
+                <th className="px-4 py-3 text-right">Cow Rate</th>
+                <th className="px-4 py-3 text-right">Buffalo Rate</th>
                 <th className="px-4 py-3 text-right">Payable Balance</th>
+                <th className="px-4 py-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-4">
@@ -529,13 +640,20 @@ export default function Suppliers() {
                     <p className="text-xs text-text-secondary">{supplier.phone || "No phone"}</p>
                   </td>
                   <td className="px-4 py-3">{supplier.allowed_shifts}</td>
-                  <td className="px-4 py-3 text-right font-mono">{toMoney(supplier.default_rate)}</td>
+                  <td className="px-4 py-3 text-right font-mono">{toMoney(supplier.cow_rate || supplier.default_rate)}</td>
+                  <td className="px-4 py-3 text-right font-mono">{toMoney(supplier.buffalo_rate || supplier.default_rate)}</td>
                   <td className="px-4 py-3 text-right font-mono font-bold text-warning">{toMoney(supplier.current_balance)}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => editSupplier(supplier)} className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1">
+                      <Pencil className="w-3 h-3" />
+                      Edit
+                    </button>
+                  </td>
                 </tr>
               ))}
               {suppliers.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-10 text-center text-text-secondary">Add your first farm/supplier to begin milk collection.</td>
+                  <td colSpan={7} className="p-10 text-center text-text-secondary">Add your first farm/supplier to begin milk collection.</td>
                 </tr>
               )}
             </tbody>
@@ -587,9 +705,11 @@ export default function Suppliers() {
                 <StatementBox label="Closing Balance" value={toMoney(statement.closingBalance)} strong />
               </div>
 
-              <div className="grid grid-cols-3 gap-2 text-center mb-5">
+              <div className="grid grid-cols-5 gap-2 text-center mb-5">
                 <StatementBox label="Morning Milk" value={`${statement.morningQuantity.toFixed(2)} kg`} />
                 <StatementBox label="Evening Milk" value={`${statement.eveningQuantity.toFixed(2)} kg`} />
+                <StatementBox label="Cow Milk" value={`${statement.cowQuantity.toFixed(2)} kg`} />
+                <StatementBox label="Buffalo Milk" value={`${statement.buffaloQuantity.toFixed(2)} kg`} />
                 <StatementBox label="Total Milk" value={`${statement.totalQuantity.toFixed(2)} kg`} strong />
               </div>
 
@@ -599,6 +719,7 @@ export default function Suppliers() {
                   <tr className="border-b border-black">
                     <th className="text-left py-1">Date</th>
                     <th className="text-left py-1">Shift</th>
+                    <th className="text-left py-1">Milk</th>
                     <th className="text-right py-1">Qty</th>
                     <th className="text-right py-1">Rate</th>
                     <th className="text-right py-1">Amount</th>
@@ -609,13 +730,14 @@ export default function Suppliers() {
                     <tr key={row.id} className="border-b border-gray-300">
                       <td className="py-1">{row.collection_date}</td>
                       <td className="py-1">{row.shift}</td>
+                      <td className="py-1">{row.milk_type || "MIXED"}</td>
                       <td className="py-1 text-right">{Number(row.quantity).toFixed(2)} kg</td>
                       <td className="py-1 text-right">{toMoney(row.rate)}</td>
                       <td className="py-1 text-right font-bold">{toMoney(row.total_amount)}</td>
                     </tr>
                   ))}
                   {statement.collections.length === 0 && (
-                    <tr><td colSpan={5} className="py-4 text-center">No collections in this period.</td></tr>
+                    <tr><td colSpan={6} className="py-4 text-center">No collections in this period.</td></tr>
                   )}
                 </tbody>
               </table>

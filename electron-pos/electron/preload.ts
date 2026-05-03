@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     create: (data: any) => ipcRenderer.invoke('suppliers:create', data),
     update: (id: string, data: any) => ipcRenderer.invoke('suppliers:update', id, data),
     collectMilk: (data: any) => ipcRenderer.invoke('suppliers:collectMilk', data),
+    updateCollection: (id: string, data: any) => ipcRenderer.invoke('suppliers:updateCollection', id, data),
     collectPayment: (id: string, data: any) => ipcRenderer.invoke('suppliers:collectPayment', id, data),
     getCollections: (filters?: any) => ipcRenderer.invoke('suppliers:getCollections', filters),
     getLedger: (id: string) => ipcRenderer.invoke('suppliers:getLedger', id),
@@ -96,6 +97,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getCustomerDues: () => ipcRenderer.invoke('reports:getCustomerDues'),
     getProfitLoss: (startDate: string, endDate: string) => ipcRenderer.invoke('reports:getProfitLoss', startDate, endDate),
     getMonthlySummary: (year: string) => ipcRenderer.invoke('reports:getMonthlySummary', year),
+    getAnalytics: () => ipcRenderer.invoke('reports:getAnalytics'),
     exportReport: (data: any) => ipcRenderer.invoke('exports:report', data),
   },
   dailyRates: {

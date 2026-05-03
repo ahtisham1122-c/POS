@@ -38,6 +38,7 @@ export interface ElectronAPI {
     create: (data: any) => Promise<{ success: boolean; id?: string; error?: string }>;
     update: (id: string, data: any) => Promise<{ success: boolean; error?: string }>;
     collectMilk: (data: any) => Promise<{ success: boolean; collectionId?: string; totalAmount?: number; supplierBalance?: number; error?: string }>;
+    updateCollection: (id: string, data: any) => Promise<{ success: boolean; collectionId?: string; totalAmount?: number; supplierBalance?: number; error?: string }>;
     collectPayment: (id: string, data: any) => Promise<{ success: boolean; paymentId?: string; balanceAfter?: number; error?: string }>;
     getCollections: (filters?: any) => Promise<any[]>;
     getLedger: (id: string) => Promise<any[]>;
@@ -94,6 +95,7 @@ export interface ElectronAPI {
     getProfitLoss: (startDate: string, endDate: string) => Promise<any>;
     getMonthlySummary: (year: string) => Promise<any[]>;
     getDashboardStats: () => Promise<any>;
+    getAnalytics: () => Promise<any>;
     exportReport: (data: { type: string; format: 'excel' | 'pdf'; params?: any }) => Promise<{ success: boolean; path?: string; reason?: string; error?: string }>;
   };
   dailyRates: {
