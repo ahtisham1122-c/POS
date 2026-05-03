@@ -10,10 +10,14 @@ import logger from '../utils/logger';
 
 export class SyncEngine {
   private interval: NodeJS.Timeout | null = null;
+  private compactInterval: NodeJS.Timeout | null = null;
   private isSyncing = false;
+  // Last time we ran the (expensive at scale) parent-repair scan. Throttled
+  // so it doesn't fire on every 5-sec cycle when there's a 10K-row backlog.
+  private lastRepairAtMs = 0;
   private readonly handleNetworkOnline = () => {
     console.log('Network is back online, triggering sync');
-    // Always swallow the rejection — an unhandled rejection here would crash
+    // Always swallow the rejection. An unhandled rejection here would crash
     // the main process. The sync body has its own retry/error handling.
     this.processPendingOutbox().catch((err) => {
       logger.warn('processPendingOutbox (online trigger) failed:', err?.message || err);
@@ -165,9 +169,35 @@ export class SyncEngine {
     }
   }
 
+  // Trim the outbox so it does not grow unbounded. Synced rows older than the
+  // retention window are hard-deleted. They are already on the cloud; the
+  // local copy is just an audit trail and we do not need to keep it. At 2K
+  // walk-in receipts/day this shop generates ~14K outbox rows/day, so even
+  // a 1-day retention is generous (14K rows for fast lookup).
+  private compactOutbox() {
+    try {
+      const result = db.prepare(`
+        DELETE FROM sync_outbox
+        WHERE status = 'synced'
+          AND datetime(COALESCE(last_attempted_at, created_at)) <= datetime('now', '-1 day')
+      `).run();
+      if (result.changes > 0) {
+        logger.info(`SyncEngine compacted ${result.changes} old synced outbox row(s).`);
+      }
+    } catch (err: any) {
+      // Compaction is opportunistic. If it fails, log and keep going.
+      logger.warn('Outbox compaction failed:', err?.message || err);
+    }
+  }
+
   start() {
     if (this.interval) return;
     console.log('SyncEngine started');
+
+    // Compact the outbox once at startup so a long-offline terminal doesn't
+    // start its day with 50K stale synced rows slowing down every query.
+    this.compactOutbox();
+
     this.interval = setInterval(() => {
       // Same crash protection here: setInterval doesn't catch promise
       // rejections, so without .catch a single unexpected throw kills Electron.
@@ -175,12 +205,19 @@ export class SyncEngine {
         logger.warn('processPendingOutbox (interval) failed:', err?.message || err);
       });
     }, 5000);
+
+    // Compact once per hour to keep the table small even on terminals that
+    // run for weeks without restarting.
+    this.compactInterval = setInterval(() => this.compactOutbox(), 60 * 60 * 1000);
+
     networkMonitor.on('online', this.handleNetworkOnline);
   }
 
   stop() {
     if (this.interval) clearInterval(this.interval);
     this.interval = null;
+    if (this.compactInterval) clearInterval(this.compactInterval);
+    this.compactInterval = null;
     networkMonitor.off('online', this.handleNetworkOnline);
     console.log('SyncEngine stopped');
   }
@@ -197,7 +234,16 @@ export class SyncEngine {
 
     this.isSyncing = true;
     try {
-      this.repairMissingParentsFromOutbox();
+      // Parent-repair scan is O(pending+failed rows) and runs lookups against
+      // local tables. With 10K+ outbox rows it can take 500ms+. Run it at
+      // most once every 30 sec instead of every 5 sec. Children that need
+      // a parent will still be re-queued well before the cloud retry timer
+      // fires (1 min minimum), so this doesn't slow recovery.
+      const nowMs = Date.now();
+      if (nowMs - this.lastRepairAtMs >= 30_000) {
+        this.repairMissingParentsFromOutbox();
+        this.lastRepairAtMs = nowMs;
+      }
 
       const pendingRows = db.prepare(`
         SELECT * FROM sync_outbox 
@@ -224,15 +270,20 @@ export class SyncEngine {
         LIMIT 500
       `).all() as any[];
 
-      const nowMs = Date.now();
+      const retryNowMs = Date.now();
+      // Batch up to 100 rows per 5-second cycle (was 25). At 2,000+ walk-in
+      // receipts/day this shop generates ~14K outbox rows/day; with 25 rows
+      // per cycle that is 18K/hour theoretical max, barely enough. With 100
+      // per cycle we get 72K/hour theoretical max, so a 4-hour offline
+      // backlog of ~56K rows drains in ~50 min instead of ~3 hours.
       const readyRows = pendingRows
         .filter((row) => {
           if (!row.last_attempted_at) return true;
           const lastAttemptMs = new Date(row.last_attempted_at).getTime();
           if (!Number.isFinite(lastAttemptMs)) return true;
-          return nowMs - lastAttemptMs >= this.getRetryDelayMs(Number(row.attempt_count || 0));
+          return retryNowMs - lastAttemptMs >= this.getRetryDelayMs(Number(row.attempt_count || 0));
         })
-        .slice(0, 25);
+        .slice(0, 100);
 
       if (readyRows.length === 0) {
         this.isSyncing = false;

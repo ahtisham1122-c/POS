@@ -1,0 +1,28 @@
+Noon Dairy POS - HP Engage One Install Notes
+
+Folder contents:
+- Noon Dairy POS Setup 1.0.0.exe
+- SHA256.txt
+
+Install:
+1. Copy this whole folder to the HP Engage One POS computer.
+2. Double-click "Noon Dairy POS Setup 1.0.0.exe".
+3. If Windows Defender/SmartScreen warns, choose More info, then Run anyway.
+   This can happen because the installer is not code-signed with a paid certificate.
+4. Open Noon Dairy POS from the desktop shortcut.
+5. Complete setup, then immediately change the default admin PIN/password.
+6. Go to Settings > Sync.
+7. Set API URL to the VPS backend URL, for example:
+   http://72.62.112.216/api
+8. Enter the strong Sync Device Secret from the VPS .env.
+9. Press Sync Now. The terminal should register and the sync badge should turn online.
+10. Enter real opening stock from Inventory before taking real sales.
+
+Before commercial use:
+- Print one real test receipt on the actual thermal printer.
+- Open shift, open cash register, make a small sale, close register with counted cash.
+- Confirm sync is online.
+- Delete/void the test sale only if needed before live sales.
+
+Do not copy the dev database from this computer to the HP machine.
+The installer creates its own fresh local database on the HP machine.

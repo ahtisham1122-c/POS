@@ -549,6 +549,12 @@ CREATE TABLE IF NOT EXISTS sync_outbox (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_outbox_status ON sync_outbox(status);
+-- Composite index for the parent-repair scan + status COUNT queries. Without
+-- this, at 10K+ outbox rows every sync cycle scans most of the table; that is
+-- what makes the POS feel laggy when sync is backed up.
+CREATE INDEX IF NOT EXISTS idx_sync_outbox_status_table_created ON sync_outbox(status, table_name, created_at);
+-- For the 'pending and ready to retry' filter (filters by last_attempted_at).
+CREATE INDEX IF NOT EXISTS idx_sync_outbox_status_attempted ON sync_outbox(status, last_attempted_at);
 CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(sale_date);
 CREATE INDEX IF NOT EXISTS idx_sales_shift ON sales(shift_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);

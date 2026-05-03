@@ -49,7 +49,11 @@ export function SyncStatusBadge() {
     };
 
     checkSync();
-    const timer = setInterval(checkSync, 5000);
+    // Poll every 15 sec instead of 5 sec. The status query runs 5 COUNT
+    // queries on sync_outbox; at 10K+ rows that's ~50-100ms each call.
+    // Polling every 5 sec wastes ~100ms of main-thread time per second
+    // for a number that's only meant to give the cashier a rough indicator.
+    const timer = setInterval(checkSync, 15000);
     return () => {
       alive = false;
       clearInterval(timer);

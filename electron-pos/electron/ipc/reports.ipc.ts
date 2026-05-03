@@ -110,13 +110,21 @@ export function registerReportsIPC() {
     const isClosed = Boolean(shift?.closed_at || Number(register?.is_closed_for_day || 0) === 1);
     const variance = isClosed ? Number((countedCash - expectedCash).toFixed(2)) : 0;
 
+    // The owner uses returns to undo wrongly-printed receipts (they reverse
+    // both the receipt and the inventory). So returns must NEVER appear in
+    // gross sales — they're not real customer revenue, they're corrections.
+    // Subtract refund total from raw sales to get the true gross.
+    const rawSales = Number(saleStats?.grossSales || 0);
+    const totalRefundsAmt = Number(refundStats?.totalRefunds || 0);
+    const grossSalesAfterRefunds = Number((rawSales - totalRefundsAmt).toFixed(2));
+
     return {
       date: reportDate,
       openingCash,
       totalSalesCount: Number(saleStats?.salesCount || 0),
-      grossSalesAmount: Number(saleStats?.grossSales || 0),
+      grossSalesAmount: grossSalesAfterRefunds,
       totalDiscounts: Number((Number(saleStats?.orderDiscounts || 0) + Number(itemDiscountStats?.itemDiscounts || 0)).toFixed(2)),
-      totalRefunds: Number(refundStats?.totalRefunds || 0),
+      totalRefunds: totalRefundsAmt,
       refundCount: Number(refundStats?.refundCount || 0),
       totalVoids: Number(voidStats?.voidCount || 0),
       voidCash: Number(voidStats?.voidCash || 0),
@@ -168,7 +176,9 @@ export function registerReportsIPC() {
     return {
       date: scope.date,
       totalSales: (sales?.total || 0) - refundTotal,
-      grossSales: sales?.total || 0,
+      // Gross now excludes refunds — owner uses returns to fix wrongly-printed
+      // receipts, so they should not be counted as revenue.
+      grossSales: (sales?.total || 0) - refundTotal,
       totalRefunds: refundTotal,
       totalCollected: (sales?.collected || 0) - cashRefunds,
       cashCollected: (tenders?.cashCollected || 0) - cashRefunds,
@@ -231,7 +241,8 @@ export function registerReportsIPC() {
     return {
       bills: saleStats?.bills || 0,
       totalSales: (saleStats?.totalSales || 0) - (returnStats?.total || 0),
-      grossSales: saleStats?.totalSales || 0,
+      // Gross excludes refunds (returns are correction tools, not revenue).
+      grossSales: (saleStats?.totalSales || 0) - (returnStats?.total || 0),
       refunds: returnStats?.total || 0,
       refundCount: returnStats?.count || 0,
       cashSales: (tenderStats?.cashSales || 0) - (returnStats?.cashRefunds || 0),
@@ -317,12 +328,18 @@ export function registerReportsIPC() {
       GROUP BY COALESCE(sh.shift_date, substr(r.return_date, 1, 10))
     `).all(`-${safeDays} day`) as Array<{ date: string; refunds: number }>;
     const refundsByDate = new Map(returnRows.map((row) => [row.date, Number(row.refunds || 0)]));
-    return salesRows.map((row) => ({
-      ...row,
-      grossTotal: Number(row.total || 0),
-      refunds: refundsByDate.get(row.date) || 0,
-      total: Number(row.total || 0) - (refundsByDate.get(row.date) || 0)
-    }));
+    return salesRows.map((row) => {
+      const refunds = refundsByDate.get(row.date) || 0;
+      const net = Number(row.total || 0) - refunds;
+      return {
+        ...row,
+        // Both grossTotal and total exclude refunds — returns are corrections,
+        // not revenue, so the chart should not show them as part of gross.
+        grossTotal: net,
+        refunds,
+        total: net
+      };
+    });
   });
 
   ipcMain.handle('reports:getProductPerformance', () => {
@@ -351,6 +368,19 @@ export function registerReportsIPC() {
   });
 
   ipcMain.handle('reports:getProfitLoss', (_event, startDate: string, endDate: string) => {
+    // Guard: at 2K walk-ins/day = 730K sales/year, scanning multiple years
+    // in JS would freeze the UI. Cap the window to 1 year max. Owner can
+    // still ask for any 12-month slice; just not "all time" by accident.
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+    if (start && end && Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
+      const oneYearMs = 366 * 24 * 60 * 60 * 1000;
+      if (end.getTime() - start.getTime() > oneYearMs) {
+        const cappedStart = new Date(end.getTime() - oneYearMs);
+        startDate = cappedStart.toISOString().slice(0, 10);
+      }
+    }
+
     const revenueStats = db.prepare(`
       SELECT 
         COALESCE(SUM(grand_total), 0) as revenue,
@@ -416,7 +446,9 @@ export function registerReportsIPC() {
 
     return {
       revenue,
-      grossRevenue: revenueStats.revenue,
+      // Owner treats returns as corrections (wrongly-printed receipts), not
+      // returned merchandise. Gross revenue here already excludes refunds.
+      grossRevenue: revenue,
       refunds,
       cogs,
       grossProfit,
@@ -431,8 +463,8 @@ export function registerReportsIPC() {
 
   ipcMain.handle('reports:getMonthlySummary', (_event, year: string) => {
     // year format 'YYYY'
-    return db.prepare(`
-      SELECT 
+    const sales = db.prepare(`
+      SELECT
         substr(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)), 1, 7) as month,
         COUNT(s.id) as bills,
         COALESCE(SUM(s.grand_total), 0) as revenue
@@ -441,7 +473,26 @@ export function registerReportsIPC() {
       WHERE substr(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)), 1, 4) = ? AND s.status IN (${ACCOUNTING_SALE_STATUSES})
       GROUP BY substr(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)), 1, 7)
       ORDER BY month ASC
-    `).all(year);
+    `).all(year) as Array<{ month: string; bills: number; revenue: number }>;
+
+    // Subtract refunds per-month so monthly revenue matches the dashboard
+    // (returns = wrongly-printed receipts being corrected, not revenue).
+    const refunds = db.prepare(`
+      SELECT
+        substr(COALESCE(sh.shift_date, substr(r.return_date, 1, 10)), 1, 7) as month,
+        COALESCE(SUM(r.refund_amount), 0) as refunded
+      FROM returns r
+      LEFT JOIN shifts sh ON sh.id = r.shift_id
+      WHERE substr(COALESCE(sh.shift_date, substr(r.return_date, 1, 10)), 1, 4) = ?
+        AND r.status = 'COMPLETED'
+      GROUP BY substr(COALESCE(sh.shift_date, substr(r.return_date, 1, 10)), 1, 7)
+    `).all(year) as Array<{ month: string; refunded: number }>;
+    const refundByMonth = new Map(refunds.map((r) => [r.month, Number(r.refunded || 0)]));
+
+    return sales.map((row) => ({
+      ...row,
+      revenue: Number(row.revenue || 0) - (refundByMonth.get(row.month) || 0)
+    }));
   });
 
   ipcMain.handle('reports:getDashboardStats', () => {
@@ -520,15 +571,19 @@ export function registerReportsIPC() {
     const drawer = getCashRegisterExpected(today, scope.shiftId);
     const refunds = Number(todayReturns.total || 0);
     const cashRefunds = Number(todayReturns.cashRefunds || 0);
-    const grossSales = Number(todaySales.revenue || 0);
-    const netSales = grossSales - refunds;
+    const rawSales = Number(todaySales.revenue || 0);
+    // Owner uses returns to fix wrongly-printed receipts. They reverse the
+    // sale AND the stock — so they're corrections, not revenue. Gross sales
+    // shown on the dashboard must already have refunds subtracted.
+    const grossSales = Number((rawSales - refunds).toFixed(2));
+    const netSales = grossSales;
 
     return {
       kpis: {
         grossSales,
         refunds,
         netSales,
-        revenue: netSales,
+        revenue: grossSales,
         bills: todaySales.bills,
         cashOnHand: drawer.expectedCash,
         expectedCash: drawer.expectedCash,
@@ -540,6 +595,170 @@ export function registerReportsIPC() {
       recentSales,
       topProducts,
       stockAlerts: lowStock
+    };
+  });
+
+  // -------------------------------------------------------------------------
+  // ANALYTICS — owner-focused trend dashboard.
+  //
+  // Returns ONLY aggregated numbers (no row lists), so it scales to millions
+  // of sales without lag. Three sections:
+  //   1. Today's KPIs:       bills served, total sold, avg per-bill,
+  //                          avg milk per bill (kg), avg yogurt per bill (kg)
+  //   2. Hourly breakdown:   24-row array of bills + revenue per hour today
+  //   3. 30-day trend:       daily milk kg, yogurt kg, combined kg, revenue
+  //   4. Comparison:         this week vs last week, this month vs last month
+  //
+  // Walk-in receipts only — khata customer detail is not needed here, the
+  // owner just wants "is the average basket increasing or decreasing?"
+  // -------------------------------------------------------------------------
+  ipcMain.handle('reports:getAnalytics', () => {
+    const today = getActiveBusinessDate();
+    const scope = getShiftScope(today);
+    const saleWhere = saleScope('s', scope);
+    const saleParams = scopeParams(scope);
+
+    // ---- Today's KPIs ----
+    const todayKpis = db.prepare(`
+      SELECT
+        COUNT(*) AS bills,
+        COALESCE(SUM(s.grand_total), 0) AS revenue
+      FROM sales s
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+    `).get(...saleParams) as any;
+
+    // Per-product quantity sold today. We pattern-match on product name
+    // because the shop only has 2 system products (MILK, YOGT) — but they
+    // may also sell variations like 'Fresh Milk', 'Lassi (yogurt-based)',
+    // etc. Pattern match is forgiving and zero-config.
+    const todayMilkQty = db.prepare(`
+      SELECT COALESCE(SUM(si.quantity), 0) AS qty
+      FROM sale_items si JOIN sales s ON s.id = si.sale_id
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+        AND LOWER(si.product_name) LIKE '%milk%'
+    `).get(...saleParams) as any;
+    const todayYogurtQty = db.prepare(`
+      SELECT COALESCE(SUM(si.quantity), 0) AS qty
+      FROM sale_items si JOIN sales s ON s.id = si.sale_id
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+        AND LOWER(si.product_name) LIKE '%yog%'
+    `).get(...saleParams) as any;
+
+    const bills = Number(todayKpis?.bills || 0);
+    const revenue = Number(todayKpis?.revenue || 0);
+    const milkKg = Number(todayMilkQty?.qty || 0);
+    const yogurtKg = Number(todayYogurtQty?.qty || 0);
+
+    // Avoid division-by-zero on a fresh shift (no sales yet).
+    const safeBills = bills > 0 ? bills : 1;
+    const today_kpis = {
+      bills,
+      revenue,
+      avgBill: Number((revenue / safeBills).toFixed(2)),
+      avgMilkKgPerBill: Number((milkKg / safeBills).toFixed(3)),
+      avgYogurtKgPerBill: Number((yogurtKg / safeBills).toFixed(3)),
+      milkKg: Number(milkKg.toFixed(3)),
+      yogurtKg: Number(yogurtKg.toFixed(3)),
+      combinedKg: Number((milkKg + yogurtKg).toFixed(3))
+    };
+
+    // ---- Hourly breakdown (today) ----
+    const hourlyRows = db.prepare(`
+      SELECT
+        CAST(strftime('%H', s.sale_date) AS INTEGER) AS hour,
+        COUNT(*) AS bills,
+        COALESCE(SUM(s.grand_total), 0) AS revenue
+      FROM sales s
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      GROUP BY hour
+      ORDER BY hour ASC
+    `).all(...saleParams) as Array<{ hour: number; bills: number; revenue: number }>;
+    const hourlyMap = new Map(hourlyRows.map((r) => [r.hour, r]));
+    const hourly = Array.from({ length: 24 }, (_, h) => ({
+      hour: h,
+      bills: Number(hourlyMap.get(h)?.bills || 0),
+      revenue: Number(hourlyMap.get(h)?.revenue || 0)
+    }));
+
+    // ---- 30-day trend ----
+    // One pre-aggregated row per business-date for the last 30 days. SQL
+    // does the heavy lifting; we just hand a 30-row array to the UI.
+    const dailyTrend = db.prepare(`
+      SELECT
+        COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) AS date,
+        COUNT(s.id) AS bills,
+        COALESCE(SUM(s.grand_total), 0) AS revenue,
+        COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%milk%' THEN si.quantity ELSE 0 END), 0) AS milkKg,
+        COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%yog%'  THEN si.quantity ELSE 0 END), 0) AS yogurtKg
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      LEFT JOIN sale_items si ON si.sale_id = s.id
+      WHERE s.sale_date >= datetime('now', '-30 day')
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      GROUP BY COALESCE(sh.shift_date, substr(s.sale_date, 1, 10))
+      ORDER BY date ASC
+    `).all() as Array<{ date: string; bills: number; revenue: number; milkKg: number; yogurtKg: number }>;
+
+    // ---- This week vs last week, this month vs last month ----
+    const periodSummary = (since: string, until: string) => {
+      const row = db.prepare(`
+        SELECT
+          COUNT(s.id) AS bills,
+          COALESCE(SUM(s.grand_total), 0) AS revenue,
+          COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%milk%' THEN si.quantity ELSE 0 END), 0) AS milkKg,
+          COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%yog%'  THEN si.quantity ELSE 0 END), 0) AS yogurtKg
+        FROM sales s
+        LEFT JOIN sale_items si ON si.sale_id = s.id
+        LEFT JOIN shifts sh ON sh.id = s.shift_id
+        WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+          AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+          AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      `).get(since, until) as any;
+      const b = Number(row?.bills || 0);
+      const safeB = b > 0 ? b : 1;
+      return {
+        bills: b,
+        revenue: Number(row?.revenue || 0),
+        milkKg: Number(row?.milkKg || 0),
+        yogurtKg: Number(row?.yogurtKg || 0),
+        avgBill: Number(((row?.revenue || 0) / safeB).toFixed(2)),
+        avgMilkKgPerBill: Number(((row?.milkKg || 0) / safeB).toFixed(3)),
+        avgYogurtKgPerBill: Number(((row?.yogurtKg || 0) / safeB).toFixed(3))
+      };
+    };
+
+    const ymd = (d: Date) => d.toISOString().slice(0, 10);
+    const now = new Date(today);
+    const startOfThisWeek = new Date(now); startOfThisWeek.setDate(now.getDate() - 6);
+    const startOfLastWeek = new Date(now); startOfLastWeek.setDate(now.getDate() - 13);
+    const endOfLastWeek   = new Date(now); endOfLastWeek.setDate(now.getDate() - 6);
+
+    const startOfThisMonth = new Date(now); startOfThisMonth.setDate(now.getDate() - 29);
+    const startOfLastMonth = new Date(now); startOfLastMonth.setDate(now.getDate() - 59);
+    const endOfLastMonth   = new Date(now); endOfLastMonth.setDate(now.getDate() - 29);
+
+    const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+
+    const compare = {
+      thisWeek:  periodSummary(ymd(startOfThisWeek),  ymd(tomorrow)),
+      lastWeek:  periodSummary(ymd(startOfLastWeek),  ymd(endOfLastWeek)),
+      thisMonth: periodSummary(ymd(startOfThisMonth), ymd(tomorrow)),
+      lastMonth: periodSummary(ymd(startOfLastMonth), ymd(endOfLastMonth))
+    };
+
+    return {
+      today: today_kpis,
+      hourly,
+      dailyTrend: dailyTrend.map((row) => ({
+        date: row.date,
+        bills: Number(row.bills || 0),
+        revenue: Number(row.revenue || 0),
+        milkKg: Number(Number(row.milkKg || 0).toFixed(3)),
+        yogurtKg: Number(Number(row.yogurtKg || 0).toFixed(3)),
+        combinedKg: Number((Number(row.milkKg || 0) + Number(row.yogurtKg || 0)).toFixed(3))
+      })),
+      compare,
+      generatedAt: new Date().toISOString()
     };
   });
 }

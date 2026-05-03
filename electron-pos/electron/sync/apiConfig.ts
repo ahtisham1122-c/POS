@@ -2,7 +2,11 @@ import db from '../database/db';
 import { isUsableSyncSecret, normalizeSyncSecret } from './secretValidation';
 
 function getDefaultApiBaseUrl() {
-  return process.env.APP_API_URL || 'http://localhost:3001/api';
+  // In dev mode (env var set) we fall back to localhost so developers can run
+  // the backend locally. In production the env var is empty, so we return
+  // empty — getApiBaseUrl() will return null and sync will skip cleanly
+  // instead of silently posting sales to a non-existent localhost server.
+  return process.env.APP_API_URL || '';
 }
 
 function isSupabaseRestUrl(value: string) {
@@ -29,18 +33,22 @@ function getSettingValue(key: string) {
 export function getApiBaseUrl() {
   try {
     const row = db.prepare("SELECT value FROM settings WHERE key = 'APP_API_URL'").get() as any;
-    if (row?.value) {
+    if (row?.value && String(row.value).trim()) {
       const normalized = normalizeApiBaseUrl(row.value);
       if (normalized !== row.value) {
         db.prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = 'APP_API_URL'")
           .run(normalized, new Date().toISOString());
       }
-      return normalized;
+      return normalized || null;
     }
   } catch (e) {
     console.error('Error reading APP_API_URL from settings:', e);
   }
-  return getDefaultApiBaseUrl();
+  // Return null — not a localhost fallback — so the sync engine cleanly
+  // skips when the URL isn't configured, instead of silently POSTing to
+  // a non-existent local server.
+  const fallback = getDefaultApiBaseUrl();
+  return fallback ? fallback : null;
 }
 
 export function getSyncHeaders(deviceId?: string) {

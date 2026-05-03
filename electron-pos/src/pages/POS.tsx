@@ -144,7 +144,8 @@ export default function POS() {
   const [showOtherItems, setShowOtherItems] = useState(false);
   const [otherSearch, setOtherSearch] = useState("");
   const [customQuantityProduct, setCustomQuantityProduct] = useState<Product | null>(null);
-  const [customOtherQuantity, setCustomOtherQuantity] = useState("");
+  const [customOtherInput, setCustomOtherInput] = useState("");
+  const [customOtherMode, setCustomOtherMode] = useState<"QTY" | "RS">("QTY");
 
   // Hold bills
   const [heldBills, setHeldBills] = useState<any[]>([]);
@@ -488,14 +489,33 @@ export default function POS() {
   const openOtherProductQuantity = (product: Product) => {
     if (!requireTodaysRates()) return;
     setCustomQuantityProduct(product);
-    setCustomOtherQuantity("1");
+    setCustomOtherMode("QTY");
+    setCustomOtherInput("1");
   };
 
-  const addOtherProductWithCustomQuantity = () => {
+  const switchOtherInputMode = (mode: "QTY" | "RS") => {
+    if (!customQuantityProduct || mode === customOtherMode) {
+      setCustomOtherMode(mode);
+      return;
+    }
+
+    const currentValue = Number(customOtherInput || 0);
+    const price = Number(customQuantityProduct.selling_price || 0);
+    if (currentValue > 0 && price > 0) {
+      const convertedValue =
+        mode === "RS"
+          ? roundMoney(currentValue * price)
+          : Number((currentValue / price).toFixed(6));
+      setCustomOtherInput(String(convertedValue));
+    }
+    setCustomOtherMode(mode);
+  };
+
+  const addOtherProductWithCustomValue = () => {
     if (!customQuantityProduct) return;
-    const quantity = Number(customOtherQuantity || 0);
-    if (quantity <= 0) {
-      addAlert("Enter item quantity before adding it.");
+    const inputValue = Number(customOtherInput || 0);
+    if (inputValue <= 0) {
+      addAlert(customOtherMode === "RS" ? "Enter item amount before adding it." : "Enter item quantity before adding it.");
       return;
     }
     const price = Number(customQuantityProduct.selling_price || 0);
@@ -503,7 +523,12 @@ export default function POS() {
       addAlert("Set this item price in Inventory first.");
       return;
     }
-    const lineTotal = roundMoney(quantity * price);
+    const quantity = customOtherMode === "RS"
+      ? Number((inputValue / price).toFixed(6))
+      : inputValue;
+    const lineTotal = customOtherMode === "RS"
+      ? roundMoney(inputValue)
+      : roundMoney(quantity * price);
 
     addItem({
       id: crypto.randomUUID(),
@@ -516,7 +541,7 @@ export default function POS() {
       lineTotal
     });
     setCustomQuantityProduct(null);
-    setCustomOtherQuantity("");
+    setCustomOtherInput("");
     setShowOtherItems(false);
   };
 
@@ -878,7 +903,7 @@ export default function POS() {
                       </div>
                       <div className="text-right">
                         <div className="font-mono text-sm text-accent">{toMoney(p.selling_price)}</div>
-                        <div className="text-[10px] font-bold text-primary">Tap qty</div>
+                        <div className="text-[10px] font-bold text-primary">Qty / Rs</div>
                       </div>
                     </button>
                   ))
@@ -1660,40 +1685,56 @@ export default function POS() {
               </button>
             </div>
             <div className="p-4 space-y-4">
+              <div className="grid grid-cols-2 gap-2 rounded-lg bg-surface-1 p-1 border border-surface-4">
+                <button
+                  onClick={() => switchOtherInputMode("QTY")}
+                  className={`rounded-md py-3 text-sm font-black ${customOtherMode === "QTY" ? "bg-primary text-white" : "text-text-secondary hover:text-white"}`}
+                >
+                  Qty
+                </button>
+                <button
+                  onClick={() => switchOtherInputMode("RS")}
+                  className={`rounded-md py-3 text-sm font-black ${customOtherMode === "RS" ? "bg-primary text-white" : "text-text-secondary hover:text-white"}`}
+                >
+                  Rs
+                </button>
+              </div>
               <label className="block">
-                <span className="text-xs font-bold uppercase text-text-secondary">Quantity</span>
+                <span className="text-xs font-bold uppercase text-text-secondary">{customOtherMode === "RS" ? "Amount in Rs" : "Quantity"}</span>
                 <input
                   autoFocus
                   type="number"
                   inputMode="decimal"
-                  value={customOtherQuantity}
-                  onChange={(event) => setCustomOtherQuantity(event.target.value)}
+                  value={customOtherInput}
+                  onChange={(event) => setCustomOtherInput(event.target.value)}
                   onFocus={() => openTouchInput({
-                    title: `${customQuantityProduct.name} quantity`,
+                    title: customOtherMode === "RS" ? `${customQuantityProduct.name} amount` : `${customQuantityProduct.name} quantity`,
                     mode: "number",
-                    value: customOtherQuantity,
-                    setValue: setCustomOtherQuantity,
+                    value: customOtherInput,
+                    setValue: setCustomOtherInput,
                     allowDecimal: true,
-                    onDone: addOtherProductWithCustomQuantity
+                    onDone: addOtherProductWithCustomValue
                   })}
-                  onKeyDown={(event) => event.key === "Enter" && addOtherProductWithCustomQuantity()}
+                  onKeyDown={(event) => event.key === "Enter" && addOtherProductWithCustomValue()}
                   className="mt-2 w-full rounded-lg border border-surface-4 bg-surface-1 px-4 py-4 text-center text-3xl font-black text-white outline-none focus:border-primary"
                 />
               </label>
               <div className="grid grid-cols-3 gap-2">
-                {[0.5, 1, 2].map((quantity) => (
-                  <button key={quantity} onClick={() => setCustomOtherQuantity(String(quantity))} className="rounded-lg bg-surface-3 py-3 font-black text-white active:bg-primary/40">
-                    {quantity} {customQuantityProduct.unit}
+                {(customOtherMode === "RS" ? [50, 100, 200] : [0.5, 1, 2]).map((value) => (
+                  <button key={value} onClick={() => setCustomOtherInput(String(value))} className="rounded-lg bg-surface-3 py-3 font-black text-white active:bg-primary/40">
+                    {customOtherMode === "RS" ? toMoney(value) : `${value} ${customQuantityProduct.unit}`}
                   </button>
                 ))}
               </div>
               <div className="rounded-lg bg-surface-1 border border-surface-4 px-4 py-3 text-center">
-                <div className="text-xs font-bold uppercase text-text-secondary">Amount</div>
+                <div className="text-xs font-bold uppercase text-text-secondary">{customOtherMode === "RS" ? "Calculated Quantity" : "Amount"}</div>
                 <div className="mt-1 text-2xl font-black text-accent">
-                  {toMoney(Number(customOtherQuantity || 0) * Number(customQuantityProduct.selling_price || 0))}
+                  {customOtherMode === "RS"
+                    ? `${Number(customOtherInput || 0) > 0 && Number(customQuantityProduct.selling_price || 0) > 0 ? Number((Number(customOtherInput || 0) / Number(customQuantityProduct.selling_price || 0)).toFixed(3)) : 0} ${customQuantityProduct.unit}`
+                    : toMoney(Number(customOtherInput || 0) * Number(customQuantityProduct.selling_price || 0))}
                 </div>
               </div>
-              <button onClick={addOtherProductWithCustomQuantity} className="btn-primary w-full h-14 text-lg font-black flex items-center justify-center gap-2">
+              <button onClick={addOtherProductWithCustomValue} className="btn-primary w-full h-14 text-lg font-black flex items-center justify-center gap-2">
                 <Check className="w-5 h-5" />
                 Add to Cart
               </button>

@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Receipt,
-  BarChart3, Settings, LogOut, ChevronLeft, ChevronRight, CreditCard, RotateCcw, ClipboardCheck, Clock, DatabaseBackup, Truck, UserRound, Bike
+  BarChart3, Settings, LogOut, ChevronLeft, ChevronRight, CreditCard, RotateCcw, ClipboardCheck, Clock, DatabaseBackup, Truck, UserRound, Bike, LineChart
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "../../lib/utils";
@@ -38,6 +38,7 @@ export function Sidebar({ page, setPage, collapsed, setCollapsed, userRole }: Si
     { id: "backup", label: "Backup", icon: DatabaseBackup },
     { id: "expenses", label: "Expenses", icon: Receipt },
     { id: "reports", label: "Reports", icon: BarChart3 },
+    { id: "analytics", label: "Analytics", icon: LineChart },
     { id: "settings", label: "Settings", icon: Settings },
   ];
   const navItems = role ? allNavItems.filter(item => canAccessPage(role, item.id)) : allNavItems;

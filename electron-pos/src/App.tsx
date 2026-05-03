@@ -20,8 +20,9 @@ import BackupRestore from "./pages/BackupRestore";
 import Suppliers from "./pages/Suppliers";
 import Employees from "./pages/Employees";
 import Deliveries from "./pages/Deliveries";
+import Analytics from "./pages/Analytics";
 
-export type PageId = "dashboard" | "pos" | "inventory" | "suppliers" | "customers" | "khata" | "returns" | "receipt-audit" | "shifts" | "backup" | "test-center" | "expenses" | "reports" | "settings" | "cash-register" | "employees" | "deliveries";
+export type PageId = "dashboard" | "pos" | "inventory" | "suppliers" | "customers" | "khata" | "returns" | "receipt-audit" | "shifts" | "backup" | "test-center" | "expenses" | "reports" | "analytics" | "settings" | "cash-register" | "employees" | "deliveries";
 
 export type UserRole = "ADMIN" | "MANAGER" | "CASHIER";
 
@@ -39,6 +40,7 @@ export const PAGE_ACCESS: Record<PageId, UserRole[]> = {
   "cash-register": ["ADMIN", "MANAGER", "CASHIER"],
   "expenses":      ["ADMIN", "MANAGER"],
   "reports":       ["ADMIN", "MANAGER"],
+  "analytics":     ["ADMIN", "MANAGER"],
   "deliveries":    ["ADMIN", "MANAGER"],
   "employees":     ["ADMIN"],
   "settings":      ["ADMIN"],
@@ -186,6 +188,7 @@ function AppInner() {
           {page === "cash-register" && allowed("cash-register") && <CashRegister setPage={guardedSetPage} />}
           {page === "expenses" && allowed("expenses") && <Expenses />}
           {page === "reports" && allowed("reports") && <Reports />}
+          {page === "analytics" && allowed("analytics") && <Analytics />}
           {page === "settings" && allowed("settings") && <Settings />}
           {page === "employees" && allowed("employees") && <Employees />}
           {page === "deliveries" && allowed("deliveries") && <Deliveries />}

@@ -187,19 +187,6 @@ export function registerPrinterIPC() {
               .center { text-align: center; }
               .hr { border-bottom: 2px solid black; margin: 2px 0; }
               .flex { display: flex; justify-content: space-between; align-items: baseline; }
-              .mono-logo {
-                width: 52px;
-                height: 28px;
-                margin: 0 auto 2px;
-                border: 3px solid black;
-                border-radius: 999px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 15px;
-                font-weight: 900;
-                letter-spacing: 0;
-              }
               .meta { font-size: 12px; line-height: 1.1; margin: 1px 0; }
               .item-row { margin: 0 0 2px; width: 100%; }
               .item-name { font-size: 16px; font-weight: 900; text-transform: uppercase; flex-shrink: 0; }
@@ -211,8 +198,6 @@ export function registerPrinterIPC() {
             </style>
           </head>
           <body>
-            <div class="mono-logo">ND</div>
-
             <div class="flex meta">
               <span>Bill: ${escapeHtml(receipt.billNumber)}</span>
               <span>${escapeHtml(dateStr)}${dateStr && timeStr ? ' ' : ''}${escapeHtml(timeStr)}</span>
