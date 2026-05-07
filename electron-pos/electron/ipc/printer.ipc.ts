@@ -43,6 +43,7 @@ function normalizeReceiptData(input: any) {
 
     return {
       billNumber: sale.bill_number,
+      tokenNumber: sale.token_number,
       date: sale.sale_date || sale.created_at,
       customer: input.customer?.name || 'Walk-in',
       paymentType: sale.payment_type,
@@ -206,6 +207,9 @@ export function registerPrinterIPC() {
       } else {
         paymentLabel = `PAID: ${rawPaymentType || 'CASH'}`;
       }
+      const tokenLine = receipt.tokenNumber
+        ? `<div class="center" style="font-size: 30px; font-weight: 900; line-height: 1; margin-bottom: 3px;">TOKEN ${escapeHtml(receipt.tokenNumber)}</div>`
+        : '';
 
       // Minimal receipt: logo, bill+date, items (name + amount only), TOTAL.
       // Owner asked to remove shop name, phone, ITEM COUNTER box, subtotal/
@@ -245,6 +249,7 @@ export function registerPrinterIPC() {
             </style>
           </head>
           <body>
+            ${tokenLine}
             <div class="flex meta">
               <span>Bill: ${escapeHtml(receipt.billNumber)}</span>
               <span>${escapeHtml(dateStr)}${dateStr && timeStr ? ' ' : ''}${escapeHtml(timeStr)}</span>

@@ -580,6 +580,18 @@ export function runMigrations() {
             db.exec(`ALTER TABLE shifts ADD COLUMN online_variance REAL DEFAULT 0`);
           }
         }
+      },
+      {
+        version: 19,
+        up: () => {
+          log.info('Running migration v19: Adding daily sale token numbers');
+          const saleColumns = db.prepare(`PRAGMA table_info(sales)`).all() as Array<{ name: string }>;
+          const saleNames = new Set(saleColumns.map((column) => column.name));
+          if (!saleNames.has('token_number')) {
+            db.exec(`ALTER TABLE sales ADD COLUMN token_number INTEGER`);
+          }
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_sales_token_number ON sales(token_number)`);
+        }
       }
     ];
 

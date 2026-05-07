@@ -943,6 +943,7 @@ export default function POS() {
       
       const rData = {
         billNumber: billNo,
+        tokenNumber: Number(savedSale?.token_number ?? result?.tokenNumber ?? 0) || null,
         date: savedSale?.sale_date ? new Date(savedSale.sale_date) : new Date(),
         customer: selectedCustomerObj?.name || "Walk-in",
         items: savedItems.length > 0 ? savedItems : [...items],
@@ -1602,6 +1603,11 @@ export default function POS() {
             <div className="p-6 text-gray-900 print-receipt font-mono text-sm leading-relaxed">
               <div className="text-center mb-4">
                 <h2 className="text-2xl font-black tracking-tight">GUJJAR MILK SHOP</h2>
+                {receiptData.tokenNumber && (
+                  <div className="mt-2 border-2 border-black py-2 text-4xl font-black tracking-tight">
+                    TOKEN {receiptData.tokenNumber}
+                  </div>
+                )}
                 <p className="text-xs mt-1 font-medium">Fresh. Fast. Trusted.</p>
                 <div className="border-b-2 border-dashed border-gray-400 my-3" />
               </div>

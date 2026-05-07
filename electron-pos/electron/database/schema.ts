@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS sales (
   transaction_id TEXT UNIQUE,
   shift_id TEXT,
   bill_number TEXT UNIQUE NOT NULL,
+  token_number INTEGER,
   sale_date TEXT NOT NULL,
   customer_id TEXT,
   cashier_id TEXT NOT NULL,

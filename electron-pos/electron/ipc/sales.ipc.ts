@@ -46,6 +46,16 @@ function normalizeBackdate(value: unknown) {
   return date;
 }
 
+function nextTokenNumberForDate(saleDate: string) {
+  const row = db.prepare(`
+    SELECT COALESCE(MAX(token_number), 0) as max_token
+    FROM sales s
+    LEFT JOIN shifts sh ON sh.id = s.shift_id
+    WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) = ?
+  `).get(saleDate) as any;
+  return Number(row?.max_token || 0) + 1;
+}
+
 export function registerSalesIPC() {
   ipcMain.handle('sales:getAll', (_event, filters?: any) => {
     const date = filters?.date?.trim();
@@ -480,16 +490,17 @@ export function registerSalesIPC() {
       db.prepare('UPDATE bill_counter SET last_number = last_number + 1 WHERE id = 1').run();
       const counterResult = db.prepare('SELECT last_number FROM bill_counter WHERE id = 1').get() as { last_number: number };
       const billNumber = `BILL-${String(counterResult.last_number).padStart(4, '0')}`;
+      const tokenNumber = nextTokenNumberForDate(saleDate);
 
       // 1. INSERT into sales table
       db.prepare(`
         INSERT INTO sales (
-          id, transaction_id, shift_id, bill_number, sale_date, customer_id, cashier_id, payment_type,
+          id, transaction_id, shift_id, bill_number, token_number, sale_date, customer_id, cashier_id, payment_type,
           subtotal, discount_type, discount_value, discount_amount, tax_enabled, tax_label, tax_rate, taxable_amount, tax_amount, grand_total, 
           amount_paid, cash_tendered, change_returned, balance_due, status, created_at, synced
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
       `).run(
-        saleId, transactionId, saleShiftId, billNumber, saleTimestamp, data.customerId || null, cashierId, paymentType,
+        saleId, transactionId, saleShiftId, billNumber, tokenNumber, saleTimestamp, data.customerId || null, cashierId, paymentType,
         subtotal, discount.discountType, discount.discountValue, discount.discountAmount,
         tax.taxEnabled ? 1 : 0, taxLabel, taxRate, tax.taxableAmount, tax.taxAmount, grandTotal,
         amountPaid, cashTendered, changeReturned, balanceDue, 'COMPLETED', now
@@ -498,6 +509,7 @@ export function registerSalesIPC() {
       // Create sync outbox entry for sale
       createOutboxEntry('sales', 'INSERT', saleId, {
         id: saleId, transaction_id: transactionId, bill_number: billNumber, sale_date: saleTimestamp, customer_id: data.customerId || null,
+        token_number: tokenNumber,
         shift_id: saleShiftId, cashier_id: cashierId, payment_type: paymentType, subtotal,
         discount_type: discount.discountType, discount_value: discount.discountValue, discount_amount: discount.discountAmount,
         tax_enabled: tax.taxEnabled ? 1 : 0,
@@ -680,6 +692,7 @@ export function registerSalesIPC() {
         saleId,
         transactionId,
         billNumber,
+        tokenNumber,
         subtotal,
         discountAmount: discount.discountAmount,
         taxAmount: tax.taxAmount,
