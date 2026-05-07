@@ -2,6 +2,9 @@ import { ipcMain } from 'electron';
 import db from '../database/db';
 import * as crypto from 'crypto';
 import { getCurrentUser } from './auth.ipc';
+import { formatLocalDate, getActiveBusinessDate, getOpenShift } from '../database/businessDay';
+import { addCashOut } from '../database/cashRegister';
+import { createOutboxEntry } from '../sync/outboxHelper';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,7 +48,7 @@ function nextEmployeeCode() {
 // Calculate default salary period for an employee.
 // Period goes from the employee's start DAY of month to the day before that same day next month.
 // e.g. start_date = 2024-03-10 → period for April = 2024-04-10 to 2024-05-09
-function getDefaultPeriod(startDate: string, targetMonth?: string): { start: string; end: string } {
+function getDefaultPeriod(startDate: string, targetMonth?: string): { start: string; end: string; periodStart: string; periodEnd: string } {
   const start = new Date(startDate);
   const startDay = start.getDate();
 
@@ -56,10 +59,74 @@ function getDefaultPeriod(startDate: string, targetMonth?: string): { start: str
   const periodStart = new Date(year, month, startDay);
   const periodEnd = new Date(year, month + 1, startDay - 1);
 
+  const startValue = formatLocalDate(periodStart);
+  const endValue = formatLocalDate(periodEnd);
+
   return {
-    start: periodStart.toISOString().split('T')[0],
-    end: periodEnd.toISOString().split('T')[0],
+    start: startValue,
+    end: endValue,
+    periodStart: startValue,
+    periodEnd: endValue,
   };
+}
+
+function getMonthRange(month?: string) {
+  const ref = month && /^\d{4}-\d{2}$/.test(month) ? new Date(`${month}-01T00:00:00`) : new Date();
+  const monthStart = new Date(ref.getFullYear(), ref.getMonth(), 1);
+  const monthEnd = new Date(ref.getFullYear(), ref.getMonth() + 1, 0);
+  return {
+    monthStart: formatLocalDate(monthStart),
+    monthEnd: formatLocalDate(monthEnd),
+  };
+}
+
+function createSalaryExpense(paymentId: string, calc: any, notes: string | undefined, userId: string, createdAt: string) {
+  const expenseAmount = Number(calc.grossSalary || 0);
+  const cashAmount = Number(calc.netSalary || 0);
+  if (expenseAmount <= 0 && cashAmount <= 0) return null;
+
+  const existing = db.prepare('SELECT id FROM expenses WHERE code = ?').get(`EXP-SAL-${paymentId.slice(0, 12).toUpperCase()}`) as any;
+  if (existing) return existing.id;
+
+  const shift = getOpenShift();
+  const businessDate = shift?.shift_date || getActiveBusinessDate();
+  const expenseId = crypto.randomUUID();
+  const expenseDate = calc.periodEnd || businessDate;
+  const code = `EXP-SAL-${paymentId.slice(0, 12).toUpperCase()}`;
+  const description = `Salary - ${calc.employee.name} (${calc.periodStart} to ${calc.periodEnd})`;
+
+  db.prepare(`
+    INSERT INTO expenses (
+      id, code, shift_id, expense_date, category, description,
+      amount, created_by_id, created_at, updated_at, synced
+    ) VALUES (?, ?, ?, ?, 'SALARY', ?, ?, ?, ?, ?, 0)
+  `).run(
+    expenseId,
+    code,
+    shift?.id || null,
+    expenseDate,
+    notes?.trim() ? `${description} - ${notes.trim()}` : description,
+    expenseAmount,
+    userId,
+    createdAt,
+    createdAt
+  );
+
+  createOutboxEntry('expenses', 'INSERT', expenseId, {
+    id: expenseId,
+    code,
+    shift_id: shift?.id || null,
+    expense_date: expenseDate,
+    category: 'SALARY',
+    description: notes?.trim() ? `${description} - ${notes.trim()}` : description,
+    amount: expenseAmount,
+    created_by_id: userId,
+    created_at: createdAt,
+    updated_at: createdAt,
+  });
+
+  addCashOut(cashAmount, businessDate, shift?.id || null);
+  return expenseId;
 }
 
 // Core salary calculation — used for preview and for saving a payment.
@@ -237,10 +304,18 @@ export function registerEmployeesIPC() {
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
 
-      db.prepare(`
-        INSERT INTO employee_advances (id, employee_id, amount, advance_date, description, status, given_by_id, created_at)
-        VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)
-      `).run(id, data.employeeId, Number(data.amount), data.advanceDate, data.description || null, user?.id || 'system', now);
+      const shift = getOpenShift();
+      const businessDate = shift?.shift_date || getActiveBusinessDate();
+
+      db.transaction(() => {
+        db.prepare(`
+          INSERT INTO employee_advances (id, employee_id, amount, advance_date, description, status, given_by_id, created_at)
+          VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)
+        `).run(id, data.employeeId, Number(data.amount), data.advanceDate, data.description || null, user?.id || 'system', now);
+
+        // Advance is cash paid today. It is deducted from the later salary expense.
+        addCashOut(Number(data.amount), businessDate, shift?.id || null);
+      })();
 
       return { success: true, id };
     } catch (err: any) {
@@ -291,6 +366,15 @@ export function registerEmployeesIPC() {
       const now = new Date().toISOString();
       const calc = calculateSalaryForPeriod(data.employeeId, data.periodStart, data.periodEnd);
       const paymentId = crypto.randomUUID();
+      const duplicate = db.prepare(`
+        SELECT id FROM employee_salary_payments
+        WHERE employee_id = ? AND period_start = ? AND period_end = ?
+        LIMIT 1
+      `).get(data.employeeId, data.periodStart, data.periodEnd) as any;
+
+      if (duplicate) {
+        return { success: false, error: 'Salary is already paid for this employee and period' };
+      }
 
       db.transaction(() => {
         db.prepare(`
@@ -312,6 +396,8 @@ export function registerEmployeesIPC() {
           SET status = 'DEDUCTED', deducted_payment_id = ?
           WHERE employee_id = ? AND advance_date >= ? AND advance_date <= ? AND status = 'PENDING'
         `).run(paymentId, data.employeeId, data.periodStart, data.periodEnd);
+
+        createSalaryExpense(paymentId, calc, data.notes, user?.id || 'system', now);
       })();
 
       return { success: true, id: paymentId, calc };
@@ -323,6 +409,55 @@ export function registerEmployeesIPC() {
   // Get default period dates for a given employee and optional target month
   ipcMain.handle('employees:getDefaultPeriod', (_event, startDate: string, targetMonth?: string) => {
     return getDefaultPeriod(startDate, targetMonth);
+  });
+
+  ipcMain.handle('employees:getPayrollSummary', (_event, month?: string) => {
+    try {
+      const { monthStart, monthEnd } = getMonthRange(month);
+
+      const activeRow = db.prepare(`
+        SELECT COUNT(*) as active_employees, COALESCE(SUM(salary), 0) as expected_gross_salary
+        FROM employees
+        WHERE is_active = 1
+      `).get() as any;
+
+      const paidRow = db.prepare(`
+        SELECT COALESCE(SUM(net_salary), 0) as paid_net_salary
+        FROM employee_salary_payments
+        WHERE paid_date >= ? AND paid_date <= ?
+      `).get(monthStart, monthEnd) as any;
+
+      const postedRow = db.prepare(`
+        SELECT COALESCE(SUM(amount), 0) as posted_salary_expenses
+        FROM expenses
+        WHERE category = 'SALARY' AND expense_date >= ? AND expense_date <= ?
+      `).get(monthStart, monthEnd) as any;
+
+      const advancesRow = db.prepare(`
+        SELECT COALESCE(SUM(amount), 0) as pending_advances
+        FROM employee_advances
+        WHERE status = 'PENDING'
+      `).get() as any;
+
+      const expectedGrossSalary = Number(activeRow?.expected_gross_salary || 0);
+      const postedSalaryExpenses = Number(postedRow?.posted_salary_expenses || 0);
+
+      return {
+        success: true,
+        data: {
+          monthStart,
+          monthEnd,
+          activeEmployees: Number(activeRow?.active_employees || 0),
+          expectedGrossSalary,
+          paidNetSalary: Number(paidRow?.paid_net_salary || 0),
+          postedSalaryExpenses,
+          pendingSalaryExpense: Math.max(0, expectedGrossSalary - postedSalaryExpenses),
+          pendingAdvances: Number(advancesRow?.pending_advances || 0),
+        }
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });
 
   // Calculate notice pay when employee leaves: (salary/30) * 35 days

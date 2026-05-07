@@ -176,6 +176,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     calculateSalary: (employeeId: string, periodStart: string, periodEnd: string) => ipcRenderer.invoke('employees:calculateSalary', employeeId, periodStart, periodEnd),
     paySalary: (data: any) => ipcRenderer.invoke('employees:paySalary', data),
     getDefaultPeriod: (startDate: string, targetMonth?: string) => ipcRenderer.invoke('employees:getDefaultPeriod', startDate, targetMonth),
+    getPayrollSummary: (month?: string) => ipcRenderer.invoke('employees:getPayrollSummary', month),
     calculateLeavingPay: (employeeId: string) => ipcRenderer.invoke('employees:calculateLeavingPay', employeeId),
   },
   riders: {

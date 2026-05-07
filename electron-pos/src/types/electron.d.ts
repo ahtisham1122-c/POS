@@ -167,7 +167,8 @@ export interface ElectronAPI {
     addLeave: (data: any) => Promise<any>;
     calculateSalary: (employeeId: string, periodStart: string, periodEnd: string) => Promise<any>;
     paySalary: (data: any) => Promise<any>;
-    getDefaultPeriod: (startDate: string, targetMonth?: string) => Promise<{ periodStart: string; periodEnd: string }>;
+    getDefaultPeriod: (startDate: string, targetMonth?: string) => Promise<{ start: string; end: string; periodStart: string; periodEnd: string }>;
+    getPayrollSummary: (month?: string) => Promise<any>;
     calculateLeavingPay: (employeeId: string) => Promise<any>;
   };
   riders: {

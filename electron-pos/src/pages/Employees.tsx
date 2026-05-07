@@ -12,7 +12,9 @@ function toMoney(v: number) {
 }
 
 function today() {
-  return new Date().toISOString().split("T")[0];
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().split("T")[0];
 }
 
 function currentYearMonth() {
@@ -44,6 +46,16 @@ type Employee = {
 };
 
 type Msg = { type: "success" | "error"; text: string } | null;
+type PayrollSummary = {
+  monthStart: string;
+  monthEnd: string;
+  activeEmployees: number;
+  expectedGrossSalary: number;
+  paidNetSalary: number;
+  postedSalaryExpenses: number;
+  pendingSalaryExpense: number;
+  pendingAdvances: number;
+} | null;
 
 // ─── Small reusable card ──────────────────────────────────────────────────────
 
@@ -96,6 +108,7 @@ export default function Employees() {
   const [salaryCalc, setSalaryCalc] = useState<any>(null);
   const [salaryPayNote, setSalaryPayNote] = useState("");
   const [calcLoading, setCalcLoading] = useState(false);
+  const [payrollSummary, setPayrollSummary] = useState<PayrollSummary>(null);
 
   // Mark as left
   const [showMarkLeft, setShowMarkLeft] = useState(false);
@@ -103,6 +116,7 @@ export default function Employees() {
   const [leavingPay, setLeavingPay] = useState<any>(null);
 
   useEffect(() => { loadEmployees(); }, [showInactive]);
+  useEffect(() => { loadPayrollSummary(); }, [salaryMonth]);
 
   function flash(type: "success" | "error", text: string) {
     setMsg({ type, text });
@@ -114,6 +128,11 @@ export default function Employees() {
     const data = await window.electronAPI?.employees?.getAll(showInactive);
     setEmployees(data || []);
     setLoading(false);
+  }
+
+  async function loadPayrollSummary() {
+    const res = await window.electronAPI?.employees?.getPayrollSummary?.(salaryMonth);
+    if (res?.success) setPayrollSummary(res.data);
   }
 
   async function selectEmployee(emp: Employee) {
@@ -144,6 +163,7 @@ export default function Employees() {
       setShowAddForm(false);
       setEmpForm({ name: "", phone: "", address: "", startDate: today(), salary: "", notes: "" });
       await loadEmployees();
+      await loadPayrollSummary();
     } else {
       flash("error", res?.error || "Failed to add employee");
     }
@@ -173,6 +193,7 @@ export default function Employees() {
       setNewSalary(""); setSalaryNote("");
       await selectEmployee(selected);
       await loadEmployees();
+      await loadPayrollSummary();
     } else {
       flash("error", res?.error || "Failed to update salary");
     }
@@ -192,6 +213,7 @@ export default function Employees() {
       flash("success", "Advance recorded");
       setAdvAmount(""); setAdvDesc("");
       await selectEmployee(selected);
+      await loadPayrollSummary();
     } else {
       flash("error", res?.error || "Failed to record advance");
     }
@@ -225,7 +247,7 @@ export default function Employees() {
       setCalcLoading(false);
       return flash("error", "Could not calculate salary period");
     }
-    const normalizedPeriod = { start: period.periodStart, end: period.periodEnd };
+    const normalizedPeriod = { start: period.start || period.periodStart, end: period.end || period.periodEnd };
     const res = await window.electronAPI?.employees?.calculateSalary(selected.id, normalizedPeriod.start, normalizedPeriod.end);
     setCalcLoading(false);
     if (res?.success) {
@@ -248,6 +270,7 @@ export default function Employees() {
       flash("success", `Salary paid — Net: ${toMoney(res.calc.netSalary)}`);
       setSalaryCalc(null); setSalaryPayNote("");
       await selectEmployee(selected);
+      await loadPayrollSummary();
     } else {
       flash("error", res?.error || "Payment failed");
     }
@@ -287,7 +310,7 @@ export default function Employees() {
             </h2>
             <button
               onClick={() => setShowAddForm(true)}
-              className="btn btn-primary btn-sm flex items-center gap-1"
+              className="btn-primary px-3 py-1.5 text-sm flex items-center gap-1"
             >
               <Plus className="w-4 h-4" /> Add
             </button>
@@ -301,6 +324,22 @@ export default function Employees() {
             />
             Show ex-employees
           </label>
+          {payrollSummary && (
+            <div className="mt-4 rounded-lg border border-surface-4 bg-surface-3 p-3 text-xs">
+              <div className="flex items-center justify-between text-text-secondary">
+                <span>This month payroll</span>
+                <span>{payrollSummary.activeEmployees} active</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-text-secondary">Expected</span>
+                <span className="font-bold text-text-primary">{toMoney(payrollSummary.expectedGrossSalary)}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-text-secondary">In expenses</span>
+                <span className="font-semibold text-success">{toMoney(payrollSummary.postedSalaryExpenses)}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -363,7 +402,7 @@ export default function Employees() {
                 {selected.is_active && (
                   <button
                     onClick={() => { setShowMarkLeft(true); loadLeavingPay(); }}
-                    className="btn btn-danger btn-sm"
+                    className="btn-danger px-3 py-1.5 text-sm"
                   >
                     Mark as Left
                   </button>
@@ -381,6 +420,15 @@ export default function Employees() {
                 sub="not yet deducted"
               />
             </div>
+
+            {payrollSummary && (
+              <div className="grid grid-cols-4 gap-4 mb-6">
+                <StatCard label="Expected Payroll" value={toMoney(payrollSummary.expectedGrossSalary)} sub={`${formatDate(payrollSummary.monthStart)} to ${formatDate(payrollSummary.monthEnd)}`} />
+                <StatCard label="Posted Expenses" value={toMoney(payrollSummary.postedSalaryExpenses)} sub="SALARY expenses this month" />
+                <StatCard label="Paid Net Salary" value={toMoney(payrollSummary.paidNetSalary)} sub="cash actually paid" />
+                <StatCard label="Still Expected" value={toMoney(payrollSummary.pendingSalaryExpense)} sub="not posted yet" />
+              </div>
+            )}
 
             {/* Tabs */}
             <div className="flex border-b border-surface-4 mb-6 gap-1">
@@ -408,11 +456,11 @@ export default function Employees() {
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-semibold text-text-primary">Employee Info</h3>
                     {!editing ? (
-                      <button onClick={() => { setEditing(true); setEditForm({ name: selected.name, phone: selected.phone || "", address: selected.address || "", notes: selected.notes || "" }); }} className="btn btn-ghost btn-sm">Edit</button>
+                      <button onClick={() => { setEditing(true); setEditForm({ name: selected.name, phone: selected.phone || "", address: selected.address || "", notes: selected.notes || "" }); }} className="btn-secondary px-3 py-1.5 text-sm">Edit</button>
                     ) : (
                       <div className="flex gap-2">
-                        <button onClick={handleUpdateInfo} className="btn btn-primary btn-sm flex gap-1"><Save className="w-4 h-4" /> Save</button>
-                        <button onClick={() => setEditing(false)} className="btn btn-ghost btn-sm"><X className="w-4 h-4" /></button>
+                        <button onClick={handleUpdateInfo} className="btn-primary px-3 py-1.5 text-sm flex gap-1"><Save className="w-4 h-4" /> Save</button>
+                        <button onClick={() => setEditing(false)} className="btn-secondary px-3 py-1.5 text-sm"><X className="w-4 h-4" /></button>
                       </div>
                     )}
                   </div>
@@ -452,7 +500,7 @@ export default function Employees() {
                       <TrendingUp className="w-4 h-4 text-success" /> Salary
                     </h3>
                     {selected.is_active && (
-                      <button onClick={() => { setShowSalaryUpdate(!showSalaryUpdate); setNewSalary(String(selected.salary)); setSalaryEffDate(today()); }} className="btn btn-ghost btn-sm">
+                      <button onClick={() => { setShowSalaryUpdate(!showSalaryUpdate); setNewSalary(String(selected.salary)); setSalaryEffDate(today()); }} className="btn-secondary px-3 py-1.5 text-sm">
                         {showSalaryUpdate ? "Cancel" : "Update Salary"}
                       </button>
                     )}
@@ -472,7 +520,7 @@ export default function Employees() {
                         <input className="input" value={salaryNote} onChange={e => setSalaryNote(e.target.value)} placeholder="e.g. Annual increment" />
                       </div>
                       <div className="col-span-3">
-                        <button onClick={handleUpdateSalary} className="btn btn-success btn-sm">Save New Salary</button>
+                        <button onClick={handleUpdateSalary} className="btn-primary px-3 py-1.5 text-sm">Save New Salary</button>
                       </div>
                     </div>
                   )}
@@ -512,7 +560,7 @@ export default function Employees() {
                         <input className="input" value={advDesc} onChange={e => setAdvDesc(e.target.value)} placeholder="Reason..." />
                       </div>
                     </div>
-                    <button onClick={handleAddAdvance} className="btn btn-warning btn-sm mt-3">Add Advance</button>
+                    <button onClick={handleAddAdvance} className="btn-primary px-3 py-1.5 text-sm mt-3">Save Advance</button>
                   </div>
                 )}
 
@@ -581,7 +629,7 @@ export default function Employees() {
                       </div>
                     </div>
                     <div className="mt-3 flex items-center gap-4">
-                      <button onClick={handleAddLeave} className="btn btn-info btn-sm">Record Leave</button>
+                      <button onClick={handleAddLeave} className="btn-primary px-3 py-1.5 text-sm">Save Leave</button>
                       {leaveDays && Number(leaveDays) > 0 && (
                         <span className="text-sm text-text-secondary">
                           Deduction: <strong className="text-danger">{toMoney((selected.salary / 30) * Number(leaveDays))}</strong>
@@ -643,7 +691,7 @@ export default function Employees() {
                           onChange={e => { setSalaryMonth(e.target.value); setSalaryCalc(null); }}
                         />
                       </div>
-                      <button onClick={handleCalculateSalary} disabled={calcLoading} className="btn btn-primary">
+                      <button onClick={handleCalculateSalary} disabled={calcLoading} className="btn-primary">
                         {calcLoading ? "Calculating..." : "Calculate"}
                       </button>
                     </div>
@@ -672,7 +720,7 @@ export default function Employees() {
                             value={salaryPayNote}
                             onChange={e => setSalaryPayNote(e.target.value)}
                           />
-                          <button onClick={handlePaySalary} className="btn btn-success flex items-center gap-2">
+                          <button onClick={handlePaySalary} className="btn-primary flex items-center gap-2">
                             <CheckCircle2 className="w-4 h-4" /> Mark as Paid
                           </button>
                         </div>
@@ -761,8 +809,8 @@ export default function Employees() {
               )}
             </div>
             <div className="flex justify-end gap-3 p-5 border-t border-surface-4">
-              <button onClick={() => setShowAddForm(false)} className="btn btn-ghost">Cancel</button>
-              <button onClick={handleAddEmployee} className="btn btn-primary">Add Employee</button>
+              <button onClick={() => setShowAddForm(false)} className="btn-secondary">Cancel</button>
+              <button onClick={handleAddEmployee} className="btn-primary flex items-center gap-2"><Save className="w-4 h-4" /> Save Employee</button>
             </div>
           </div>
         </div>
@@ -797,8 +845,8 @@ export default function Employees() {
               )}
             </div>
             <div className="flex justify-end gap-3 p-5 border-t border-surface-4">
-              <button onClick={() => setShowMarkLeft(false)} className="btn btn-ghost">Cancel</button>
-              <button onClick={handleMarkLeft} className="btn btn-danger">Confirm — Mark as Left</button>
+              <button onClick={() => setShowMarkLeft(false)} className="btn-secondary">Cancel</button>
+              <button onClick={handleMarkLeft} className="btn-danger">Confirm — Mark as Left</button>
             </div>
           </div>
         </div>
