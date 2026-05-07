@@ -12,7 +12,7 @@ export function registerCashRegisterIPC() {
   ipcMain.handle('cashRegister:getToday', () => {
     const openShift = getOpenShift();
     const date = openShift?.shift_date || getActiveBusinessDate();
-    const { register, openingCash, cashIn, cashOut, expectedCash } = getCashRegisterExpected(date, openShift?.id);
+    const { register, openingCash, cashIn, cashOut, expectedCash, expectedOnline } = getCashRegisterExpected(date, openShift?.id);
     if (!register) return null;
     return {
       ...register,
@@ -20,7 +20,10 @@ export function registerCashRegisterIPC() {
       opening_cash: openingCash,
       cash_in_total: cashIn,
       cash_out_total: cashOut,
-      expected_cash: expectedCash
+      expected_cash: expectedCash,
+      // Owner-requested: surface the day's online tender so the close-of-day
+      // screen can ask the cashier to verify the JazzCash/bank received total.
+      expected_online: expectedOnline
     };
   });
 
@@ -68,7 +71,7 @@ export function registerCashRegisterIPC() {
     }
   });
 
-  ipcMain.handle('cashRegister:close', (_event, data: { closingBalance: number; notes?: string }) => {
+  ipcMain.handle('cashRegister:close', (_event, data: { closingBalance: number; closingOnline?: number; notes?: string }) => {
     try {
       const now = new Date().toISOString();
       const openShift = getOpenShift();
@@ -84,21 +87,36 @@ export function registerCashRegisterIPC() {
         return { success: false, error: 'Please enter a valid counted cash amount' };
       }
 
-      const { expectedCash } = getCashRegisterExpected(date, openShift?.id);
+      // Online reconciliation. The amount is optional (defaults to the
+      // expected total) so the existing shortcut "click Close → confirm" still
+      // works without forcing the cashier to type the same number twice.
+      const { expectedCash, expectedOnline } = getCashRegisterExpected(date, openShift?.id);
+      const physicalOnline = data.closingOnline === undefined || data.closingOnline === null
+        ? expectedOnline
+        : Number(data.closingOnline);
+      if (!Number.isFinite(physicalOnline) || physicalOnline < 0) {
+        return { success: false, error: 'Please enter a valid online amount' };
+      }
+
       const variance = Number((physicalCash - expectedCash).toFixed(2));
+      const onlineVariance = Number((physicalOnline - expectedOnline).toFixed(2));
       const closeNotes = String(data.notes || '').trim();
 
       db.prepare(`
         UPDATE cash_register
-        SET closing_balance = ?, is_closed_for_day = 1, synced = 0
+        SET closing_balance = ?, expected_online = ?, closing_online = ?,
+            online_variance = ?, is_closed_for_day = 1, synced = 0
         WHERE id = ?
-      `).run(physicalCash, row.id);
+      `).run(physicalCash, expectedOnline, physicalOnline, onlineVariance, row.id);
 
       createOutboxEntry('cash_register', 'UPDATE', row.id, {
         id: row.id,
         shift_id: openShift?.id || row.shift_id || null,
         date,
         closing_balance: physicalCash,
+        expected_online: expectedOnline,
+        closing_online: physicalOnline,
+        online_variance: onlineVariance,
         is_closed_for_day: 1,
         updated_at: now
       });
@@ -108,10 +126,12 @@ export function registerCashRegisterIPC() {
         db.prepare(`
           UPDATE shifts
           SET closed_by_id = ?, closed_at = ?, expected_cash = ?, closing_cash = ?,
-              cash_variance = ?, receipt_audit_session_id = NULL, status = 'CLOSED',
+              cash_variance = ?, expected_online = ?, closing_online = ?,
+              online_variance = ?, receipt_audit_session_id = NULL, status = 'CLOSED',
               notes = ?, synced = 0
           WHERE id = ?
-        `).run(closedById, now, expectedCash, physicalCash, variance, closeNotes || openShift.notes || null, openShift.id);
+        `).run(closedById, now, expectedCash, physicalCash, variance, expectedOnline,
+               physicalOnline, onlineVariance, closeNotes || openShift.notes || null, openShift.id);
 
         createOutboxEntry('shifts', 'UPDATE', openShift.id, {
           id: openShift.id,
@@ -120,6 +140,9 @@ export function registerCashRegisterIPC() {
           expected_cash: expectedCash,
           closing_cash: physicalCash,
           cash_variance: variance,
+          expected_online: expectedOnline,
+          closing_online: physicalOnline,
+          online_variance: onlineVariance,
           receipt_audit_session_id: null,
           status: 'CLOSED',
           notes: closeNotes || openShift.notes || null
@@ -128,7 +151,15 @@ export function registerCashRegisterIPC() {
 
       performBackup(false);
 
-      return { success: true, closingBalance: physicalCash, expectedCash, variance };
+      return {
+        success: true,
+        closingBalance: physicalCash,
+        expectedCash,
+        variance,
+        closingOnline: physicalOnline,
+        expectedOnline,
+        onlineVariance
+      };
     } catch (e: any) {
       return { success: false, error: e.message };
     }
@@ -171,6 +202,7 @@ export function registerCashRegisterIPC() {
             UPDATE shifts
             SET status = 'OPEN', closed_at = NULL, closed_by_id = NULL,
                 expected_cash = NULL, closing_cash = NULL, cash_variance = NULL,
+                expected_online = 0, closing_online = 0, online_variance = 0,
                 synced = 0
             WHERE id = ?
           `).run(shift.id);
@@ -179,7 +211,10 @@ export function registerCashRegisterIPC() {
             id: shift.id,
             status: 'OPEN',
             closed_at: null,
-            closed_by_id: null
+            closed_by_id: null,
+            expected_online: 0,
+            closing_online: 0,
+            online_variance: 0
           });
         }
       }
@@ -206,11 +241,19 @@ export function registerCashRegisterIPC() {
       const cashIn = Number(row.cash_in || 0);
       const cashOut = Number(row.cash_out || 0);
       const expectedCash = Number((openingCash + cashIn - cashOut).toFixed(2));
+      const isClosed = Number(row.is_closed_for_day) === 1;
       return {
         ...row,
         expected_cash: expectedCash,
-        cash_variance: Number(row.is_closed_for_day) === 1
+        cash_variance: isClosed
           ? Number((Number(row.closing_balance || 0) - expectedCash).toFixed(2))
+          : null,
+        // Online figures only meaningful once the register is closed.
+        // expected_online / closing_online are stored at close-time, but
+        // expose a recomputed online_variance for stale rows where the
+        // column may be missing (pre-v18 closures).
+        online_variance: isClosed
+          ? Number((Number(row.closing_online || 0) - Number(row.expected_online || 0)).toFixed(2))
           : null
       };
     });

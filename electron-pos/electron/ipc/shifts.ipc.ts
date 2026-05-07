@@ -156,7 +156,7 @@ export function registerShiftsIPC() {
     }
   });
 
-  ipcMain.handle('shifts:close', (_event, data: { closingCash: number; notes?: string }) => {
+  ipcMain.handle('shifts:close', (_event, data: { closingCash: number; closingOnline?: number; notes?: string }) => {
     try {
       const result = db.transaction(() => {
         const shift = db.prepare("SELECT * FROM shifts WHERE status = 'OPEN' ORDER BY opened_at DESC LIMIT 1").get() as any;
@@ -164,12 +164,21 @@ export function registerShiftsIPC() {
 
         const now = new Date().toISOString();
         const closedById = getCurrentUser()?.id || 'system';
-        const expectedCash = getCashRegisterExpected(shift.shift_date, shift.id).expectedCash;
+        const { expectedCash, expectedOnline } = getCashRegisterExpected(shift.shift_date, shift.id);
         const closingCash = Number(data?.closingCash || 0);
         if (!Number.isFinite(closingCash) || closingCash < 0) {
           return { success: false, error: 'Closing cash must be zero or more' };
         }
+        // Online figure mirrors the cash flow — optional, defaults to expected
+        // so a Shifts-page close without the online input still works.
+        const closingOnline = data?.closingOnline === undefined || data?.closingOnline === null
+          ? expectedOnline
+          : Number(data.closingOnline);
+        if (!Number.isFinite(closingOnline) || closingOnline < 0) {
+          return { success: false, error: 'Closing online amount must be zero or more' };
+        }
         const variance = Number((closingCash - expectedCash).toFixed(2));
+        const onlineVariance = Number((closingOnline - expectedOnline).toFixed(2));
         const register = db.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(shift.id, shift.shift_date) as any;
         if (!register) {
           return { success: false, error: 'Cash register was not opened for this shift date' };
@@ -181,7 +190,8 @@ export function registerShiftsIPC() {
         db.prepare(`
           UPDATE shifts
           SET closed_by_id = ?, closed_at = ?, expected_cash = ?, closing_cash = ?,
-              cash_variance = ?, receipt_audit_session_id = NULL, status = 'CLOSED',
+              cash_variance = ?, expected_online = ?, closing_online = ?,
+              online_variance = ?, receipt_audit_session_id = NULL, status = 'CLOSED',
               notes = ?, synced = 0
           WHERE id = ?
         `).run(
@@ -190,15 +200,19 @@ export function registerShiftsIPC() {
           expectedCash,
           closingCash,
           variance,
+          expectedOnline,
+          closingOnline,
+          onlineVariance,
           data?.notes || shift.notes || null,
           shift.id
         );
 
         db.prepare(`
           UPDATE cash_register
-          SET closing_balance = ?, is_closed_for_day = 1, synced = 0
+          SET closing_balance = ?, expected_online = ?, closing_online = ?,
+              online_variance = ?, is_closed_for_day = 1, synced = 0
           WHERE id = ?
-        `).run(closingCash, register.id);
+        `).run(closingCash, expectedOnline, closingOnline, onlineVariance, register.id);
 
         createOutboxEntry('shifts', 'UPDATE', shift.id, {
           id: shift.id,
@@ -207,6 +221,9 @@ export function registerShiftsIPC() {
           expected_cash: expectedCash,
           closing_cash: closingCash,
           cash_variance: variance,
+          expected_online: expectedOnline,
+          closing_online: closingOnline,
+          online_variance: onlineVariance,
           receipt_audit_session_id: null,
           status: 'CLOSED',
           notes: data?.notes || shift.notes || null
@@ -217,11 +234,14 @@ export function registerShiftsIPC() {
           shift_id: shift.id,
           date: shift.shift_date,
           closing_balance: closingCash,
+          expected_online: expectedOnline,
+          closing_online: closingOnline,
+          online_variance: onlineVariance,
           is_closed_for_day: 1,
           updated_at: now
         });
 
-        return { success: true, expectedCash, closingCash, variance };
+        return { success: true, expectedCash, closingCash, variance, expectedOnline, closingOnline, onlineVariance };
       })();
 
       if (result?.success) {

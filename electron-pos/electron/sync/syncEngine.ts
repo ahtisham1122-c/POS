@@ -11,6 +11,7 @@ import logger from '../utils/logger';
 export class SyncEngine {
   private interval: NodeJS.Timeout | null = null;
   private compactInterval: NodeJS.Timeout | null = null;
+  private retryFailedInterval: NodeJS.Timeout | null = null;
   private isSyncing = false;
   // Last time we ran the (expensive at scale) parent-repair scan. Throttled
   // so it doesn't fire on every 5-sec cycle when there's a 10K-row backlog.
@@ -172,14 +173,18 @@ export class SyncEngine {
   // Trim the outbox so it does not grow unbounded. Synced rows older than the
   // retention window are hard-deleted. They are already on the cloud; the
   // local copy is just an audit trail and we do not need to keep it. At 2K
-  // walk-in receipts/day this shop generates ~14K outbox rows/day, so even
-  // a 1-day retention is generous (14K rows for fast lookup).
+  // walk-in receipts/day this shop generates ~14K outbox rows/day, so we
+  // aggressively drop already-synced rows after 1 HOUR (was 1 day). Owner
+  // hit a 21K backlog because synced rows were piling up alongside pending
+  // rows and slowing every COUNT/scan query. 1 hour is enough breathing
+  // room to debug a single sync issue, and aggressive enough that a busy
+  // shop never carries more than ~600 synced rows.
   private compactOutbox() {
     try {
       const result = db.prepare(`
         DELETE FROM sync_outbox
         WHERE status = 'synced'
-          AND datetime(COALESCE(last_attempted_at, created_at)) <= datetime('now', '-1 day')
+          AND datetime(COALESCE(last_attempted_at, created_at)) <= datetime('now', '-1 hour')
       `).run();
       if (result.changes > 0) {
         logger.info(`SyncEngine compacted ${result.changes} old synced outbox row(s).`);
@@ -190,6 +195,31 @@ export class SyncEngine {
     }
   }
 
+  // Auto-recover rows that hit the attempt_count cap (10) and were marked
+  // 'failed'. Without this, a transient backend error or a bad token leaves
+  // every affected row stuck forever — the cashier had to manually click
+  // "Reset & Retry" in the Sync Configuration tab. Now any row that has
+  // been in 'failed' for >30 min gets its attempt counter wiped and is
+  // re-queued. Backoff still kicks in on the next try, so we don't hammer
+  // a permanently-broken backend.
+  private retryStuckFailedRows() {
+    try {
+      const result = db.prepare(`
+        UPDATE sync_outbox
+        SET status = 'pending',
+            attempt_count = 0,
+            last_attempted_at = NULL
+        WHERE status = 'failed'
+          AND datetime(COALESCE(last_attempted_at, created_at)) <= datetime('now', '-30 minutes')
+      `).run();
+      if (result.changes > 0) {
+        logger.info(`SyncEngine auto-retried ${result.changes} stuck failed row(s).`);
+      }
+    } catch (err: any) {
+      logger.warn('Auto-retry of failed rows skipped:', err?.message || err);
+    }
+  }
+
   start() {
     if (this.interval) return;
     console.log('SyncEngine started');
@@ -197,6 +227,9 @@ export class SyncEngine {
     // Compact the outbox once at startup so a long-offline terminal doesn't
     // start its day with 50K stale synced rows slowing down every query.
     this.compactOutbox();
+    // Also recover any rows that were stuck in 'failed' from a previous run
+    // (e.g. owner restarted the app the day after a backend hiccup).
+    this.retryStuckFailedRows();
 
     this.interval = setInterval(() => {
       // Same crash protection here: setInterval doesn't catch promise
@@ -206,9 +239,16 @@ export class SyncEngine {
       });
     }, 5000);
 
-    // Compact once per hour to keep the table small even on terminals that
-    // run for weeks without restarting.
-    this.compactInterval = setInterval(() => this.compactOutbox(), 60 * 60 * 1000);
+    // Compact every 5 minutes during the day. Old retention was 1 hour with
+    // hourly compaction — that meant a busy 2K-bills/hour shop could see
+    // ~28K synced rows pile up between compactions. 5 minutes keeps the
+    // table tiny enough that even unindexed queries stay snappy.
+    this.compactInterval = setInterval(() => this.compactOutbox(), 5 * 60 * 1000);
+
+    // Recover stuck 'failed' rows every 10 minutes. A backend hiccup or
+    // expired token used to leave rows permanently dead — now they retry
+    // automatically once the underlying issue is resolved.
+    this.retryFailedInterval = setInterval(() => this.retryStuckFailedRows(), 10 * 60 * 1000);
 
     networkMonitor.on('online', this.handleNetworkOnline);
   }
@@ -218,8 +258,161 @@ export class SyncEngine {
     this.interval = null;
     if (this.compactInterval) clearInterval(this.compactInterval);
     this.compactInterval = null;
+    if (this.retryFailedInterval) clearInterval(this.retryFailedInterval);
+    this.retryFailedInterval = null;
     networkMonitor.off('online', this.handleNetworkOnline);
     console.log('SyncEngine stopped');
+  }
+
+  // Update DB state for a single outbox row based on the server's per-row
+  // response (extracted so both single and batch code paths share the logic).
+  private applyRowResult(row: any, parsedPayload: any, action: string | undefined, reason: string) {
+    if (action === 'skipped' && typeof reason === 'string' && reason.startsWith('Missing parent')) {
+      const parentRequeued = this.requeueMissingParent(row.table_name, parsedPayload);
+      db.prepare(`
+        UPDATE sync_outbox
+        SET attempt_count = attempt_count + 1,
+            error_message = ?,
+            last_attempted_at = datetime('now')
+        WHERE id = ?
+      `).run(parentRequeued ? `Waiting for parent: ${reason}. Parent was queued again.` : `Waiting for parent: ${reason}`, row.id);
+    } else {
+      db.prepare(`UPDATE sync_outbox SET status = 'synced', error_message = NULL WHERE id = ?`).run(row.id);
+    }
+  }
+
+  // Push a chunk of outbox rows in one HTTP call to /sync/ingest-batch.
+  // Returns:
+  //   { ok: true }                      — every row was processed; DB state updated
+  //   { ok: false, networkError: true } — abort the whole cycle (auth or network down)
+  //   { ok: false, fallback: true }     — server didn't accept the batch; caller
+  //                                        should re-process this chunk one row at a time
+  private async tryBatchPush(
+    rows: any[],
+    apiUrl: string,
+    syncHeaders: Record<string, string>,
+    deviceInfo: { deviceId: string; deviceName: string; terminalNumber: number }
+  ): Promise<{ ok: true } | { ok: false; networkError?: true; fallback?: true }> {
+    // Build operations payload, parsing each row's JSON. Corrupt rows are
+    // hard-failed up-front so they never poison the whole chunk.
+    const ops: any[] = [];
+    const opRows: any[] = [];   // parallel array — same index as ops, holds the outbox row
+    const opPayloads: any[] = []; // parsed payloads, same index
+    for (const row of rows) {
+      let parsedPayload: any;
+      try {
+        parsedPayload = JSON.parse(row.payload);
+      } catch (parseErr: any) {
+        logger.error(`SyncEngine outbox row ${row.id} has corrupt payload, marking failed: ${parseErr?.message}`);
+        db.prepare(`UPDATE sync_outbox SET status = 'failed', error_message = ? WHERE id = ?`)
+          .run(`Corrupt payload: ${parseErr?.message || parseErr}`, row.id);
+        continue;
+      }
+      ops.push({
+        table: row.table_name,
+        operation: row.operation,
+        recordId: row.record_id,
+        payload: parsedPayload,
+        timestamp: row.created_at,
+        device: {
+          id: deviceInfo.deviceId,
+          name: deviceInfo.deviceName,
+          terminalNumber: deviceInfo.terminalNumber
+        }
+      });
+      opRows.push(row);
+      opPayloads.push(parsedPayload);
+    }
+    if (ops.length === 0) return { ok: true };
+
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(`${apiUrl}/sync/ingest-batch`, {
+        method: 'POST',
+        headers: syncHeaders,
+        body: JSON.stringify({ operations: ops })
+      }, 60000);
+    } catch (fetchErr: any) {
+      // Network error — caller will abort the whole cycle.
+      logger.warn(`SyncEngine batch fetch failed: ${fetchErr?.message || fetchErr}`);
+      return { ok: false, networkError: true };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      // Auth failure — let the caller retry once with a refreshed token.
+      return { ok: false, networkError: true };
+    }
+
+    // 404 likely means the deployed backend doesn't have /sync/ingest-batch yet
+    // (older build). Fall back to single-row mode so the cashier isn't blocked.
+    if (response.status === 404 || response.status === 405) {
+      logger.warn('SyncEngine /sync/ingest-batch not available on backend; falling back to single ingest.');
+      return { ok: false, fallback: true };
+    }
+
+    if (!response.ok) {
+      // 4xx/5xx on the batch endpoint itself — fall back to single-row mode.
+      // Per-row processing has finer-grained error handling and may reveal
+      // which specific row in the batch is poisonous.
+      const errText = await response.text().catch(() => '');
+      logger.warn(`SyncEngine batch returned HTTP ${response.status}; falling back. ${errText.substring(0, 200)}`);
+      return { ok: false, fallback: true };
+    }
+
+    let parsed: any;
+    try {
+      parsed = await response.json();
+    } catch (jsonErr: any) {
+      logger.warn(`SyncEngine batch response was not JSON; falling back. ${jsonErr?.message}`);
+      return { ok: false, fallback: true };
+    }
+    // Backend wraps responses with { success, data: [...] }; raw responses
+    // come straight as an array. Handle both.
+    const results: any[] = Array.isArray(parsed?.data) ? parsed.data
+      : Array.isArray(parsed) ? parsed
+      : Array.isArray(parsed?.data?.results) ? parsed.data.results
+      : [];
+
+    if (results.length !== ops.length) {
+      // Mismatched array — safer to fall back so we don't apply wrong
+      // results to wrong rows.
+      logger.warn(`SyncEngine batch returned ${results.length} results for ${ops.length} ops; falling back.`);
+      return { ok: false, fallback: true };
+    }
+
+    let synced = 0;
+    let deferred = 0;
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i] || {};
+      const action = r.action ?? r?.data?.action;
+      const reason = String(r.reason ?? r?.data?.reason ?? '');
+      if (r.success === false) {
+        // Row-level failure inside the batch (rare, since backend catches
+        // common Prisma errors and returns success:true). Bump the attempt
+        // counter so it backs off.
+        const errMsg = `Server rejected: ${reason || 'unknown error'}`;
+        db.prepare(`
+          UPDATE sync_outbox
+          SET attempt_count = attempt_count + 1,
+              error_message = ?,
+              last_attempted_at = datetime('now')
+          WHERE id = ?
+        `).run(errMsg, opRows[i].id);
+        const updated = db.prepare(`SELECT attempt_count FROM sync_outbox WHERE id = ?`).get(opRows[i].id) as any;
+        if (updated && updated.attempt_count >= 10) {
+          db.prepare(`UPDATE sync_outbox SET status = 'failed' WHERE id = ?`).run(opRows[i].id);
+        }
+      } else {
+        if (action === 'skipped' && reason.startsWith('Missing parent')) {
+          deferred += 1;
+        } else {
+          synced += 1;
+        }
+        this.applyRowResult(opRows[i], opPayloads[i], action, reason);
+      }
+    }
+    logger.info(`SyncEngine batch: ${synced} synced, ${deferred} deferred (waiting parent), ${ops.length - synced - deferred} other.`);
+    return { ok: true };
   }
 
   async processPendingOutbox() {
@@ -266,16 +459,16 @@ export class SyncEngine {
             WHEN 'receipt_audit_entries' THEN 24
             ELSE 30
           END,
-          created_at ASC 
-        LIMIT 500
+          created_at ASC
+        LIMIT 2000
       `).all() as any[];
 
       const retryNowMs = Date.now();
-      // Batch up to 100 rows per 5-second cycle (was 25). At 2,000+ walk-in
-      // receipts/day this shop generates ~14K outbox rows/day; with 25 rows
-      // per cycle that is 18K/hour theoretical max, barely enough. With 100
-      // per cycle we get 72K/hour theoretical max, so a 4-hour offline
-      // backlog of ~56K rows drains in ~50 min instead of ~3 hours.
+      // Push up to 1000 rows per cycle. With parallel batch chunks (below)
+      // a fast connection can drain ~2-4K rows/sec, so the per-cycle ceiling
+      // is now mostly about not flooding the VPS with one giant burst at a
+      // time. Combined with auto-rechain after a successful cycle (see end
+      // of this method), even a 21K backlog drains in well under a minute.
       const readyRows = pendingRows
         .filter((row) => {
           if (!row.last_attempted_at) return true;
@@ -283,7 +476,7 @@ export class SyncEngine {
           if (!Number.isFinite(lastAttemptMs)) return true;
           return retryNowMs - lastAttemptMs >= this.getRetryDelayMs(Number(row.attempt_count || 0));
         })
-        .slice(0, 100);
+        .slice(0, 1000);
 
       if (readyRows.length === 0) {
         this.isSyncing = false;
@@ -305,53 +498,139 @@ export class SyncEngine {
         }
       }
 
-      for (const row of readyRows) {
-        // Network-level error flag — if true, abort the entire batch
-        let networkError = false;
+      // Build chunks of 100 rows each. We previously sent 50 sequentially —
+      // so 1000 rows took ~20 sequential HTTP roundtrips (~4 seconds at
+      // 200ms/RTT). Now we POST 4 chunks in parallel, so the same 1000 rows
+      // finish in ~5 roundtrips' worth of wall time (~1 second).
+      const CHUNK_SIZE = 100;
+      const PARALLEL_CHUNKS = 4;
+      const allChunks: any[][] = [];
+      for (let i = 0; i < readyRows.length; i += CHUNK_SIZE) {
+        allChunks.push(readyRows.slice(i, i + CHUNK_SIZE));
+      }
+      let abortRemainingChunks = false;
+      let useFallbackMode = false; // sticky for the rest of this cycle once set
+      const fallbackChunks: any[][] = []; // chunks that need single-row fallback
 
-        // Parse payload once outside fetch so a corrupt JSON row never crashes
-        // the engine and never re-tries forever. If parse fails we mark this
-        // single row as failed and move on.
-        let parsedPayload: any;
-        try {
-          parsedPayload = JSON.parse(row.payload);
-        } catch (parseErr: any) {
-          logger.error(`SyncEngine outbox row ${row.id} has corrupt payload, marking failed: ${parseErr?.message}`);
-          db.prepare(`UPDATE sync_outbox SET status = 'failed', error_message = ? WHERE id = ?`)
-            .run(`Corrupt payload: ${parseErr?.message || parseErr}`, row.id);
-          continue;
+      // ---- Phase 1: parallel batch push ----
+      // Process waves of N concurrent batch requests until we exhaust the
+      // chunks, hit a network/auth error, or the backend signals the
+      // /sync/ingest-batch endpoint is missing.
+      for (let i = 0; i < allChunks.length; i += PARALLEL_CHUNKS) {
+        if (abortRemainingChunks || useFallbackMode) {
+          // Move every remaining chunk into the fallback list so phase 2
+          // picks them up instead of marking them auth-failed.
+          if (useFallbackMode) {
+            for (let j = i; j < allChunks.length; j++) fallbackChunks.push(allChunks[j]);
+          }
+          break;
+        }
+        const wave = allChunks.slice(i, i + PARALLEL_CHUNKS);
+        const results = await Promise.all(
+          wave.map((chunk) =>
+            this.tryBatchPush(chunk, apiUrl, syncHeaders as Record<string, string>, deviceInfo)
+              .catch((err) => {
+                logger.warn(`SyncEngine batch wave member crashed: ${err?.message || err}`);
+                return { ok: false, networkError: true } as { ok: false; networkError: true };
+              })
+          )
+        );
+
+        // Walk the wave results in order. If any reports a network/auth
+        // error we try ONE token refresh, then re-run only the failed chunks
+        // serially so we don't hammer the backend with another parallel burst.
+        const networkFailures: any[][] = [];
+        const fallbackNeeded: any[][] = [];
+        for (let j = 0; j < wave.length; j++) {
+          const result = results[j];
+          if (result.ok) continue;
+          if (result.networkError) networkFailures.push(wave[j]);
+          else if (result.fallback) fallbackNeeded.push(wave[j]);
         }
 
-        try {
-          let response: Response;
-          try {
-            response = await fetchWithTimeout(`${apiUrl}/sync/ingest`, {
-              method: 'POST',
-              headers: syncHeaders as Record<string, string>,
-              body: JSON.stringify({
-                table: row.table_name,
-                operation: row.operation,
-                recordId: row.record_id,
-                payload: parsedPayload,
-                timestamp: row.created_at,
-                device: {
-                  id: deviceInfo.deviceId,
-                  name: deviceInfo.deviceName,
-                  terminalNumber: deviceInfo.terminalNumber
+        if (fallbackNeeded.length > 0) {
+          // Backend doesn't support the batch endpoint — switch to
+          // single-row mode for everything from here on.
+          useFallbackMode = true;
+          for (const chunk of fallbackNeeded) fallbackChunks.push(chunk);
+          // Also push remaining un-attempted chunks
+          for (let k = i + PARALLEL_CHUNKS; k < allChunks.length; k++) {
+            fallbackChunks.push(allChunks[k]);
+          }
+          // And chunks in this wave that haven't been classified — none, but
+          // be safe for any future wave changes.
+          break;
+        }
+
+        if (networkFailures.length > 0) {
+          // Try a single token refresh, then retry the failed chunks
+          // sequentially so a transient blip doesn't poison the cycle.
+          const refreshed = await this.refreshSyncToken(deviceInfo.deviceId);
+          const newHeaders = refreshed ? getSyncHeaders(deviceInfo.deviceId) : null;
+          if (newHeaders) {
+            syncHeaders = newHeaders;
+            for (const chunk of networkFailures) {
+              const retry = await this.tryBatchPush(chunk, apiUrl, newHeaders, deviceInfo);
+              if (retry.ok) continue;
+              if (retry.fallback) {
+                useFallbackMode = true;
+                fallbackChunks.push(chunk);
+                continue;
+              }
+              // Still failing — bump attempt counters and abort remaining.
+              for (const row of chunk) {
+                db.prepare(`
+                  UPDATE sync_outbox
+                  SET attempt_count = attempt_count + 1,
+                      error_message = ?,
+                      last_attempted_at = datetime('now')
+                  WHERE id = ?
+                `).run('Auth failed. Check Sync Device Secret or backend availability.', row.id);
+                const updated = db.prepare(`SELECT attempt_count FROM sync_outbox WHERE id = ?`).get(row.id) as any;
+                if (updated && updated.attempt_count >= 10) {
+                  db.prepare(`UPDATE sync_outbox SET status = 'failed' WHERE id = ?`).run(row.id);
                 }
-              })
-            }, 30000);
-          } catch (fetchErr: any) {
-            // fetch() itself threw — network is down or server unreachable
-            networkError = true;
-            throw fetchErr;
+              }
+              abortRemainingChunks = true;
+              break;
+            }
+          } else {
+            // Token refresh failed — abort.
+            for (const chunk of networkFailures) {
+              for (const row of chunk) {
+                db.prepare(`
+                  UPDATE sync_outbox
+                  SET attempt_count = attempt_count + 1,
+                      error_message = ?,
+                      last_attempted_at = datetime('now')
+                  WHERE id = ?
+                `).run('Auth failed. Check Sync Device Secret.', row.id);
+              }
+            }
+            abortRemainingChunks = true;
+          }
+        }
+      }
+
+      // ---- Phase 2: single-row fallback for chunks the batch couldn't take ----
+      for (const chunk of fallbackChunks) {
+        if (abortRemainingChunks) break;
+
+        for (const row of chunk) {
+          let networkError = false;
+          let dbAlreadyUpdated = false;
+          let parsedPayload: any;
+          try {
+            parsedPayload = JSON.parse(row.payload);
+          } catch (parseErr: any) {
+            db.prepare(`UPDATE sync_outbox SET status = 'failed', error_message = ? WHERE id = ?`)
+              .run(`Corrupt payload: ${parseErr?.message || parseErr}`, row.id);
+            continue;
           }
 
-          if (response.status === 401 || response.status === 403) {
-            const refreshed = await this.refreshSyncToken(deviceInfo.deviceId);
-            syncHeaders = refreshed ? getSyncHeaders(deviceInfo.deviceId) : null;
-
-            if (syncHeaders) {
+          try {
+            let response: Response;
+            try {
               response = await fetchWithTimeout(`${apiUrl}/sync/ingest`, {
                 method: 'POST',
                 headers: syncHeaders as Record<string, string>,
@@ -368,112 +647,133 @@ export class SyncEngine {
                   }
                 })
               }, 30000);
-            }
-
-            if (!syncHeaders || response.status === 401 || response.status === 403) {
-              const errText = await response.text().catch(() => '');
-              logger.warn(`SyncEngine got ${response.status}; aborting batch after re-registration attempt. ${errText.substring(0, 200)}`);
-              db.prepare(`
-                UPDATE sync_outbox
-                SET attempt_count = attempt_count + 1,
-                    error_message = ?,
-                    last_attempted_at = datetime('now')
-                WHERE id = ?
-              `).run(`Auth failed (${response.status}). Check Sync Device Secret.`, row.id);
+            } catch (fetchErr: any) {
               networkError = true;
-              throw new Error(`Sync auth failed (${response.status})`);
+              throw fetchErr;
             }
-          }
 
-          if (response.ok) {
-            // Server may return HTML (e.g., Nginx 502 error page styled as a
-            // 200 from a misconfigured proxy). Guard the JSON parse so it
-            // doesn't crash sync — treat as a row-level error and retry.
-            let result: any;
-            try {
-              result = await response.json();
-            } catch (jsonErr: any) {
-              throw new Error(`Server returned non-JSON response: ${jsonErr?.message || jsonErr}`);
+            if (response.status === 401 || response.status === 403) {
+              const refreshed = await this.refreshSyncToken(deviceInfo.deviceId);
+              syncHeaders = refreshed ? getSyncHeaders(deviceInfo.deviceId) : null;
+              if (syncHeaders) {
+                response = await fetchWithTimeout(`${apiUrl}/sync/ingest`, {
+                  method: 'POST',
+                  headers: syncHeaders as Record<string, string>,
+                  body: JSON.stringify({
+                    table: row.table_name,
+                    operation: row.operation,
+                    recordId: row.record_id,
+                    payload: parsedPayload,
+                    timestamp: row.created_at,
+                    device: {
+                      id: deviceInfo.deviceId,
+                      name: deviceInfo.deviceName,
+                      terminalNumber: deviceInfo.terminalNumber
+                    }
+                  })
+                }, 30000);
+              }
+              if (!syncHeaders || response.status === 401 || response.status === 403) {
+                db.prepare(`
+                  UPDATE sync_outbox
+                  SET attempt_count = attempt_count + 1,
+                      error_message = ?,
+                      last_attempted_at = datetime('now')
+                  WHERE id = ?
+                `).run(`Auth failed (${response.status}). Check Sync Device Secret.`, row.id);
+                dbAlreadyUpdated = true;
+                networkError = true;
+                throw new Error(`Sync auth failed (${response.status})`);
+              }
             }
-            const action = result?.data?.action ?? result?.action;
-            const reason = result?.data?.reason ?? result?.reason ?? '';
 
-            if (action === 'skipped' && typeof reason === 'string' && reason.startsWith('Missing parent')) {
-              const parentRequeued = this.requeueMissingParent(row.table_name, parsedPayload);
-              // Parent not synced yet — keep pending so it retries after parent arrives
+            if (response.ok) {
+              let result: any;
+              try {
+                result = await response.json();
+              } catch (jsonErr: any) {
+                throw new Error(`Server returned non-JSON response: ${jsonErr?.message || jsonErr}`);
+              }
+              const action = result?.data?.action ?? result?.action;
+              const reason = result?.data?.reason ?? result?.reason ?? '';
+              this.applyRowResult(row, parsedPayload, action, reason);
+            } else {
+              const errText = await response.text();
+              if (response.status === 400 && errText.includes('Missing parent')) {
+                const parentRequeued = this.requeueMissingParent(row.table_name, parsedPayload);
+                db.prepare(`
+                  UPDATE sync_outbox
+                  SET status = 'pending',
+                      attempt_count = attempt_count + 1,
+                      error_message = ?,
+                      last_attempted_at = datetime('now')
+                  WHERE id = ?
+                `).run(parentRequeued ? `Waiting for parent: ${errText.substring(0, 240)}. Parent was queued again.` : `Waiting for parent: ${errText.substring(0, 240)}`, row.id);
+                continue;
+              }
+              const errMsg = `Server Error (${response.status}): ${errText.substring(0, 300)}`;
               db.prepare(`
                 UPDATE sync_outbox
                 SET attempt_count = attempt_count + 1,
                     error_message = ?,
                     last_attempted_at = datetime('now')
                 WHERE id = ?
-              `).run(parentRequeued ? `Waiting for parent: ${reason}. Parent was queued again.` : `Waiting for parent: ${reason}`, row.id);
-              logger.info(`SyncEngine deferred row ${row.id} (${row.table_name}): ${reason}`);
-            } else {
-              db.prepare(`UPDATE sync_outbox SET status = 'synced', error_message = NULL WHERE id = ?`).run(row.id);
-              logger.info(`SyncEngine synced row ${row.id} for table '${row.table_name}' (action: ${action}).`);
+              `).run(errMsg, row.id);
+              const updated = db.prepare(`SELECT attempt_count FROM sync_outbox WHERE id = ?`).get(row.id) as any;
+              if (updated && updated.attempt_count >= 10) {
+                db.prepare(`UPDATE sync_outbox SET status = 'failed' WHERE id = ?`).run(row.id);
+              }
             }
-          } else {
-            // Server returned an HTTP error for this specific row — record the error and
-            // continue with the next row (don't abort the batch).
-            const errText = await response.text();
-            if (response.status === 400 && errText.includes('Missing parent')) {
-              const parentRequeued = this.requeueMissingParent(row.table_name, parsedPayload);
+          } catch (error: any) {
+            // Skip the second DB update if the 401/403 path already wrote
+            // one (this fixes the old double-increment bug that caused rows
+            // to fail twice as fast under auth errors).
+            if (!dbAlreadyUpdated) {
               db.prepare(`
                 UPDATE sync_outbox
-                SET status = 'pending',
-                    attempt_count = attempt_count + 1,
+                SET attempt_count = attempt_count + 1,
                     error_message = ?,
                     last_attempted_at = datetime('now')
                 WHERE id = ?
-              `).run(parentRequeued ? `Waiting for parent: ${errText.substring(0, 240)}. Parent was queued again.` : `Waiting for parent: ${errText.substring(0, 240)}`, row.id);
-              logger.info(`SyncEngine deferred row ${row.id} (${row.table_name}) after HTTP 400 missing-parent response.`);
-              continue;
+              `).run(error.message, row.id);
+              const updated = db.prepare(`SELECT attempt_count FROM sync_outbox WHERE id = ?`).get(row.id) as any;
+              if (updated && updated.attempt_count >= 10) {
+                db.prepare(`UPDATE sync_outbox SET status = 'failed' WHERE id = ?`).run(row.id);
+              }
             }
-            const errMsg = `Server Error (${response.status}): ${errText.substring(0, 300)}`;
-            logger.warn(`SyncEngine server rejected row ${row.id} (${row.table_name}): ${errMsg}`);
-
-            db.prepare(`
-              UPDATE sync_outbox
-              SET attempt_count = attempt_count + 1,
-                  error_message = ?,
-                  last_attempted_at = datetime('now')
-              WHERE id = ?
-            `).run(errMsg, row.id);
-
-            const updated = db.prepare(`SELECT attempt_count FROM sync_outbox WHERE id = ?`).get(row.id) as any;
-            if (updated && updated.attempt_count >= 10) {
-              db.prepare(`UPDATE sync_outbox SET status = 'failed' WHERE id = ?`).run(row.id);
+            if (networkError) {
+              abortRemainingChunks = true;
+              break;
             }
           }
-
-        } catch (error: any) {
-          logger.warn(`SyncEngine outbox upload failed for row ${row.id}: ${error.message}`);
-
-          db.prepare(`
-            UPDATE sync_outbox
-            SET attempt_count = attempt_count + 1,
-                error_message = ?,
-                last_attempted_at = datetime('now')
-            WHERE id = ?
-          `).run(error.message, row.id);
-
-          const updated = db.prepare(`SELECT attempt_count FROM sync_outbox WHERE id = ?`).get(row.id) as any;
-          if (updated && updated.attempt_count >= 10) {
-            db.prepare(`UPDATE sync_outbox SET status = 'failed' WHERE id = ?`).run(row.id);
-          }
-
-          if (networkError) {
-            // Network is down — no point trying the remaining rows in this batch
-            break;
-          }
-          // Otherwise it was a row-level error — continue with next row
         }
       }
     } catch (e) {
       console.error('Critical sync engine error:', e);
     } finally {
       this.isSyncing = false;
+    }
+
+    // Auto-rechain: if there's still pending work and we didn't bail out
+    // because of a network/auth problem, kick off another cycle on the
+    // next tick instead of waiting 5 seconds. This is what actually drains
+    // a 21K backlog quickly — without it we cap at 1 cycle per 5 sec
+    // regardless of how fast each cycle is.
+    try {
+      if (networkMonitor.isOnline) {
+        const stillPending = db.prepare(
+          `SELECT 1 FROM sync_outbox WHERE status = 'pending' LIMIT 1`
+        ).get();
+        if (stillPending) {
+          setImmediate(() => {
+            this.processPendingOutbox().catch((err) => {
+              logger.warn('processPendingOutbox (rechain) failed:', err?.message || err);
+            });
+          });
+        }
+      }
+    } catch {
+      // Best-effort — never let the rechain check itself crash sync.
     }
   }
 }

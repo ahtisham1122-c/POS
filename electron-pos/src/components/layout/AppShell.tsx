@@ -29,6 +29,7 @@ const pageTitles: Record<PageId, string> = {
   "cash-register": "Cash Register",
   employees: "Employees & Payroll",
   deliveries: "Milk Deliveries",
+  analytics: "Analytics",
 };
 
 export function AppShell({ page, setPage, children, userRole }: AppShellProps) {

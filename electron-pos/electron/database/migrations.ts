@@ -533,6 +533,53 @@ export function runMigrations() {
             CREATE INDEX IF NOT EXISTS idx_delivery_entries_session ON delivery_entries(session_id);
           `);
         }
+      },
+      {
+        version: 17,
+        up: () => {
+          log.info('Running migration v17: Adding correction_type to returns');
+          const returnColumns = db.prepare(`PRAGMA table_info(returns)`).all() as Array<{ name: string }>;
+          const returnNames = new Set(returnColumns.map((column) => column.name));
+          if (!returnNames.has('correction_type')) {
+            db.exec(`ALTER TABLE returns ADD COLUMN correction_type TEXT DEFAULT 'REFUND'`);
+          }
+        }
+      },
+      {
+        // Owner asked to reconcile the online tender (JazzCash / bank) at
+        // close-of-day alongside cash, so we need somewhere to store both
+        // the expected online inflow AND the amount the cashier confirmed
+        // received. Cash variance is on shifts for cashier accountability;
+        // online is more of a bank-reconciliation number, so we keep it
+        // on cash_register where the day's tender totals already live.
+        version: 18,
+        up: () => {
+          log.info('Running migration v18: Adding online tender reconciliation to cash_register');
+          const cashColumns = db.prepare(`PRAGMA table_info(cash_register)`).all() as Array<{ name: string }>;
+          const cashNames = new Set(cashColumns.map((column) => column.name));
+          if (!cashNames.has('expected_online')) {
+            db.exec(`ALTER TABLE cash_register ADD COLUMN expected_online REAL DEFAULT 0`);
+          }
+          if (!cashNames.has('closing_online')) {
+            db.exec(`ALTER TABLE cash_register ADD COLUMN closing_online REAL DEFAULT 0`);
+          }
+          if (!cashNames.has('online_variance')) {
+            db.exec(`ALTER TABLE cash_register ADD COLUMN online_variance REAL DEFAULT 0`);
+          }
+          // Mirror on shifts so cashier accountability reports can show the
+          // online variance per shift without joining back to cash_register.
+          const shiftColumns = db.prepare(`PRAGMA table_info(shifts)`).all() as Array<{ name: string }>;
+          const shiftNames = new Set(shiftColumns.map((column) => column.name));
+          if (!shiftNames.has('expected_online')) {
+            db.exec(`ALTER TABLE shifts ADD COLUMN expected_online REAL DEFAULT 0`);
+          }
+          if (!shiftNames.has('closing_online')) {
+            db.exec(`ALTER TABLE shifts ADD COLUMN closing_online REAL DEFAULT 0`);
+          }
+          if (!shiftNames.has('online_variance')) {
+            db.exec(`ALTER TABLE shifts ADD COLUMN online_variance REAL DEFAULT 0`);
+          }
+        }
       }
     ];
 

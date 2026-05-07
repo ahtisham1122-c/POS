@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
-import { Store, Tag, Users, RefreshCw, Database, Save, CheckCircle2, Monitor, ShieldCheck, Printer, AlertOctagon, XCircle } from "lucide-react";
+import { Store, Tag, Users, RefreshCw, Database, Save, CheckCircle2, Monitor, ShieldCheck, Printer, AlertOctagon, XCircle, Tv } from "lucide-react";
 import { cn } from "../lib/utils";
 
-type SettingsTab = "SHOP" | "POS" | "RATES" | "USERS" | "AUDIT" | "SYNC" | "BACKUP";
+type SettingsTab = "SHOP" | "POS" | "RATES" | "USERS" | "AUDIT" | "SYNC" | "BACKUP" | "CFD";
 
 type PosConfigState = {
   autoPrint: string;
@@ -82,6 +82,89 @@ export default function Settings() {
     error_message: string; attempt_count: number; last_attempted_at: string | null; created_at: string;
   }>>([]);
 
+  // ----- Customer Facing Display (CFD) state -----
+  // HP TD620 (or similar 2x20 pole display) on a serial COM port.
+  // Owner has it on COM5 of the HP AIO; defaults below match that.
+  const [cfdStatus, setCfdStatus] = useState<{ enabled: boolean; connected: boolean; path: string; baudRate: number; welcomeLine1: string; welcomeLine2: string; lastWriteAt: number | null; nativeAvailable: boolean } | null>(null);
+  const [cfdPorts, setCfdPorts] = useState<Array<{ path: string; manufacturer?: string }>>([]);
+  const [cfdForm, setCfdForm] = useState({
+    enabled: false,
+    path: "COM5",
+    baudRate: "9600",
+    welcomeLine1: "WELCOME TO",
+    welcomeLine2: "GUJJAR MILK SHOP"
+  });
+  const [cfdSaving, setCfdSaving] = useState(false);
+  const [cfdTesting, setCfdTesting] = useState(false);
+  const [cfdMessage, setCfdMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const loadCfd = async () => {
+    try {
+      const status = await window.electronAPI?.cfd?.getStatus();
+      if (status) {
+        setCfdStatus(status);
+        setCfdForm({
+          enabled: !!status.enabled,
+          path: status.path || "COM5",
+          baudRate: String(status.baudRate || 9600),
+          welcomeLine1: status.welcomeLine1 || "WELCOME TO",
+          welcomeLine2: status.welcomeLine2 || "GUJJAR MILK SHOP"
+        });
+      }
+      const ports = await window.electronAPI?.cfd?.listPorts();
+      setCfdPorts(ports || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleCfdTest = async () => {
+    setCfdMessage(null);
+    setCfdTesting(true);
+    try {
+      const result = await window.electronAPI?.cfd?.test({
+        path: cfdForm.path,
+        baudRate: Number(cfdForm.baudRate) || 9600,
+        line1: "NOON DAIRY POS",
+        line2: "CFD TEST OK"
+      });
+      if (result?.success) {
+        setCfdMessage({ type: "success", text: `Test message sent to ${cfdForm.path}. Check the display.` });
+      } else {
+        setCfdMessage({ type: "error", text: result?.error || "Test failed." });
+      }
+    } catch (err: any) {
+      setCfdMessage({ type: "error", text: err?.message || "Test failed." });
+    } finally {
+      setCfdTesting(false);
+    }
+  };
+
+  const handleCfdSave = async () => {
+    setCfdMessage(null);
+    setCfdSaving(true);
+    try {
+      const result = await window.electronAPI?.cfd?.saveConfig({
+        enabled: cfdForm.enabled,
+        path: cfdForm.path,
+        baudRate: Number(cfdForm.baudRate) || 9600,
+        welcomeLine1: cfdForm.welcomeLine1,
+        welcomeLine2: cfdForm.welcomeLine2
+      });
+      if (result?.success) {
+        setCfdMessage({ type: "success", text: cfdForm.enabled ? "Saved. Display should now be active." : "Saved. Display disabled." });
+        await loadCfd();
+      } else {
+        setCfdMessage({ type: "error", text: result?.error || "Could not save / connect." });
+        await loadCfd();
+      }
+    } catch (err: any) {
+      setCfdMessage({ type: "error", text: err?.message || "Save failed." });
+    } finally {
+      setCfdSaving(false);
+    }
+  };
+
   const loadSyncStatus = async () => {
     try {
       const status = await window.electronAPI?.sync?.getStatus();
@@ -156,6 +239,7 @@ export default function Settings() {
     loadFailedRows();
     loadRateHistory();
     loadBackupList();
+    loadCfd();
   }, []);
 
   const loadRateHistory = async () => {
@@ -495,6 +579,7 @@ export default function Settings() {
             { id: "USERS", label: "Users & Roles", icon: Users },
             { id: "AUDIT", label: "Audit Log", icon: ShieldCheck },
             { id: "SYNC", label: "Sync Configuration", icon: RefreshCw },
+            { id: "CFD", label: "Customer Display", icon: Tv },
             { id: "BACKUP", label: "Local Backup", icon: Database },
           ].map(tab => (
             <button
@@ -1232,6 +1317,192 @@ export default function Settings() {
                   {saved ? <CheckCircle2 className="w-4 h-4"/> : <Save className="w-4 h-4"/>}
                   {saved ? "Saved" : "Save Sync Settings"}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* ====== CUSTOMER FACING DISPLAY (CFD) ====== */}
+          {activeTab === "CFD" && (
+            <div className="p-6 space-y-6 animate-slide-in-right">
+              <div className="flex justify-between items-start border-b border-surface-4 pb-4 gap-3">
+                <div>
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <Tv className="w-5 h-5 text-info" /> Customer Facing Display
+                  </h2>
+                  <p className="text-sm text-text-secondary mt-1">
+                    2-line × 20-char pole display (HP TD620 / generic VFD on a serial COM port).
+                    Shows the running cart total to the customer as you ring up items.
+                  </p>
+                </div>
+                <button onClick={loadCfd} className="btn-secondary text-sm px-3 py-1.5 flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4" /> Refresh
+                </button>
+              </div>
+
+              {/* Status panel */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-surface-3 p-4 rounded-xl border border-surface-4">
+                  <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">Status</span>
+                  <div className={cn("text-xl font-bold mt-2", cfdStatus?.connected ? "text-success" : cfdStatus?.enabled ? "text-warning" : "text-text-secondary")}>
+                    {cfdStatus?.connected ? "CONNECTED" : cfdStatus?.enabled ? "DISCONNECTED" : "DISABLED"}
+                  </div>
+                  {!cfdStatus?.nativeAvailable && (
+                    <p className="text-[11px] text-danger mt-1">
+                      'serialport' module not loaded. Run <code>npm install</code> + <code>npm run rebuild:native</code> in electron-pos.
+                    </p>
+                  )}
+                </div>
+                <div className="bg-surface-3 p-4 rounded-xl border border-surface-4">
+                  <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">Port</span>
+                  <div className="text-xl font-mono font-bold mt-2">{cfdStatus?.path || "—"}</div>
+                  <div className="text-[11px] text-text-secondary">{cfdStatus?.baudRate ? `${cfdStatus.baudRate} baud` : ""}</div>
+                </div>
+                <div className="bg-surface-3 p-4 rounded-xl border border-surface-4">
+                  <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">Last Write</span>
+                  <div className="text-xl font-mono font-bold mt-2">
+                    {cfdStatus?.lastWriteAt ? new Date(cfdStatus.lastWriteAt).toLocaleTimeString() : "—"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Live preview — what the customer is seeing right now */}
+              <div className="rounded-xl border-2 border-surface-4 overflow-hidden">
+                <div className="bg-surface-3 px-4 py-2 text-xs font-bold uppercase tracking-wider text-text-secondary">
+                  Display Preview (welcome state)
+                </div>
+                <div className="p-4 bg-black flex justify-center">
+                  <div className="font-mono text-[15px] leading-tight text-green-300 bg-black px-4 py-2 border border-green-700/40 rounded">
+                    <div className="whitespace-pre">{(cfdForm.welcomeLine1 || "").padEnd(20).slice(0, 20)}</div>
+                    <div className="whitespace-pre">{(cfdForm.welcomeLine2 || "").padEnd(20).slice(0, 20)}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Configuration */}
+              <div className="grid gap-4 max-w-2xl">
+                <label className="flex items-center justify-between rounded-lg border border-surface-4 bg-surface-3 px-4 py-3">
+                  <div>
+                    <div className="text-sm font-semibold text-text-primary">Enable Customer Display</div>
+                    <div className="text-xs text-text-secondary">Open the COM port at startup and push cart updates as items are scanned.</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={cfdForm.enabled}
+                    onChange={(e) => setCfdForm({ ...cfdForm, enabled: e.target.checked })}
+                    className="h-5 w-5 accent-primary"
+                  />
+                </label>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-text-secondary uppercase tracking-wider mb-1 block">COM Port</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={cfdForm.path}
+                        onChange={(e) => setCfdForm({ ...cfdForm, path: e.target.value })}
+                        className="input font-mono text-sm flex-1"
+                        placeholder="COM5"
+                      />
+                      {cfdPorts.length > 0 && (
+                        <select
+                          value=""
+                          onChange={(e) => e.target.value && setCfdForm({ ...cfdForm, path: e.target.value })}
+                          className="input md:w-48"
+                          title="Auto-detected ports"
+                        >
+                          <option value="">Detected ports…</option>
+                          {cfdPorts.map((p) => (
+                            <option key={p.path} value={p.path}>
+                              {p.path}{p.manufacturer ? ` — ${p.manufacturer}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <span className="text-xs text-text-secondary mt-1 block">
+                      HP TD620 typically appears as COM5 on the AIO. Check Device Manager → Ports if unsure.
+                    </span>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-text-secondary uppercase tracking-wider mb-1 block">Baud Rate</label>
+                    <select
+                      value={cfdForm.baudRate}
+                      onChange={(e) => setCfdForm({ ...cfdForm, baudRate: e.target.value })}
+                      className="input"
+                    >
+                      <option value="9600">9600 (HP TD620 default)</option>
+                      <option value="19200">19200</option>
+                      <option value="38400">38400</option>
+                      <option value="57600">57600</option>
+                      <option value="115200">115200</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-text-secondary uppercase tracking-wider mb-1 block">Welcome Line 1 (max 20 chars)</label>
+                    <input
+                      type="text"
+                      maxLength={20}
+                      value={cfdForm.welcomeLine1}
+                      onChange={(e) => setCfdForm({ ...cfdForm, welcomeLine1: e.target.value })}
+                      className="input font-mono"
+                    />
+                    <span className="text-[10px] text-text-secondary block mt-1">{cfdForm.welcomeLine1.length}/20</span>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-text-secondary uppercase tracking-wider mb-1 block">Welcome Line 2 (max 20 chars)</label>
+                    <input
+                      type="text"
+                      maxLength={20}
+                      value={cfdForm.welcomeLine2}
+                      onChange={(e) => setCfdForm({ ...cfdForm, welcomeLine2: e.target.value })}
+                      className="input font-mono"
+                    />
+                    <span className="text-[10px] text-text-secondary block mt-1">{cfdForm.welcomeLine2.length}/20</span>
+                  </div>
+                </div>
+
+                {/* Quick HP TD620 preset */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => setCfdForm({ ...cfdForm, path: "COM5", baudRate: "9600" })}
+                    className="btn-secondary text-xs px-3 py-1.5"
+                    title="Set COM5 + 9600 baud (factory default for HP TD620)"
+                  >
+                    Use HP TD620 defaults (COM5 / 9600)
+                  </button>
+                </div>
+
+                {cfdMessage && (
+                  <div className={cn(
+                    "rounded-lg border px-4 py-2 text-sm",
+                    cfdMessage.type === "success" ? "border-success/30 bg-success/10 text-success" : "border-danger/30 bg-danger/10 text-danger"
+                  )}>
+                    {cfdMessage.text}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <button
+                    onClick={handleCfdTest}
+                    disabled={cfdTesting || !cfdForm.path}
+                    className="btn-secondary flex items-center gap-2"
+                  >
+                    <RefreshCw className={cn("w-4 h-4", cfdTesting && "animate-spin")} />
+                    {cfdTesting ? "Testing…" : "Test Display"}
+                  </button>
+                  <button
+                    onClick={handleCfdSave}
+                    disabled={cfdSaving}
+                    className="btn-primary flex items-center gap-2"
+                  >
+                    <Save className="w-4 h-4" />
+                    {cfdSaving ? "Saving…" : "Save & Connect"}
+                  </button>
+                </div>
               </div>
             </div>
           )}

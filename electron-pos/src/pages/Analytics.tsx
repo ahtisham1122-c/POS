@@ -46,6 +46,8 @@ type PeriodSummary = {
 };
 
 type Analytics = {
+  reportDate?: string;
+  daysBack?: number;
   today: TodayKpis;
   hourly: HourPoint[];
   dailyTrend: DayPoint[];
@@ -57,6 +59,24 @@ type Analytics = {
   };
   generatedAt: string;
 };
+
+function todayLocalIso() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// Daily-volume chart axis helpers — keep labels short so 30+ bars fit on
+// screen without truncation, and avoid timezone drift by parsing the ISO
+// date as local midnight (not UTC).
+function formatChartDate(iso: string) {
+  return format(new Date(`${iso}T00:00:00`), "EEE, dd MMM yyyy");
+}
+function formatChartDateShort(iso: string) {
+  return format(new Date(`${iso}T00:00:00`), "dd MMM");
+}
 
 function rs(n: number) {
   return `Rs. ${Math.round(Number(n || 0)).toLocaleString("en-PK")}`;
@@ -79,11 +99,15 @@ function deltaPct(current: number, previous: number) {
 export default function Analytics() {
   const [data, setData] = useState<Analytics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // Date picker for reviewing historical days. Defaults to today (local).
+  const [pickedDate, setPickedDate] = useState<string>(todayLocalIso());
+  const [daysBack, setDaysBack] = useState<number>(30);
+  const isToday = pickedDate === todayLocalIso();
 
-  async function loadData() {
+  async function loadData(date = pickedDate, span = daysBack) {
     setIsLoading(true);
     try {
-      const result = await window.electronAPI?.reports?.getAnalytics();
+      const result = await window.electronAPI?.reports?.getAnalytics({ date, daysBack: span });
       setData(result || null);
     } catch (err) {
       console.error("Analytics load failed", err);
@@ -93,12 +117,14 @@ export default function Analytics() {
   }
 
   useEffect(() => {
-    loadData();
-    // Re-fetch every 60s so the owner can leave the tab open and watch
-    // numbers tick up during a busy hour.
-    const id = setInterval(loadData, 60000);
+    loadData(pickedDate, daysBack);
+    // Only auto-refresh when viewing today — for past dates the data is
+    // historical and never changes, so polling would be wasteful.
+    if (!isToday) return;
+    const id = setInterval(() => loadData(pickedDate, daysBack), 30000);
     return () => clearInterval(id);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedDate, daysBack]);
 
   const maxHourBills = useMemo(
     () => Math.max(1, ...(data?.hourly?.map((h) => h.bills) || [0])),
@@ -134,25 +160,71 @@ export default function Analytics() {
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto animate-slide-up">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Analytics</h1>
+          <h1 className="text-2xl font-bold text-text-primary flex items-center gap-3">
+            Analytics
+            {isToday ? (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/10 border border-success/20">
+                <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+                <span className="text-[10px] font-bold text-success uppercase tracking-wider">Live</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-warning/10 border border-warning/20">
+                <span className="text-[10px] font-bold text-warning uppercase tracking-wider">History</span>
+              </div>
+            )}
+          </h1>
           <p className="text-text-secondary mt-1">
-            Walk-in trends. Refreshes every minute. Last updated{" "}
-            {format(new Date(data.generatedAt), "hh:mm a")}.
+            {isToday
+              ? `Walk-in trends. Refreshes every 30 seconds. Last updated ${format(new Date(data.generatedAt), "hh:mm a")}.`
+              : `Showing data for ${format(new Date(`${pickedDate}T00:00:00`), "EEEE, dd MMM yyyy")}.`}
           </p>
         </div>
-        <button
-          onClick={loadData}
-          className="btn-secondary flex items-center justify-center gap-2"
-        >
-          <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 bg-surface-2/40 border border-surface-4 rounded-lg px-3 py-1.5">
+            <Calendar className="w-4 h-4 text-text-secondary" />
+            <input
+              type="date"
+              value={pickedDate}
+              max={todayLocalIso()}
+              onChange={(e) => setPickedDate(e.target.value || todayLocalIso())}
+              className="bg-transparent text-sm font-mono outline-none text-text-primary"
+            />
+            {!isToday && (
+              <button
+                onClick={() => setPickedDate(todayLocalIso())}
+                className="text-[10px] font-bold uppercase tracking-wider text-info hover:underline"
+                title="Jump back to today"
+              >
+                Today
+              </button>
+            )}
+          </div>
+          <select
+            value={daysBack}
+            onChange={(e) => setDaysBack(Number(e.target.value) || 30)}
+            className="input h-9 text-xs px-2 py-1"
+            title="Daily-volume chart window"
+          >
+            <option value={7}>Last 7 days</option>
+            <option value={14}>Last 14 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={60}>Last 60 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+          <button
+            onClick={() => loadData(pickedDate, daysBack)}
+            className="btn-secondary flex items-center justify-center gap-2"
+          >
+            <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {/* ---------- TODAY KPI CARDS ---------- */}
+      {/* ---------- TODAY/HISTORICAL KPI CARDS ---------- */}
       <section>
         <h2 className="text-sm font-bold uppercase tracking-widest text-text-secondary mb-3">
-          Today
+          {isToday ? "Today" : format(new Date(`${pickedDate}T00:00:00`), "EEEE, dd MMM yyyy")}
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
           <KpiCard
@@ -197,10 +269,11 @@ export default function Analytics() {
       <section className="card overflow-hidden">
         <div className="p-5 border-b border-surface-4 bg-surface-2/70">
           <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
-            <Clock className="w-5 h-5 text-info" /> Hourly Customers Today
+            <Clock className="w-5 h-5 text-info" />
+            {isToday ? "Hourly Customers Today" : `Hourly Customers — ${format(new Date(`${pickedDate}T00:00:00`), "dd MMM yyyy")}`}
           </h2>
           <p className="text-sm text-text-secondary mt-1">
-            See your busy hours at a glance. Bar height = number of bills served.
+            Bar height = number of bills served in that hour (your shop's local time).
           </p>
         </div>
         <div className="p-5">
@@ -240,44 +313,73 @@ export default function Analytics() {
         </div>
       </section>
 
-      {/* ---------- 30-DAY TREND ---------- */}
+      {/* ---------- DAILY TREND ---------- */}
       <section className="card overflow-hidden">
         <div className="p-5 border-b border-surface-4 bg-surface-2/70">
           <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-success" /> Daily Volume — Last 30 Days
+            <Calendar className="w-5 h-5 text-success" /> Daily Volume — Last {daysBack} Days
           </h2>
           <p className="text-sm text-text-secondary mt-1">
-            Combined milk + yogurt (kg). Spot trends — is volume rising or
-            falling vs last week?
+            Combined milk + yogurt (kg). Days with no sales show as empty bars
+            so you can clearly see where the gaps are.
           </p>
         </div>
         <div className="p-5">
-          <div className="flex items-end gap-[2px] h-44">
-            {dailyTrend.length === 0 && (
-              <div className="text-text-secondary text-sm w-full text-center py-10">
-                Not enough sales data yet — need at least 1 day of sales.
-              </div>
-            )}
-            {dailyTrend.map((d) => {
-              const heightPct = (d.combinedKg / maxDayCombined) * 100;
-              return (
-                <div
-                  key={d.date}
-                  className="flex-1 flex flex-col items-center justify-end min-w-0 group"
-                  title={`${d.date}\n${d.bills} bills, ${rs(d.revenue)}\nMilk: ${kg(d.milkKg)}, Yogurt: ${kg(d.yogurtKg)}`}
-                >
-                  <div
-                    className="w-full rounded-t-sm bg-success/70 group-hover:bg-success transition-all"
-                    style={{ height: `${Math.max(heightPct, 1)}%` }}
-                  />
+          {/* Y-axis peak indicator + chart canvas. Days with zero combinedKg
+              still render a 1-px bar so the chart shows the full series. */}
+          <div className="relative h-44 ml-12">
+            <div className="absolute -left-12 top-0 text-[10px] font-mono text-text-secondary">
+              {kg(maxDayCombined)}
+            </div>
+            <div className="absolute -left-12 bottom-0 text-[10px] font-mono text-text-secondary">0 kg</div>
+            <div className="absolute left-0 right-0 top-1/2 border-t border-dashed border-surface-4" />
+            <div className="absolute -left-12 top-1/2 -translate-y-1/2 text-[10px] font-mono text-text-secondary">
+              {kg(maxDayCombined / 2)}
+            </div>
+            <div className="flex items-end gap-[2px] h-full">
+              {dailyTrend.length === 0 && (
+                <div className="text-text-secondary text-sm w-full text-center py-10">
+                  Not enough sales data yet — need at least 1 day of sales.
                 </div>
-              );
-            })}
+              )}
+              {dailyTrend.map((d) => {
+                const heightPct = (d.combinedKg / maxDayCombined) * 100;
+                const hasSales = d.combinedKg > 0;
+                return (
+                  <div
+                    key={d.date}
+                    className="flex-1 flex flex-col items-center justify-end min-w-0 group relative"
+                    title={`${formatChartDate(d.date)}\n${d.bills} bills, ${rs(d.revenue)}\nMilk: ${kg(d.milkKg)}  ·  Yogurt: ${kg(d.yogurtKg)}`}
+                  >
+                    <div
+                      className={cn(
+                        "w-full rounded-t-sm transition-all",
+                        hasSales
+                          ? "bg-success/70 group-hover:bg-success"
+                          : "bg-surface-3 group-hover:bg-surface-4"
+                      )}
+                      style={{ height: `${hasSales ? Math.max(heightPct, 2) : 1}%` }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </div>
+          {/* X-axis: print a date label every Nth bar so labels don't overlap */}
           {dailyTrend.length > 0 && (
-            <div className="flex justify-between text-[10px] text-text-secondary font-mono mt-2">
-              <span>{dailyTrend[0]?.date}</span>
-              <span>{dailyTrend[dailyTrend.length - 1]?.date}</span>
+            <div className="ml-12 flex gap-[2px] mt-2">
+              {dailyTrend.map((d, idx) => {
+                const stride = Math.max(1, Math.ceil(dailyTrend.length / 8));
+                const showLabel = idx === 0 || idx === dailyTrend.length - 1 || idx % stride === 0;
+                return (
+                  <div
+                    key={d.date}
+                    className="flex-1 text-[9px] text-text-secondary font-mono text-center min-w-0 truncate"
+                  >
+                    {showLabel ? formatChartDateShort(d.date) : ""}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

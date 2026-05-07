@@ -15,19 +15,68 @@ function getRegister(date: string, shiftId?: string | null) {
   return db.prepare('SELECT * FROM cash_register WHERE date = ? ORDER BY created_at DESC LIMIT 1').get(date) as any;
 }
 
+// Sum the online tender that should have arrived in the bank/JazzCash
+// account during this shift/day. Owner asked to reconcile this at close
+// alongside cash. We pull it from split_payments (every sale, regardless
+// of payment_type, drops one row per method into split_payments — see
+// sales.ipc.ts), then subtract any online refunds tied to returns on the
+// same shift/day so we end up with a NET expected online inflow.
+export function getExpectedOnlineTender(date: string, shiftId?: string | null) {
+  const collectedRow = shiftId
+    ? db.prepare(`
+        SELECT COALESCE(SUM(sp.amount), 0) AS total
+        FROM split_payments sp
+        JOIN sales s ON s.id = sp.sale_id
+        WHERE sp.method = 'ONLINE'
+          AND (s.shift_id = ? OR (s.shift_id IS NULL AND substr(s.sale_date, 1, 10) = ?))
+          AND s.status IN ('COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED')
+      `).get(shiftId, date) as any
+    : db.prepare(`
+        SELECT COALESCE(SUM(sp.amount), 0) AS total
+        FROM split_payments sp
+        JOIN sales s ON s.id = sp.sale_id
+        WHERE sp.method = 'ONLINE'
+          AND substr(s.sale_date, 1, 10) = ?
+          AND s.status IN ('COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED')
+      `).get(date) as any;
+
+  // Refunds processed via online (rare but possible — e.g. JazzCash reversal).
+  // Subtracting these gives us a NET online inflow, which is what the cashier
+  // should compare against the bank app at end of day.
+  const refundedRow = shiftId
+    ? db.prepare(`
+        SELECT COALESCE(SUM(r.refund_amount), 0) AS total
+        FROM returns r
+        WHERE UPPER(COALESCE(r.refund_method, 'CASH')) = 'ONLINE'
+          AND (r.shift_id = ? OR (r.shift_id IS NULL AND substr(r.return_date, 1, 10) = ?))
+      `).get(shiftId, date) as any
+    : db.prepare(`
+        SELECT COALESCE(SUM(r.refund_amount), 0) AS total
+        FROM returns r
+        WHERE UPPER(COALESCE(r.refund_method, 'CASH')) = 'ONLINE'
+          AND substr(r.return_date, 1, 10) = ?
+      `).get(date) as any;
+
+  const collected = Number(collectedRow?.total || 0);
+  const refunded = Number(refundedRow?.total || 0);
+  return Number(Math.max(0, collected - refunded).toFixed(2));
+}
+
 export function getCashRegisterExpected(date = getTodayDate(), shiftId?: string | null) {
   const register = getRegister(date, shiftId);
   const openingCash = Number(register?.opening_balance || 0);
   const cashIn = Number(register?.cash_in || 0);
   const cashOut = Number(register?.cash_out || 0);
   const expectedCash = Number((openingCash + cashIn - cashOut).toFixed(2));
+  const expectedOnline = getExpectedOnlineTender(date, shiftId);
 
   return {
     register,
     openingCash,
     cashIn,
     cashOut,
-    expectedCash
+    expectedCash,
+    expectedOnline
   };
 }
 

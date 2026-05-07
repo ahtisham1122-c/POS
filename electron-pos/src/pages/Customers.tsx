@@ -183,56 +183,86 @@ export default function Customers() {
         </button>
       </div>
 
+      {/* KPI CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">Total Customers</p>
-          <div className="flex items-center gap-3">
-            <Users className="w-8 h-8 text-primary opacity-50" />
-            <p className="text-2xl font-bold text-text-primary">{customers.length}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-primary/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Users className="w-5 h-5 text-primary" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Total Customers</p>
+            </div>
+            <p className="text-3xl font-bold text-text-primary">{customers.length}</p>
           </div>
         </div>
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">Total Outstanding</p>
-          <div className="flex items-center gap-3">
-            <DollarSign className="w-8 h-8 text-danger opacity-50" />
-            <p className="text-2xl font-bold text-danger font-mono">{toMoney(totalOutstanding)}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-danger/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center">
+                <DollarSign className="w-5 h-5 text-danger" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Total Outstanding</p>
+            </div>
+            <p className="text-3xl font-bold text-danger font-mono">{toMoney(totalOutstanding)}</p>
           </div>
         </div>
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">Customers with Dues</p>
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="w-8 h-8 text-warning opacity-50" />
-            <p className="text-2xl font-bold text-warning">{customersWithDues}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-warning/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-warning/10 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-warning" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">With Dues</p>
+            </div>
+            <p className="text-3xl font-bold text-warning">{customersWithDues}</p>
           </div>
         </div>
       </div>
 
       <div className="card overflow-hidden">
-        <div className="p-4 border-b border-surface-4 flex flex-col md:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search by name, phone, or card number..."
-              className="input pl-10"
-            />
+        {/* Search + Filter Chips */}
+        <div className="p-4 border-b border-surface-4 bg-surface-2/50">
+          <div className="flex flex-col md:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search by name, phone, or card number..."
+                className="input pl-10"
+              />
+            </div>
+            <div className="flex gap-2">
+              {(["ALL", "WITH_DUES", "CLEAR"] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={cn(
+                    "px-3 py-2 rounded-lg text-xs font-bold border transition-all",
+                    filter === f
+                      ? f === "WITH_DUES" ? "bg-danger/10 border-danger/30 text-danger" : f === "CLEAR" ? "bg-success/10 border-success/30 text-success" : "bg-primary/10 border-primary/30 text-primary"
+                      : "border-surface-4 text-text-secondary hover:bg-surface-3"
+                  )}
+                >
+                  {f === "ALL" ? "All" : f === "WITH_DUES" ? `Dues (${customersWithDues})` : "Clear"}
+                </button>
+              ))}
+            </div>
           </div>
-          <select value={filter} onChange={e => setFilter(e.target.value as any)} className="input md:w-48 appearance-none">
-            <option value="ALL">All Customers</option>
-            <option value="WITH_DUES">With Dues Only</option>
-            <option value="CLEAR">Account Clear</option>
-          </select>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead className="bg-surface-3 text-text-secondary uppercase text-[10px] tracking-wider font-semibold border-b border-surface-4">
               <tr>
-                <th className="px-4 py-3">Card No</th>
-                <th className="px-4 py-3">Name</th>
+                <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Phone</th>
+                <th className="px-4 py-3">Card</th>
                 <th className="px-4 py-3">Balance</th>
                 <th className="px-4 py-3">Last Sale</th>
                 <th className="px-4 py-3 text-right">Actions</th>
@@ -241,44 +271,62 @@ export default function Customers() {
             <tbody className="divide-y divide-surface-4">
               {filteredCustomers.map(c => {
                 const owes = Number(c.current_balance || 0) > 0;
+                const initials = c.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
                 return (
-                  <tr key={c.id} className={cn("hover:bg-surface-3/50 transition-colors", owes && "border-l-[3px] border-l-danger")}>
-                    <td className="px-4 py-4 font-mono text-text-secondary">{c.card_number || "—"}</td>
-                    <td className="px-4 py-4 font-medium text-text-primary">{c.name}</td>
-                    <td className="px-4 py-4 text-text-secondary">{c.phone || "—"}</td>
-                    <td className="px-4 py-4">
+                  <tr key={c.id} className={cn("hover:bg-surface-3/50 transition-colors group", owes && "border-l-[3px] border-l-danger")}>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                          owes ? "bg-danger/10 text-danger" : "bg-primary/10 text-primary"
+                        )}>
+                          {initials}
+                        </div>
+                        <span className="font-semibold text-text-primary">{c.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-text-secondary font-mono text-xs">{c.phone || "—"}</td>
+                    <td className="px-4 py-3 font-mono text-text-secondary text-xs">{c.card_number || "—"}</td>
+                    <td className="px-4 py-3">
                       {owes ? (
-                        <span className="text-danger font-bold font-mono">{toMoney(c.current_balance)} Due</span>
+                        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-danger/10 text-danger text-xs font-bold font-mono">
+                          {toMoney(c.current_balance)}
+                        </span>
                       ) : (
-                        <span className="text-success flex items-center gap-1 font-medium"><UserCheck className="w-4 h-4" /> Clear</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-success/10 text-success text-xs font-bold">
+                          <UserCheck className="w-3.5 h-3.5" /> Clear
+                        </span>
                       )}
                     </td>
-                    <td className="px-4 py-4 text-text-secondary text-xs">
+                    <td className="px-4 py-3 text-text-secondary text-xs">
                       {c.last_sale_date ? new Date(c.last_sale_date).toLocaleDateString() : "Never"}
                     </td>
-                    <td className="px-4 py-4 text-right space-x-2">
-                      <button 
-                        onClick={() => { setSelectedCustomer(c); setCollectModalOpen(true); }}
-                        className="p-2 text-success hover:bg-success/10 rounded-md transition-colors font-medium border border-transparent hover:border-success/30 inline-flex items-center gap-1"
-                        disabled={!owes}
-                      >
-                        <DollarSign className="w-4 h-4" /> Collect
-                      </button>
-                      <button onClick={() => openKhata(c)} className="p-2 text-primary hover:bg-primary/10 rounded-md transition-colors font-medium border border-transparent hover:border-primary/30 inline-flex items-center gap-1">
-                        <BookOpen className="w-4 h-4" /> Khata
-                      </button>
-                      <button onClick={() => openEdit(c)} className="p-2 text-text-secondary hover:text-text-primary hover:bg-surface-3 rounded-md transition-colors border border-transparent">
-                        <Edit2 className="w-4 h-4" />
-                      </button>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => { setSelectedCustomer(c); setCollectModalOpen(true); }}
+                          className={cn("p-2 rounded-lg transition-colors inline-flex items-center gap-1 text-xs font-bold", owes ? "text-success hover:bg-success/10" : "text-text-secondary/40 cursor-not-allowed")}
+                          disabled={!owes}
+                        >
+                          <DollarSign className="w-4 h-4" /> Collect
+                        </button>
+                        <button onClick={() => openKhata(c)} className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors inline-flex items-center gap-1 text-xs font-bold">
+                          <BookOpen className="w-4 h-4" /> Khata
+                        </button>
+                        <button onClick={() => openEdit(c)} className="p-2 text-text-secondary hover:text-text-primary hover:bg-surface-3 rounded-lg transition-colors">
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
               })}
               {filteredCustomers.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-text-secondary">
-                    <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                    <p>No customers found</p>
+                  <td colSpan={6} className="px-4 py-12 text-center text-text-secondary">
+                    <Users className="w-14 h-14 mx-auto mb-3 opacity-20" />
+                    <p className="font-bold text-text-primary">No customers found</p>
+                    <p className="text-sm mt-1">Try adjusting your search or filters.</p>
                   </td>
                 </tr>
               )}

@@ -95,7 +95,7 @@ export interface ElectronAPI {
     getProfitLoss: (startDate: string, endDate: string) => Promise<any>;
     getMonthlySummary: (year: string) => Promise<any[]>;
     getDashboardStats: () => Promise<any>;
-    getAnalytics: () => Promise<any>;
+    getAnalytics: (filters?: { date?: string; daysBack?: number }) => Promise<any>;
     exportReport: (data: { type: string; format: 'excel' | 'pdf'; params?: any }) => Promise<{ success: boolean; path?: string; reason?: string; error?: string }>;
   };
   dailyRates: {
@@ -129,6 +129,18 @@ export interface ElectronAPI {
     getPendingCount: () => Promise<number>;
     getFailedRows: () => Promise<Array<{ id: string; table_name: string; record_id: string; operation: string; error_message: string; attempt_count: number; last_attempted_at: string | null; created_at: string }>>;
     dismissRow: (id: string) => Promise<{ success: boolean }>;
+  };
+  cfd: {
+    getStatus: () => Promise<{ enabled: boolean; connected: boolean; path: string; baudRate: number; welcomeLine1: string; welcomeLine2: string; lastWriteAt: number | null; nativeAvailable: boolean }>;
+    listPorts: () => Promise<Array<{ path: string; manufacturer?: string; productId?: string; vendorId?: string; serialNumber?: string }>>;
+    test: (data: { path: string; baudRate?: number; line1?: string; line2?: string }) => Promise<{ success: boolean; error?: string }>;
+    saveConfig: (data: { enabled?: boolean; path?: string; baudRate?: number; welcomeLine1?: string; welcomeLine2?: string }) => Promise<{ success: boolean; error?: string }>;
+    reconnect: () => Promise<{ success: boolean; error?: string }>;
+    showItem: (data: { name: string; price: number; quantity?: number }) => Promise<{ success: boolean; skipped?: boolean }>;
+    showCartTotal: (data: { itemCount: number; total: number }) => Promise<{ success: boolean; skipped?: boolean }>;
+    showThankYou: (data: { grandTotal: number; change?: number }) => Promise<{ success: boolean; skipped?: boolean }>;
+    showWelcome: () => Promise<{ success: boolean; skipped?: boolean }>;
+    showLines: (data: { line1: string; line2: string }) => Promise<{ success: boolean; skipped?: boolean }>;
   };
   system: {
     backup: () => Promise<{ success: boolean; path?: string; backups?: any[]; error?: string }>;

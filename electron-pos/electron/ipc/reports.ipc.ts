@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 import db from '../database/db';
 import { createOutboxEntry } from '../sync/outboxHelper';
 import { getCashRegisterExpected } from '../database/cashRegister';
-import { getActiveBusinessDate, getBusinessDate } from '../database/businessDay';
+import { getActiveBusinessDate, getBusinessDate, formatLocalDate } from '../database/businessDay';
 
 const ACCOUNTING_SALE_STATUSES = "'COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED'";
 
@@ -82,7 +82,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(refund_amount), 0) as totalRefunds,
         COALESCE(SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END), 0) as cashRefunds
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED'
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
     `).get(...scopeParams(scope)) as any;
 
     const voidStats = db.prepare(`
@@ -167,7 +167,7 @@ export function registerReportsIPC() {
         SUM(refund_amount) as total,
         SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END) as cashRefunds
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED'
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
     `).get(...scopeParams(scope)) as any;
     const expenses = db.prepare(`SELECT SUM(amount) as total FROM expenses e WHERE ${shiftTableScope('e', 'expense_date', scope)}`).get(...scopeParams(scope)) as any;
     const refundTotal = returns?.total || 0;
@@ -225,7 +225,7 @@ export function registerReportsIPC() {
         SUM(refund_amount) as total,
         SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END) as cashRefunds
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED'
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
     `).get(...scopeParams(scope)) as any;
 
     const drawer = getCashRegisterExpected(scope.date, scope.shiftId);
@@ -324,7 +324,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(r.refund_amount), 0) as refunds
       FROM returns r
       LEFT JOIN shifts sh ON sh.id = r.shift_id
-      WHERE r.return_date >= datetime('now', ?) AND r.status = 'COMPLETED'
+      WHERE r.return_date >= datetime('now', ?) AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
       GROUP BY COALESCE(sh.shift_date, substr(r.return_date, 1, 10))
     `).all(`-${safeDays} day`) as Array<{ date: string; refunds: number }>;
     const refundsByDate = new Map(returnRows.map((row) => [row.date, Number(row.refunds || 0)]));
@@ -399,7 +399,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END), 0) as cashRefunds
       FROM returns r
       LEFT JOIN shifts sh ON sh.id = r.shift_id
-      WHERE r.status = 'COMPLETED'
+      WHERE r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
       AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) >= ?
       AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) <= ?
     `).get(startDate, endDate) as any;
@@ -484,7 +484,7 @@ export function registerReportsIPC() {
       FROM returns r
       LEFT JOIN shifts sh ON sh.id = r.shift_id
       WHERE substr(COALESCE(sh.shift_date, substr(r.return_date, 1, 10)), 1, 4) = ?
-        AND r.status = 'COMPLETED'
+        AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
       GROUP BY substr(COALESCE(sh.shift_date, substr(r.return_date, 1, 10)), 1, 7)
     `).all(year) as Array<{ month: string; refunded: number }>;
     const refundByMonth = new Map(refunds.map((r) => [r.month, Number(r.refunded || 0)]));
@@ -522,7 +522,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(refund_amount), 0) as total,
         COALESCE(SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END), 0) as cashRefunds
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED'
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
     `).get(...scopeParams(scope)) as any;
 
     const todayExpenses = db.prepare(`
@@ -612,8 +612,15 @@ export function registerReportsIPC() {
   // Walk-in receipts only — khata customer detail is not needed here, the
   // owner just wants "is the average basket increasing or decreasing?"
   // -------------------------------------------------------------------------
-  ipcMain.handle('reports:getAnalytics', () => {
-    const today = getActiveBusinessDate();
+  ipcMain.handle('reports:getAnalytics', (_event, filters?: { date?: string; daysBack?: number }) => {
+    // Owner asked for a date picker so they can review past days. If a date
+    // is supplied we anchor *all* sections of the report to it (today's KPIs,
+    // hourly chart, period comparisons). The 30-day trend window also rolls
+    // back so it ends on the picked date.
+    const today = (filters?.date && /^\d{4}-\d{2}-\d{2}$/.test(filters.date))
+      ? filters.date
+      : getActiveBusinessDate();
+    const daysBack = Math.max(7, Math.min(180, Number(filters?.daysBack) || 30));
     const scope = getShiftScope(today);
     const saleWhere = saleScope('s', scope);
     const saleParams = scopeParams(scope);
@@ -663,9 +670,14 @@ export function registerReportsIPC() {
     };
 
     // ---- Hourly breakdown (today) ----
+    // sale_date is stored as UTC ISO (`new Date().toISOString()`), so without
+    // the 'localtime' modifier strftime returns UTC hours — at UTC+5 in
+    // Pakistan, a 6 PM sale would show up at 1 PM on the chart. Owner reported
+    // hours not lining up with when they actually serve customers; this fix
+    // converts to the machine's local timezone before bucketing.
     const hourlyRows = db.prepare(`
       SELECT
-        CAST(strftime('%H', s.sale_date) AS INTEGER) AS hour,
+        CAST(strftime('%H', s.sale_date, 'localtime') AS INTEGER) AS hour,
         COUNT(*) AS bills,
         COALESCE(SUM(s.grand_total), 0) AS revenue
       FROM sales s
@@ -680,24 +692,73 @@ export function registerReportsIPC() {
       revenue: Number(hourlyMap.get(h)?.revenue || 0)
     }));
 
-    // ---- 30-day trend ----
-    // One pre-aggregated row per business-date for the last 30 days. SQL
-    // does the heavy lifting; we just hand a 30-row array to the UI.
-    const dailyTrend = db.prepare(`
+    // ---- 30-day trend (window ends on the picked `today`) ----
+    // Two changes vs the old query:
+    //   1. The window is anchored on the picked date — picking 2026-04-15
+    //      shows the 30 days ending that day, not the literal last 30.
+    //   2. We hydrate every date in the window even when there were no sales
+    //      that day. Without this, gap-days were dropped and the chart bars
+    //      bunched together instead of showing a real "this Tuesday was slow"
+    //      trough — owner said "daily volume chart not shown properly".
+    const trendStart = new Date(`${today}T00:00:00`);
+    trendStart.setDate(trendStart.getDate() - (daysBack - 1));
+    const trendEnd = new Date(`${today}T00:00:00`);
+    trendEnd.setDate(trendEnd.getDate() + 1); // exclusive upper bound
+    const trendStartIso = formatLocalDate(trendStart);
+    const trendEndIso = formatLocalDate(trendEnd);
+
+    const dailyTrendRows = db.prepare(`
       SELECT
         COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) AS date,
-        COUNT(s.id) AS bills,
-        COALESCE(SUM(s.grand_total), 0) AS revenue,
+        COUNT(DISTINCT s.id) AS bills,
+        COALESCE(SUM(DISTINCT s.grand_total), 0) AS revenue,
         COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%milk%' THEN si.quantity ELSE 0 END), 0) AS milkKg,
         COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%yog%'  THEN si.quantity ELSE 0 END), 0) AS yogurtKg
       FROM sales s
       LEFT JOIN shifts sh ON sh.id = s.shift_id
       LEFT JOIN sale_items si ON si.sale_id = s.id
-      WHERE s.sale_date >= datetime('now', '-30 day')
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
         AND s.status IN (${ACCOUNTING_SALE_STATUSES})
       GROUP BY COALESCE(sh.shift_date, substr(s.sale_date, 1, 10))
       ORDER BY date ASC
-    `).all() as Array<{ date: string; bills: number; revenue: number; milkKg: number; yogurtKg: number }>;
+    `).all(trendStartIso, trendEndIso) as Array<{ date: string; bills: number; revenue: number; milkKg: number; yogurtKg: number }>;
+
+    // SUM(DISTINCT s.grand_total) above prevents the LEFT JOIN against
+    // sale_items from inflating revenue. But DISTINCT only dedupes by VALUE,
+    // not by sale id, so re-run a clean revenue/bill aggregate without the
+    // sale_items join to get accurate per-day totals.
+    const dailyTotalsRows = db.prepare(`
+      SELECT
+        COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) AS date,
+        COUNT(s.id) AS bills,
+        COALESCE(SUM(s.grand_total), 0) AS revenue
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      GROUP BY COALESCE(sh.shift_date, substr(s.sale_date, 1, 10))
+    `).all(trendStartIso, trendEndIso) as Array<{ date: string; bills: number; revenue: number }>;
+
+    const trendByDate = new Map(dailyTrendRows.map((r) => [r.date, r]));
+    const totalsByDate = new Map(dailyTotalsRows.map((r) => [r.date, r]));
+    // Build the full 30-day series in JS so missing days render as zero bars.
+    const dailyTrend: Array<{ date: string; bills: number; revenue: number; milkKg: number; yogurtKg: number }> = [];
+    for (let i = 0; i < daysBack; i++) {
+      const d = new Date(`${today}T00:00:00`);
+      d.setDate(d.getDate() - (daysBack - 1 - i));
+      const iso = formatLocalDate(d);
+      const row = trendByDate.get(iso);
+      const totals = totalsByDate.get(iso);
+      dailyTrend.push({
+        date: iso,
+        bills: Number(totals?.bills || 0),
+        revenue: Number(totals?.revenue || 0),
+        milkKg: Number(row?.milkKg || 0),
+        yogurtKg: Number(row?.yogurtKg || 0)
+      });
+    }
 
     // ---- This week vs last week, this month vs last month ----
     const periodSummary = (since: string, until: string) => {
@@ -727,8 +788,11 @@ export function registerReportsIPC() {
       };
     };
 
-    const ymd = (d: Date) => d.toISOString().slice(0, 10);
-    const now = new Date(today);
+    // Anchor period windows on the picked date (parsed as local midnight,
+    // never UTC, so a date string like "2026-04-15" doesn't drift across the
+    // day boundary at UTC+5).
+    const ymd = formatLocalDate;
+    const now = new Date(`${today}T00:00:00`);
     const startOfThisWeek = new Date(now); startOfThisWeek.setDate(now.getDate() - 6);
     const startOfLastWeek = new Date(now); startOfLastWeek.setDate(now.getDate() - 13);
     const endOfLastWeek   = new Date(now); endOfLastWeek.setDate(now.getDate() - 6);
@@ -747,6 +811,8 @@ export function registerReportsIPC() {
     };
 
     return {
+      reportDate: today,
+      daysBack,
       today: today_kpis,
       hourly,
       dailyTrend: dailyTrend.map((row) => ({

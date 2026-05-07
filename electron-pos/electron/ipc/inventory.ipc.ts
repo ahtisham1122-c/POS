@@ -78,6 +78,31 @@ export function registerInventoryIPC() {
       const quantity = requirePositiveQuantity(data.quantity, 'Stock-in quantity');
       const product = db.prepare('SELECT code FROM products WHERE id = ?').get(id) as any;
 
+      // Optional per-line cost from the new "Stock In" cart (issue #4: owner
+      // wanted to enter custom price per receipt). When provided we:
+      //   1. Update product.cost_price so future margin calcs are accurate.
+      //   2. Append "@ Rs.X (total Rs.Y)" to notes so the audit trail keeps
+      //      what was paid even if cost_price is later edited.
+      const rawUnitCost = data?.unitCost;
+      const unitCostNum = rawUnitCost === undefined || rawUnitCost === null || rawUnitCost === ''
+        ? null
+        : Number(rawUnitCost);
+      const useUnitCost = unitCostNum !== null && Number.isFinite(unitCostNum) && unitCostNum >= 0;
+      let mergedData: any = data;
+      if (useUnitCost) {
+        const lineTotal = +(quantity * unitCostNum).toFixed(2);
+        const baseNote = String(data?.notes || '').trim();
+        const costNote = `@ Rs.${unitCostNum} (total Rs.${lineTotal})`;
+        mergedData = {
+          ...data,
+          notes: baseNote ? `${baseNote} — ${costNote}` : costNote
+        };
+        const now = new Date().toISOString();
+        db.prepare('UPDATE products SET cost_price = ?, updated_at = ? WHERE id = ?')
+          .run(unitCostNum, now, id);
+        createOutboxEntry('products', 'UPDATE', id, { id, cost_price: unitCostNum, updated_at: now });
+      }
+
       // Yogurt is produced from milk — deduct same quantity from Milk in same transaction
       if (product?.code === 'YOGT') {
         return db.transaction(() => {
@@ -100,7 +125,7 @@ export function registerInventoryIPC() {
         })();
       }
 
-      return handleStockMutation(id, quantity, 'STOCK_IN', data);
+      return handleStockMutation(id, quantity, 'STOCK_IN', mergedData);
     } catch (e: any) {
       return { success: false, error: e.message };
     }

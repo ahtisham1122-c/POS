@@ -97,7 +97,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getCustomerDues: () => ipcRenderer.invoke('reports:getCustomerDues'),
     getProfitLoss: (startDate: string, endDate: string) => ipcRenderer.invoke('reports:getProfitLoss', startDate, endDate),
     getMonthlySummary: (year: string) => ipcRenderer.invoke('reports:getMonthlySummary', year),
-    getAnalytics: () => ipcRenderer.invoke('reports:getAnalytics'),
+    getAnalytics: (filters?: { date?: string; daysBack?: number }) => ipcRenderer.invoke('reports:getAnalytics', filters),
     exportReport: (data: any) => ipcRenderer.invoke('exports:report', data),
   },
   dailyRates: {
@@ -131,6 +131,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getPendingCount: () => ipcRenderer.invoke('sync:getPendingCount'),
     getFailedRows: () => ipcRenderer.invoke('sync:getFailedRows'),
     dismissRow: (id: string) => ipcRenderer.invoke('sync:dismissRow', id),
+  },
+  cfd: {
+    getStatus: () => ipcRenderer.invoke('cfd:getStatus'),
+    listPorts: () => ipcRenderer.invoke('cfd:listPorts'),
+    test: (data: { path: string; baudRate?: number; line1?: string; line2?: string }) =>
+      ipcRenderer.invoke('cfd:test', data),
+    saveConfig: (data: { enabled?: boolean; path?: string; baudRate?: number; welcomeLine1?: string; welcomeLine2?: string }) =>
+      ipcRenderer.invoke('cfd:saveConfig', data),
+    reconnect: () => ipcRenderer.invoke('cfd:reconnect'),
+    showItem: (data: { name: string; price: number; quantity?: number }) =>
+      ipcRenderer.invoke('cfd:showItem', data),
+    showCartTotal: (data: { itemCount: number; total: number }) =>
+      ipcRenderer.invoke('cfd:showCartTotal', data),
+    showThankYou: (data: { grandTotal: number; change?: number }) =>
+      ipcRenderer.invoke('cfd:showThankYou', data),
+    showWelcome: () => ipcRenderer.invoke('cfd:showWelcome'),
+    showLines: (data: { line1: string; line2: string }) =>
+      ipcRenderer.invoke('cfd:showLines', data),
   },
   system: {
     backup: () => ipcRenderer.invoke('system:backup'),

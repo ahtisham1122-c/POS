@@ -13,6 +13,10 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
   const [isLoading, setIsLoading] = useState(true);
   const [openingBalance, setOpeningBalance] = useState("0");
   const [closingBalance, setClosingBalance] = useState("");
+  // Online reconciliation: cashier verifies the JazzCash/bank received total
+  // against what the POS thinks should have arrived. Owner asked for this so
+  // online doesn't slip through unreconciled (#5).
+  const [closingOnline, setClosingOnline] = useState("");
   const [closingNotes, setClosingNotes] = useState("");
   const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
   const [isReopenModalOpen, setIsReopenModalOpen] = useState(false);
@@ -127,11 +131,16 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
     try {
       const res = await window.electronAPI?.cashRegister?.close({
         closingBalance: Number(closingBalance),
+        // Send the online figure too. If the field was left blank we forward
+        // undefined so the backend defaults to the expected total (= zero
+        // variance) rather than treating an empty input as zero received.
+        closingOnline: closingOnline.trim() === "" ? undefined : Number(closingOnline),
         notes: closingNotes.trim()
       });
       if (res?.success) {
         setIsClosingModalOpen(false);
         setClosingNotes("");
+        setClosingOnline("");
         loadRegister();
         loadHistory();
         loadZReport();
@@ -174,12 +183,17 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
     return <div className="p-6 flex justify-center"><RefreshCw className="w-8 h-8 animate-spin text-text-secondary" /></div>;
   }
 
-  const currentExpectedCash = registerData 
+  const currentExpectedCash = registerData
     ? Number(registerData.opening_balance) + Number(registerData.cash_in) - Number(registerData.cash_out)
     : 0;
   const countedCash = Number(closingBalance || 0);
   const cashVariance = Number((countedCash - currentExpectedCash).toFixed(2));
   const varianceLabel = cashVariance === 0 ? "Cash matched" : cashVariance > 0 ? "Cash extra" : "Cash short";
+  // Online reconciliation values driven by the close modal inputs
+  const expectedOnline = registerData ? Number(registerData.expected_online || 0) : 0;
+  const countedOnline = Number(closingOnline || 0);
+  const onlineVariance = Number((countedOnline - expectedOnline).toFixed(2));
+  const onlineVarianceLabel = onlineVariance === 0 ? "Online matched" : onlineVariance > 0 ? "Online extra" : "Online short";
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto animate-slide-up">
@@ -189,9 +203,10 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
           <p className="text-text-secondary mt-1">Manage drawer cash for shop day {businessDate}</p>
         </div>
         {registerData && !registerData.is_closed_for_day && (
-          <button 
+          <button
             onClick={() => {
               setClosingBalance(String(currentExpectedCash));
+              setClosingOnline(String(expectedOnline));
               setClosingNotes("");
               setIsClosingModalOpen(true);
             }}
@@ -268,6 +283,7 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
               <button
                 onClick={() => {
                   setClosingBalance(String(currentExpectedCash));
+                  setClosingOnline(String(expectedOnline));
                   setClosingNotes("");
                   setIsClosingModalOpen(true);
                 }}
@@ -376,54 +392,96 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
       {/* CLOSE REGISTER MODAL */}
       {isClosingModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-slide-up">
-          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-lg overflow-hidden flex flex-col border border-surface-4">
+          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-2xl overflow-hidden flex flex-col border border-surface-4 max-h-[90vh]">
             <div className="p-4 border-b border-surface-4 flex justify-between items-center bg-surface-3">
-              <h3 className="font-semibold text-lg flex items-center gap-2"><Scale className="w-5 h-5 text-primary" /> Count Cash & Close Register</h3>
+              <h3 className="font-semibold text-lg flex items-center gap-2"><Scale className="w-5 h-5 text-primary" /> Count Cash & Online & Close Register</h3>
               <button onClick={() => setIsClosingModalOpen(false)} className="text-text-secondary hover:text-text-primary">✕</button>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-surface-3 p-4 rounded-lg text-center">
-                  <p className="text-xs font-bold text-text-secondary uppercase">Expected Cash</p>
-                  <p className="text-2xl font-mono font-bold text-text-primary">{toMoney(currentExpectedCash)}</p>
+            <div className="p-6 space-y-5 overflow-y-auto">
+              {/* ---------- CASH RECONCILIATION ---------- */}
+              <div className="rounded-lg border border-surface-4 overflow-hidden">
+                <div className="bg-surface-3 px-4 py-2 flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-text-primary uppercase tracking-wider">💵 Cash Drawer</h4>
+                  <span className="text-[10px] text-text-secondary">Count physical notes & coins</span>
                 </div>
-                <div className={cn(
-                  "p-4 rounded-lg text-center border",
-                  cashVariance === 0 ? "bg-success/10 border-success/20" : cashVariance > 0 ? "bg-warning/10 border-warning/20" : "bg-danger/10 border-danger/20"
-                )}>
-                  <p className="text-xs font-bold text-text-secondary uppercase">{varianceLabel}</p>
-                  <p className={cn("text-2xl font-mono font-bold", cashVariance === 0 ? "text-success" : cashVariance > 0 ? "text-warning" : "text-danger")}>
-                    {cashVariance > 0 ? "+" : ""}{toMoney(cashVariance)}
-                  </p>
+                <div className="p-4 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-surface-3/50 p-3 rounded-lg text-center">
+                      <p className="text-[10px] font-bold text-text-secondary uppercase">Expected</p>
+                      <p className="text-xl font-mono font-bold text-text-primary">{toMoney(currentExpectedCash)}</p>
+                    </div>
+                    <div className={cn(
+                      "p-3 rounded-lg text-center border",
+                      cashVariance === 0 ? "bg-success/10 border-success/20" : cashVariance > 0 ? "bg-warning/10 border-warning/20" : "bg-danger/10 border-danger/20"
+                    )}>
+                      <p className="text-[10px] font-bold text-text-secondary uppercase">{varianceLabel}</p>
+                      <p className={cn("text-xl font-mono font-bold", cashVariance === 0 ? "text-success" : cashVariance > 0 ? "text-warning" : "text-danger")}>
+                        {cashVariance > 0 ? "+" : ""}{toMoney(cashVariance)}
+                      </p>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-text-secondary uppercase mb-1 block">Actual Counted Cash</label>
+                    <input
+                      type="number"
+                      value={closingBalance}
+                      onChange={e => setClosingBalance(e.target.value)}
+                      className="input text-2xl font-mono py-3 text-center"
+                      placeholder="0"
+                      autoFocus
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="p-3 rounded-md text-sm border border-info/20 bg-info/10 text-info">
-                <p className="font-bold">How expected cash is calculated</p>
-                <p className="text-xs opacity-90 mt-1">Opening cash + cash received from sales/khata - cash paid out for expenses/refunds/suppliers.</p>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-text-secondary uppercase mb-2 block">Actual Counted Cash</label>
-                <input 
-                  type="number" 
-                  value={closingBalance}
-                  onChange={e => setClosingBalance(e.target.value)}
-                  className="input text-3xl font-mono py-4 text-center text-danger border-danger/30 focus:border-danger focus:ring-danger"
-                  placeholder="0"
-                  autoFocus
-                />
-              </div>
-
-              {Number(closingBalance) !== currentExpectedCash && (
-                <div className={cn(
-                  "p-3 border rounded-md text-sm text-center font-medium animate-slide-up",
-                  cashVariance > 0 ? "bg-warning/10 border-warning/20 text-warning" : "bg-danger/10 border-danger/20 text-danger"
-                )}>
-                  {varianceLabel}: {cashVariance > 0 ? "+" : ""}{toMoney(cashVariance)}
-                  <p className="text-xs opacity-80 mt-1">Add a short note if cash is extra or short.</p>
+              {/* ---------- ONLINE RECONCILIATION ---------- */}
+              <div className="rounded-lg border border-info/30 overflow-hidden">
+                <div className="bg-info/10 px-4 py-2 flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-info uppercase tracking-wider">📱 Online (JazzCash / Bank)</h4>
+                  <span className="text-[10px] text-text-secondary">Verify against your phone</span>
                 </div>
-              )}
+                <div className="p-4 space-y-3">
+                  {expectedOnline > 0 || Number(closingOnline) > 0 ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-surface-3/50 p-3 rounded-lg text-center">
+                          <p className="text-[10px] font-bold text-text-secondary uppercase">Expected</p>
+                          <p className="text-xl font-mono font-bold text-text-primary">{toMoney(expectedOnline)}</p>
+                        </div>
+                        <div className={cn(
+                          "p-3 rounded-lg text-center border",
+                          onlineVariance === 0 ? "bg-success/10 border-success/20" : onlineVariance > 0 ? "bg-warning/10 border-warning/20" : "bg-danger/10 border-danger/20"
+                        )}>
+                          <p className="text-[10px] font-bold text-text-secondary uppercase">{onlineVarianceLabel}</p>
+                          <p className={cn("text-xl font-mono font-bold", onlineVariance === 0 ? "text-success" : onlineVariance > 0 ? "text-warning" : "text-danger")}>
+                            {onlineVariance > 0 ? "+" : ""}{toMoney(onlineVariance)}
+                          </p>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-text-secondary uppercase mb-1 block">Online Received (from your bank/JazzCash app)</label>
+                        <input
+                          type="number"
+                          value={closingOnline}
+                          onChange={e => setClosingOnline(e.target.value)}
+                          className="input text-2xl font-mono py-3 text-center"
+                          placeholder="0"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-sm text-text-secondary text-center py-3">
+                      No online sales today — nothing to reconcile.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-3 rounded-md text-xs border border-info/20 bg-info/5 text-text-secondary">
+                <strong className="text-info">How it works:</strong> Expected cash = opening + cash sales − expenses.
+                Expected online = sum of all sales paid online (or the online leg of split sales) minus any online refunds.
+                Match each one against the physical drawer and your bank app respectively.
+              </div>
 
               <div>
                 <label className="text-xs font-bold text-text-secondary uppercase mb-2 block">Closing Note</label>
@@ -431,11 +489,11 @@ export default function CashRegister({ setPage }: { setPage?: (page: PageId) => 
                   value={closingNotes}
                   onChange={e => setClosingNotes(e.target.value)}
                   className="input min-h-20 resize-none"
-                  placeholder="Example: Rs. 50 short, cashier checked drawer..."
+                  placeholder="Example: Cash Rs.50 short, online matched..."
                 />
               </div>
             </div>
-            
+
             <div className="p-4 bg-surface-3 border-t border-surface-4 flex gap-3">
               <button onClick={() => setIsClosingModalOpen(false)} className="btn-secondary flex-1 font-bold">Cancel</button>
               <button onClick={handleCloseRegister} className="btn-primary bg-danger hover:bg-danger/90 flex-1 font-bold">Confirm Close ✓</button>

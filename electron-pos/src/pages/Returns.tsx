@@ -27,6 +27,7 @@ export default function Returns() {
   const [reason, setReason] = useState("");
   const [refundMethod, setRefundMethod] = useState<"CASH" | "CREDIT_ADJUSTMENT">("CASH");
   const [restockItems, setRestockItems] = useState(true);
+  const [correctionType, setCorrectionType] = useState<"CORRECTION" | "REFUND">("CORRECTION");
   const [returns, setReturns] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -136,6 +137,7 @@ export default function Returns() {
         refundMethod,
         reason,
         restockItems,
+        correctionType,
         managerPin,
       });
 
@@ -162,8 +164,8 @@ export default function Returns() {
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6 animate-slide-up">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Returns & Refunds</h1>
-          <p className="text-text-secondary mt-1">Reverse sold items safely with stock, cash, khata, and reports updated.</p>
+          <h1 className="text-2xl font-bold text-text-primary">Bill Corrections & Refunds</h1>
+          <p className="text-text-secondary mt-1">Reverse sold items safely or correct mistakes.</p>
         </div>
         <div className="card px-4 py-3 flex items-center gap-3 border-warning/30 bg-warning/5">
           <AlertTriangle className="w-5 h-5 text-warning" />
@@ -272,8 +274,30 @@ export default function Returns() {
                   </table>
                 </div>
 
-                <div className="grid lg:grid-cols-2 gap-4">
+                <div className="space-y-4">
                   <div className="space-y-3">
+                    <label className="text-sm font-semibold text-text-primary">Action Type</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => setCorrectionType("CORRECTION")}
+                        className={cn("rounded-xl border px-4 py-3 text-left transition-all", correctionType === "CORRECTION" ? "bg-accent/10 border-accent" : "border-surface-4 text-text-secondary hover:bg-surface-3")}
+                      >
+                        <p className={cn("font-bold", correctionType === "CORRECTION" ? "text-accent" : "text-text-primary")}>Wrong Entry (Correction)</p>
+                        <p className="text-xs mt-1 opacity-80">Fixes typo. No cash removed.</p>
+                      </button>
+                      <button
+                        onClick={() => setCorrectionType("REFUND")}
+                        className={cn("rounded-xl border px-4 py-3 text-left transition-all", correctionType === "REFUND" ? "bg-danger/10 border-danger" : "border-surface-4 text-text-secondary hover:bg-surface-3")}
+                      >
+                        <p className={cn("font-bold", correctionType === "REFUND" ? "text-danger" : "text-text-primary")}>Customer Return (Refund)</p>
+                        <p className="text-xs mt-1 opacity-80">Actual return. Money is refunded.</p>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid lg:grid-cols-2 gap-4">
+                  <div className={cn("space-y-3 transition-opacity", correctionType === "CORRECTION" && "opacity-50 pointer-events-none")}>
                     <label className="text-sm font-semibold text-text-primary">Refund Method</label>
                     <div className="grid grid-cols-2 gap-3">
                       <button
@@ -347,7 +371,15 @@ export default function Returns() {
               <div key={item.id} className="p-4 hover:bg-surface-3/40 transition-colors">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-bold text-text-primary">{item.return_number}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold text-text-primary">{item.return_number}</p>
+                      <span className={cn(
+                        "px-1.5 py-0.5 rounded text-[9px] font-bold uppercase",
+                        item.correction_type === "CORRECTION" ? "bg-accent/10 text-accent" : "bg-danger/10 text-danger"
+                      )}>
+                        {item.correction_type === "CORRECTION" ? "CORRECTION" : "REFUND"}
+                      </span>
+                    </div>
                     <p className="text-xs text-text-secondary">{item.bill_number} - {item.customer_name}</p>
                     <p className="text-xs text-text-secondary mt-1">{format(new Date(item.return_date), "dd MMM yyyy, hh:mm a")}</p>
                   </div>

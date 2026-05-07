@@ -35,6 +35,11 @@ function normalizeReceiptData(input: any) {
     const onlinePaid = splitPayments
       .filter((payment: any) => payment.method === 'ONLINE')
       .reduce((sum: number, payment: any) => sum + Number(payment.amount || 0), 0);
+    // KHATA leg of a split sale (e.g. customer paid Rs.50 cash + Rs.100 to khata).
+    // Without this we couldn't show the credit portion on the receipt.
+    const khataPaid = splitPayments
+      .filter((payment: any) => payment.method === 'KHATA' || payment.method === 'CREDIT')
+      .reduce((sum: number, payment: any) => sum + Number(payment.amount || 0), 0);
 
     return {
       billNumber: sale.bill_number,
@@ -52,6 +57,7 @@ function normalizeReceiptData(input: any) {
       balanceDue: Number(sale.balance_due || 0),
       cashPaid,
       onlinePaid,
+      khataPaid,
       changeToReturn: Number(sale.change_returned || 0),
       items: (input.items || []).map((item: any) => ({
         id: item.id,
@@ -162,6 +168,45 @@ export function registerPrinterIPC() {
         ? ''
         : saleDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+      // Build a clear, customer-readable payment line. Owner asked for the
+      // payment method to appear on every receipt so customers (and the
+      // cashier reconciling at end-of-shift) can see at a glance whether the
+      // bill was paid in cash, online, on khata, or split between them.
+      // We map the DB enum (CASH | ONLINE | CREDIT | SPLIT) onto the
+      // shop's local terminology: CREDIT prints as KHATA.
+      const rawPaymentType = String(receipt.paymentType || '').toUpperCase();
+      // For SPLIT receipts the per-method totals can come either pre-computed
+      // from POS.tsx (cashPaid/onlinePaid) or from a raw splitPayments array.
+      // Sum from the array as a fallback so KHATA splits print correctly even
+      // when the caller didn't pre-compute khataPaid.
+      const splitArr = Array.isArray((receipt as any).splitPayments)
+        ? (receipt as any).splitPayments
+        : [];
+      const sumSplit = (method: string) => splitArr
+        .filter((p: any) => String(p?.method || '').toUpperCase() === method)
+        .reduce((sum: number, p: any) => sum + Number(p?.amount || 0), 0);
+      const cashPaidAmt = Number(receipt.cashPaid || sumSplit('CASH') || 0);
+      const onlinePaidAmt = Number(receipt.onlinePaid || sumSplit('ONLINE') || 0);
+      const khataPaidAmt = Number((receipt as any).khataPaid || sumSplit('KHATA') || sumSplit('CREDIT') || 0);
+      let paymentLabel = '';
+      let paymentBreakdown = '';
+      if (rawPaymentType === 'CASH') {
+        paymentLabel = 'PAID: CASH';
+      } else if (rawPaymentType === 'ONLINE') {
+        paymentLabel = 'PAID: ONLINE';
+      } else if (rawPaymentType === 'CREDIT' || rawPaymentType === 'KHATA') {
+        paymentLabel = 'PAID: KHATA';
+      } else if (rawPaymentType === 'SPLIT') {
+        paymentLabel = 'PAID: SPLIT';
+        const parts: string[] = [];
+        if (cashPaidAmt > 0) parts.push(`CASH Rs.${toReceiptAmount(cashPaidAmt)}`);
+        if (onlinePaidAmt > 0) parts.push(`ONLINE Rs.${toReceiptAmount(onlinePaidAmt)}`);
+        if (khataPaidAmt > 0) parts.push(`KHATA Rs.${toReceiptAmount(khataPaidAmt)}`);
+        paymentBreakdown = parts.join(' + ');
+      } else {
+        paymentLabel = `PAID: ${rawPaymentType || 'CASH'}`;
+      }
+
       // Minimal receipt: logo, bill+date, items (name + amount only), TOTAL.
       // Owner asked to remove shop name, phone, ITEM COUNTER box, subtotal/
       // discount/tax/payment/change/due lines for maximum paper savings.
@@ -195,6 +240,8 @@ export function registerPrinterIPC() {
               .total-row { margin-top: 4px; border-top: 3px double black; padding-top: 3px; }
               .total-label { font-size: 18px; font-weight: 900; }
               .total-amount { font-size: 22px; font-weight: 900; }
+              .payment-label { text-align: center; font-size: 15px; font-weight: 900; margin: 2px 0 1px; letter-spacing: 1px; }
+              .payment-breakdown { text-align: center; font-size: 12px; font-weight: 900; margin: 0 0 2px; }
             </style>
           </head>
           <body>
@@ -202,6 +249,11 @@ export function registerPrinterIPC() {
               <span>Bill: ${escapeHtml(receipt.billNumber)}</span>
               <span>${escapeHtml(dateStr)}${dateStr && timeStr ? ' ' : ''}${escapeHtml(timeStr)}</span>
             </div>
+
+            <div class="hr"></div>
+
+            <div class="payment-label">${escapeHtml(paymentLabel)}</div>
+            ${paymentBreakdown ? `<div class="payment-breakdown">${escapeHtml(paymentBreakdown)}</div>` : ''}
 
             <div class="hr"></div>
 

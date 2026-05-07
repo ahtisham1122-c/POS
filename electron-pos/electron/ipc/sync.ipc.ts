@@ -12,40 +12,37 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
   });
 
   ipcMain.handle('sync:getStatus', () => {
-    const pending = db.prepare(`SELECT COUNT(*) as count FROM sync_outbox WHERE status = 'pending'`).get() as any;
-    const failed = db.prepare(`SELECT COUNT(*) as count FROM sync_outbox WHERE status = 'failed'`).get() as any;
-    const waitingParent = db.prepare(`
-      SELECT COUNT(*) as count
+    // ONE query instead of six. Each COUNT used to scan the whole table
+    // (LIKE patterns on error_message can't use the existing indexes), so
+    // at 21K rows the previous version cost ~6× a full scan every poll —
+    // that's most of what made the POS feel laggy when sync was backed up.
+    // Conditional aggregation lets SQLite walk the table once.
+    const stats = db.prepare(`
+      SELECT
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pendingCount,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failedCount,
+        SUM(CASE WHEN status IN ('pending','failed') AND (
+              error_message LIKE 'Waiting for parent:%'
+           OR error_message LIKE '%Missing parent%'
+        ) THEN 1 ELSE 0 END) AS waitingParentCount,
+        SUM(CASE WHEN status IN ('pending','failed') AND (
+              error_message LIKE '%Auth failed%'
+           OR error_message LIKE '%401%'
+           OR error_message LIKE '%403%'
+           OR error_message LIKE '%Sync Device Secret%'
+        ) THEN 1 ELSE 0 END) AS authErrorCount,
+        SUM(CASE WHEN status IN ('pending','failed')
+              AND error_message LIKE 'Server Error%'
+              AND error_message NOT LIKE '%Missing parent%'
+        THEN 1 ELSE 0 END) AS backendErrorCount,
+        SUM(CASE WHEN status IN ('pending','failed')
+              AND datetime(created_at) <= datetime('now','-10 minutes')
+        THEN 1 ELSE 0 END) AS stuckCount,
+        MIN(CASE WHEN status IN ('pending','failed')
+              AND datetime(created_at) <= datetime('now','-10 minutes')
+        THEN created_at ELSE NULL END) AS oldestStuckCreatedAt
       FROM sync_outbox
       WHERE status IN ('pending', 'failed')
-      AND (
-        error_message LIKE 'Waiting for parent:%'
-        OR error_message LIKE '%Missing parent%'
-      )
-    `).get() as any;
-    const authErrors = db.prepare(`
-      SELECT COUNT(*) as count
-      FROM sync_outbox
-      WHERE status IN ('pending', 'failed')
-      AND (
-        error_message LIKE '%Auth failed%'
-        OR error_message LIKE '%401%'
-        OR error_message LIKE '%403%'
-        OR error_message LIKE '%Sync Device Secret%'
-      )
-    `).get() as any;
-    const backendErrors = db.prepare(`
-      SELECT COUNT(*) as count
-      FROM sync_outbox
-      WHERE status IN ('pending', 'failed')
-      AND error_message LIKE 'Server Error%'
-      AND error_message NOT LIKE '%Missing parent%'
-    `).get() as any;
-    const stuck = db.prepare(`
-      SELECT COUNT(*) as count, MIN(created_at) as oldestCreatedAt
-      FROM sync_outbox
-      WHERE status IN ('pending', 'failed')
-      AND datetime(created_at) <= datetime('now', '-10 minutes')
     `).get() as any;
     const latestError = db.prepare(`
       SELECT error_message, table_name, record_id, last_attempted_at
@@ -55,12 +52,12 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
       LIMIT 1
     `).get() as any;
     const lastPull = db.prepare(`SELECT value FROM settings WHERE key = 'last_pull_timestamp'`).get() as any;
-    const failedCount = Number(failed?.count || 0);
-    const waitingParentCount = Number(waitingParent?.count || 0);
-    const authErrorCount = Number(authErrors?.count || 0);
-    const backendErrorCount = Number(backendErrors?.count || 0);
-    const pendingCount = Number(pending?.count || 0);
-    const stuckCount = Number(stuck?.count || 0);
+    const pendingCount = Number(stats?.pendingCount || 0);
+    const failedCount = Number(stats?.failedCount || 0);
+    const waitingParentCount = Number(stats?.waitingParentCount || 0);
+    const authErrorCount = Number(stats?.authErrorCount || 0);
+    const backendErrorCount = Number(stats?.backendErrorCount || 0);
+    const stuckCount = Number(stats?.stuckCount || 0);
     const nonRecoverableFailedCount = Math.max(0, failedCount - waitingParentCount);
     let status = networkMonitor.isOnline ? 'online' : 'offline';
     let statusReason = networkMonitor.isOnline ? 'Connected' : 'Backend/network is offline';
@@ -87,7 +84,7 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
       waitingParentCount,
       authErrorCount,
       backendErrorCount,
-      oldestStuckCreatedAt: stuck?.oldestCreatedAt || null,
+      oldestStuckCreatedAt: stats?.oldestStuckCreatedAt || null,
       latestError: latestError?.error_message || null,
       latestErrorTable: latestError?.table_name || null,
       lastSyncedAt: lastPull?.value || null

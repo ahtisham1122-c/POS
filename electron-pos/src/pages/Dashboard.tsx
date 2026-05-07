@@ -50,6 +50,8 @@ export default function Dashboard({ setPage }: { setPage: (p: any) => void }) {
 
   useEffect(() => {
     loadStats();
+    const interval = setInterval(loadStats, 60000);
+    return () => clearInterval(interval);
   }, []);
 
   const kpis = stats ? [
@@ -93,14 +95,17 @@ export default function Dashboard({ setPage }: { setPage: (p: any) => void }) {
         {kpis.map((kpi, i) => {
           const Icon = kpi.icon;
           return (
-            <div key={i} className="card p-5 flex items-center gap-4">
-              <div className={cn("w-12 h-12 rounded-full flex items-center justify-center shrink-0", kpi.bg)}>
-                <Icon className={cn("w-6 h-6", kpi.color)} />
-              </div>
-              <div>
-                <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">{kpi.label}</p>
-                <p className="text-2xl font-bold text-text-primary">{kpi.value}</p>
-                <p className={cn("text-xs mt-1", kpi.label === "Outstanding Dues" && stats.kpis.dues > 0 ? "text-danger" : "text-success")}>
+            <div key={i} className="card p-5 relative overflow-hidden">
+              <div className={cn("absolute -right-4 -top-4 w-20 h-20 rounded-full opacity-30", kpi.bg)}></div>
+              <div className="relative">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0", kpi.bg)}>
+                    <Icon className={cn("w-4.5 h-4.5", kpi.color)} />
+                  </div>
+                  <p className="text-[10px] text-text-secondary font-bold uppercase tracking-wider leading-tight">{kpi.label}</p>
+                </div>
+                <p className="text-xl font-bold text-text-primary font-mono">{kpi.value}</p>
+                <p className={cn("text-[10px] mt-1", kpi.label === "Outstanding Dues" && stats.kpis.dues > 0 ? "text-danger" : "text-text-secondary")}>
                   {kpi.trend}
                 </p>
               </div>

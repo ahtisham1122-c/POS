@@ -250,6 +250,9 @@ model CashRegister {
   cashIn         Decimal   @default(0) @db.Decimal(10, 2)
   cashOut        Decimal   @default(0) @db.Decimal(10, 2)
   closingBalance Decimal   @default(0) @db.Decimal(10, 2)
+  expectedOnline Decimal   @default(0) @db.Decimal(10, 2)
+  closingOnline  Decimal   @default(0) @db.Decimal(10, 2)
+  onlineVariance Decimal   @default(0) @db.Decimal(10, 2)
   isClosedForDay Boolean   @default(false)
   closedById     String?
   closedAt       DateTime?
@@ -309,6 +312,7 @@ model Return {
   refundAmount Decimal  @db.Decimal(10, 2)
   reason       String
   restockItems Boolean  @default(true)
+  correctionType String  @default("REFUND")
   status       String   @default("COMPLETED")
   createdAt    DateTime @default(now())
   shift        Shift?   @relation(fields: [shiftId], references: [id])
@@ -463,6 +467,9 @@ model Shift {
   expectedCash          Decimal  @default(0) @db.Decimal(10, 2)
   closingCash           Decimal  @default(0) @db.Decimal(10, 2)
   cashVariance          Decimal  @default(0) @db.Decimal(10, 2)
+  expectedOnline        Decimal  @default(0) @db.Decimal(10, 2)
+  closingOnline         Decimal  @default(0) @db.Decimal(10, 2)
+  onlineVariance        Decimal  @default(0) @db.Decimal(10, 2)
   receiptAuditSessionId String?
   status                String   @default("OPEN")
   notes                 String?
@@ -508,6 +515,7 @@ enum SaleStatus {
   REFUNDED
   PARTIALLY_REFUNDED
   CANCELLED
+  CORRECTION
 }
 
 enum DiscountType {

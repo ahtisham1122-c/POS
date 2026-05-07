@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { Package, Search, Plus, ArrowUpCircle, Edit2, Trash2, Filter, Download } from "lucide-react";
+import { Package, Search, Plus, ArrowUpCircle, Edit2, Trash2, Filter, Download, ShoppingCart, Save, X } from "lucide-react";
 import { cn } from "../lib/utils";
 
 type Product = {
@@ -23,7 +23,28 @@ function toMoney(value: number) {
 export default function Inventory() {
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"PRODUCTS" | "LOG">("PRODUCTS");
+  const [activeTab, setActiveTab] = useState<"PRODUCTS" | "STOCKIN" | "LOG">("PRODUCTS");
+
+  // ----- "Stock In Cart" tab state (issue #4) ---------------------------------
+  // Owner asked for a way to receive a delivery of non-milk goods in one go,
+  // each line with its own quantity and the price actually paid. We keep this
+  // as a single cart in component state — submitting saves all lines and
+  // optionally updates each product's cost_price.
+  type StockInLine = {
+    productId: string;
+    code: string;
+    name: string;
+    unit: string;
+    quantity: string; // keep as string while editing so the input doesn't
+                      // jump to "0" while the user is typing "1.5"
+    unitCost: string;
+  };
+  const [stockInCart, setStockInCart] = useState<StockInLine[]>([]);
+  const [stockInSupplier, setStockInSupplier] = useState("");
+  const [stockInNotes, setStockInNotes] = useState("");
+  const [stockInSearch, setStockInSearch] = useState("");
+  const [isSavingStockIn, setIsSavingStockIn] = useState(false);
+  const [updateCostOnSave, setUpdateCostOnSave] = useState(true);
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
 
@@ -208,6 +229,143 @@ export default function Inventory() {
     if (!result?.success && result?.reason !== "canceled") alert(result?.error || "Export failed");
   };
 
+  // ----- Stock-In cart helpers ----------------------------------------------
+  // Milk inventory is supplier-fed (issue #4 — owner specifically asked to
+  // exclude milk from this manual receipt flow), so we hide MILK and the
+  // derived YOGT product from the picker. Yogurt has its own production flow
+  // already; mixing it into the stock-in cart would silently bypass the
+  // milk-deduction check and corrupt the running stock balance.
+  const stockInPickerProducts = useMemo(() => {
+    return products.filter((p) => {
+      if (p.code === 'MILK' || p.code === 'YOGT') return false;
+      const term = stockInSearch.trim().toLowerCase();
+      if (!term) return true;
+      return `${p.name} ${p.code} ${p.category}`.toLowerCase().includes(term);
+    });
+  }, [products, stockInSearch]);
+
+  const stockInTotals = useMemo(() => {
+    let lines = 0;
+    let totalQty = 0;
+    let totalCost = 0;
+    for (const line of stockInCart) {
+      const qty = Number(line.quantity);
+      const cost = Number(line.unitCost);
+      if (Number.isFinite(qty) && qty > 0) {
+        totalQty += qty;
+        if (Number.isFinite(cost) && cost >= 0) totalCost += qty * cost;
+        lines += 1;
+      }
+    }
+    return { lines, totalQty, totalCost };
+  }, [stockInCart]);
+
+  const addProductToStockInCart = (p: Product) => {
+    setStockInCart((prev) => {
+      const idx = prev.findIndex((line) => line.productId === p.id);
+      if (idx >= 0) {
+        // Already in cart — bump qty by 1 instead of duplicating the row.
+        const next = [...prev];
+        const currentQty = Number(next[idx].quantity) || 0;
+        next[idx] = { ...next[idx], quantity: String(currentQty + 1) };
+        return next;
+      }
+      return [
+        ...prev,
+        {
+          productId: p.id,
+          code: p.code,
+          name: p.name,
+          unit: p.unit,
+          quantity: "1",
+          // Default the unit cost to whatever's stored on the product so the
+          // cashier only has to type a number when the supplier price has
+          // changed. Empty string when cost_price is 0 to make the field
+          // visually empty (and force them to enter something).
+          unitCost: p.cost_price > 0 ? String(p.cost_price) : ""
+        }
+      ];
+    });
+  };
+
+  const updateStockInLine = (productId: string, patch: Partial<StockInLine>) => {
+    setStockInCart((prev) =>
+      prev.map((line) => (line.productId === productId ? { ...line, ...patch } : line))
+    );
+  };
+
+  const removeStockInLine = (productId: string) => {
+    setStockInCart((prev) => prev.filter((line) => line.productId !== productId));
+  };
+
+  const clearStockInCart = () => {
+    setStockInCart([]);
+    setStockInSupplier("");
+    setStockInNotes("");
+  };
+
+  const saveStockInCart = async () => {
+    if (stockInCart.length === 0) {
+      alert("Cart is empty. Add at least one product first.");
+      return;
+    }
+    // Validate every line up-front so the user gets one error message instead
+    // of partial saves followed by mid-cart failure.
+    for (const line of stockInCart) {
+      const qty = Number(line.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        alert(`Quantity for ${line.name} must be greater than 0.`);
+        return;
+      }
+      if (line.unitCost !== "") {
+        const cost = Number(line.unitCost);
+        if (!Number.isFinite(cost) || cost < 0) {
+          alert(`Unit cost for ${line.name} is invalid.`);
+          return;
+        }
+      }
+    }
+
+    setIsSavingStockIn(true);
+    const failures: string[] = [];
+    try {
+      // Build a shared notes prefix that ties every line of this receipt
+      // together in the stock-movement log, so end-of-day reconciliation can
+      // tell which deliveries arrived as one batch.
+      const supplierLabel = stockInSupplier.trim();
+      const sharedNote = stockInNotes.trim();
+      const tag = `Stock-in${supplierLabel ? ` from ${supplierLabel}` : ""}`;
+      for (const line of stockInCart) {
+        const qty = Number(line.quantity);
+        const costStr = line.unitCost.trim();
+        const costNum = costStr === "" ? null : Number(costStr);
+        const lineNote = [tag, sharedNote].filter(Boolean).join(" — ");
+        const res = await window.electronAPI?.inventory?.stockIn(line.productId, {
+          quantity: qty,
+          notes: lineNote,
+          supplier: supplierLabel || null,
+          // Only forward unitCost when the user wants product cost_price to
+          // be refreshed AND a value was entered — otherwise leave the
+          // existing cost untouched.
+          unitCost: updateCostOnSave && costNum !== null ? costNum : undefined
+        } as any);
+        if (!res?.success) {
+          failures.push(`${line.name}: ${res?.error || "failed"}`);
+        }
+      }
+      if (failures.length > 0) {
+        alert(`Saved with ${failures.length} failure(s):\n\n${failures.join("\n")}`);
+      } else {
+        clearStockInCart();
+      }
+      await loadData();
+    } catch (err: any) {
+      alert(err?.message || "Failed to save stock-in receipt");
+    } finally {
+      setIsSavingStockIn(false);
+    }
+  };
+
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto animate-slide-up">
@@ -234,36 +392,79 @@ export default function Inventory() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">Total Products</p>
-          <p className="text-2xl font-bold text-text-primary">{products.length}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-primary/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Package className="w-5 h-5 text-primary" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Products</p>
+            </div>
+            <p className="text-3xl font-bold text-text-primary">{products.length}</p>
+          </div>
         </div>
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">Stock Value</p>
-          <p className="text-2xl font-bold text-text-primary font-mono">{toMoney(stockValue)}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-success/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center">
+                <ArrowUpCircle className="w-5 h-5 text-success" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Stock Value</p>
+            </div>
+            <p className="text-3xl font-bold text-text-primary font-mono">{toMoney(stockValue)}</p>
+          </div>
         </div>
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">Low Stock</p>
-          <p className="text-2xl font-bold text-warning">{lowCount}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-warning/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-warning/10 flex items-center justify-center">
+                <Filter className="w-5 h-5 text-warning" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Low Stock</p>
+            </div>
+            <p className="text-3xl font-bold text-warning">{lowCount}</p>
+          </div>
         </div>
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">Out of Stock</p>
-          <p className="text-2xl font-bold text-danger">{outCount}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-danger/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center">
+                <Package className="w-5 h-5 text-danger" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Out of Stock</p>
+            </div>
+            <p className="text-3xl font-bold text-danger">{outCount}</p>
+          </div>
         </div>
       </div>
 
       <div className="card overflow-hidden">
         <div className="flex border-b border-surface-4 bg-surface-2/50 overflow-x-auto">
-          {["PRODUCTS", "LOG"].map(tab => (
+          {(["PRODUCTS", "STOCKIN", "LOG"] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab as any)}
+              onClick={() => setActiveTab(tab)}
               className={cn(
-                "px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors",
+                "px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors flex items-center gap-2",
                 activeTab === tab ? "border-primary text-primary bg-primary/5" : "border-transparent text-text-secondary hover:text-text-primary hover:bg-surface-3"
               )}
             >
-              {tab === "LOG" ? "Stock Movements" : "Products"}
+              {tab === "PRODUCTS" && <><Package className="w-4 h-4" /> Products</>}
+              {tab === "STOCKIN" && (
+                <>
+                  <ShoppingCart className="w-4 h-4" /> Stock In
+                  {stockInCart.length > 0 && (
+                    <span className="ml-1 inline-flex items-center justify-center min-w-[20px] h-5 rounded-full bg-primary text-white text-[10px] font-bold px-1.5">
+                      {stockInCart.length}
+                    </span>
+                  )}
+                </>
+              )}
+              {tab === "LOG" && <><Filter className="w-4 h-4" /> Stock Movements</>}
             </button>
           ))}
         </div>
@@ -403,6 +604,215 @@ export default function Inventory() {
             </div>
           </div>
         ) : null}
+
+        {!isLoading && activeTab === "STOCKIN" && (
+          <div className="p-4 animate-slide-in-right">
+            <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-3 mb-4 text-xs text-blue-300">
+              💡 <strong>Tip:</strong> This screen is for non-milk receipts (e.g. groceries, packaging, sweets bought in bulk).
+              Milk inventory is fed from the Suppliers page (collections), so milk and yogurt are hidden here.
+              Enter the price you actually paid per unit — by default it will also update each product's cost price.
+            </div>
+
+            <div className="grid lg:grid-cols-5 gap-4">
+              {/* ---- LEFT: product picker ---- */}
+              <div className="lg:col-span-2 flex flex-col gap-3 border border-surface-4 rounded-lg p-3 bg-surface-3/30 max-h-[600px]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
+                  <input
+                    type="text"
+                    value={stockInSearch}
+                    onChange={(e) => setStockInSearch(e.target.value)}
+                    placeholder="Search by name, code, or category..."
+                    className="input pl-10 h-9"
+                  />
+                </div>
+                <div className="flex-1 overflow-y-auto pr-1 space-y-1">
+                  {stockInPickerProducts.length === 0 ? (
+                    <div className="text-center py-8 text-text-secondary text-sm">
+                      <Package className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                      No products match. (Milk and yogurt are intentionally hidden.)
+                    </div>
+                  ) : (
+                    stockInPickerProducts.map((p) => {
+                      const inCart = stockInCart.some((line) => line.productId === p.id);
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => addProductToStockInCart(p)}
+                          className={cn(
+                            "w-full text-left flex items-center gap-3 p-2 rounded-md border transition-colors",
+                            inCart
+                              ? "border-primary/40 bg-primary/5 text-primary"
+                              : "border-transparent hover:border-surface-4 hover:bg-surface-3"
+                          )}
+                          title={inCart ? "Already in cart — click to add 1 more" : "Add to stock-in cart"}
+                        >
+                          <span className="text-xl shrink-0">{p.emoji || "📦"}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate">{p.name}</div>
+                            <div className="text-[10px] text-text-secondary font-mono truncate">
+                              {p.code} · {p.category} · stock {p.stock.toFixed(2)} {p.unit}
+                            </div>
+                          </div>
+                          <div className="text-xs font-mono text-text-secondary shrink-0">
+                            {p.cost_price > 0 ? toMoney(p.cost_price) : "—"}
+                          </div>
+                          <Plus className={cn("w-4 h-4 shrink-0", inCart ? "text-primary" : "text-text-secondary")} />
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* ---- RIGHT: cart ---- */}
+              <div className="lg:col-span-3 flex flex-col gap-3">
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-semibold text-text-secondary uppercase mb-1 block">Supplier / Source (optional)</label>
+                    <input
+                      type="text"
+                      value={stockInSupplier}
+                      onChange={(e) => setStockInSupplier(e.target.value)}
+                      className="input h-9"
+                      placeholder="e.g. Bismillah Wholesale"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-text-secondary uppercase mb-1 block">Receipt Notes (optional)</label>
+                    <input
+                      type="text"
+                      value={stockInNotes}
+                      onChange={(e) => setStockInNotes(e.target.value)}
+                      className="input h-9"
+                      placeholder="e.g. Invoice #1024"
+                    />
+                  </div>
+                </div>
+
+                <div className="border border-surface-4 rounded-lg overflow-hidden flex-1">
+                  <table className="w-full text-sm">
+                    <thead className="bg-surface-3 text-text-secondary uppercase text-[10px] tracking-wider font-semibold">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Product</th>
+                        <th className="px-3 py-2 text-right w-32">Qty</th>
+                        <th className="px-3 py-2 text-right w-36">Unit Cost</th>
+                        <th className="px-3 py-2 text-right w-28">Line Total</th>
+                        <th className="px-2 py-2 w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-surface-4">
+                      {stockInCart.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-12 text-center text-text-secondary">
+                            <ShoppingCart className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                            Cart is empty. Click a product on the left to add it.
+                          </td>
+                        </tr>
+                      ) : (
+                        stockInCart.map((line) => {
+                          const qty = Number(line.quantity);
+                          const cost = Number(line.unitCost);
+                          const lineTotal = Number.isFinite(qty) && Number.isFinite(cost) && qty > 0 && cost >= 0 ? qty * cost : 0;
+                          return (
+                            <tr key={line.productId} className="hover:bg-surface-3/30">
+                              <td className="px-3 py-2">
+                                <div className="font-medium">{line.name}</div>
+                                <div className="text-[10px] text-text-secondary font-mono">{line.code} · {line.unit}</div>
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  step="0.001"
+                                  min="0"
+                                  value={line.quantity}
+                                  onChange={(e) => updateStockInLine(line.productId, { quantity: e.target.value })}
+                                  className="input h-8 font-mono text-right py-1"
+                                  placeholder="0.000"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="relative">
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-text-secondary font-mono">Rs.</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={line.unitCost}
+                                    onChange={(e) => updateStockInLine(line.productId, { unitCost: e.target.value })}
+                                    className="input h-8 font-mono text-right py-1 pl-9"
+                                    placeholder="0.00"
+                                  />
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-bold">
+                                {lineTotal > 0 ? toMoney(lineTotal) : "—"}
+                              </td>
+                              <td className="px-2 py-2 text-right">
+                                <button
+                                  onClick={() => removeStockInLine(line.productId)}
+                                  className="p-1 text-text-secondary hover:text-danger hover:bg-danger/10 rounded transition-colors"
+                                  title="Remove line"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 justify-between rounded-lg border border-surface-4 bg-surface-3/40 px-4 py-3">
+                  <label className="flex items-center gap-2 text-xs text-text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={updateCostOnSave}
+                      onChange={(e) => setUpdateCostOnSave(e.target.checked)}
+                      className="h-4 w-4 accent-primary"
+                    />
+                    Update product cost price with the value entered above
+                  </label>
+                  <div className="flex items-center gap-6 text-sm">
+                    <div className="flex flex-col text-right">
+                      <span className="text-[10px] uppercase text-text-secondary tracking-wider">Lines</span>
+                      <span className="font-mono font-bold">{stockInTotals.lines}</span>
+                    </div>
+                    <div className="flex flex-col text-right">
+                      <span className="text-[10px] uppercase text-text-secondary tracking-wider">Total Qty</span>
+                      <span className="font-mono font-bold">{stockInTotals.totalQty.toFixed(3)}</span>
+                    </div>
+                    <div className="flex flex-col text-right">
+                      <span className="text-[10px] uppercase text-text-secondary tracking-wider">Total Cost</span>
+                      <span className="font-mono font-bold text-success">{toMoney(stockInTotals.totalCost)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={clearStockInCart}
+                    disabled={isSavingStockIn || stockInCart.length === 0}
+                    className="btn-secondary flex items-center gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Clear Cart
+                  </button>
+                  <button
+                    onClick={saveStockInCart}
+                    disabled={isSavingStockIn || stockInCart.length === 0}
+                    className="btn-primary flex items-center gap-2"
+                  >
+                    <Save className={cn("w-4 h-4", isSavingStockIn && "animate-pulse")} />
+                    {isSavingStockIn ? "Saving..." : "Save Stock In"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {!isLoading && activeTab === "LOG" && (
           <div className="p-4 animate-slide-in-right">

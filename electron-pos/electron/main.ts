@@ -24,6 +24,8 @@ import { registerAuditIPC } from './ipc/audit.ipc';
 import { registerExportsIPC } from './ipc/exports.ipc';
 import { registerEmployeesIPC } from './ipc/employees.ipc';
 import { registerRidersIPC } from './ipc/riders.ipc';
+import { registerCfdIPC } from './ipc/cfd.ipc';
+import { applyCfdConfig, shutdownCfd } from './peripherals/cfdDisplay';
 import { SyncEngine } from './sync/syncEngine';
 import { pullSync } from './sync/pullSync';
 import { networkMonitor } from './sync/networkMonitor';
@@ -73,6 +75,10 @@ function stopBackgroundTasks() {
   networkMonitor.off('online', sendOnlineStatus);
   networkMonitor.off('offline', sendOfflineStatus);
   networkMonitor.stopMonitoring();
+
+  // Close the CFD serial port cleanly so Windows releases COM5 instead
+  // of holding it locked until the next reboot.
+  shutdownCfd().catch((err) => log.warn('CFD shutdown failed:', err?.message || err));
 }
 
 dotenv.config();
@@ -181,10 +187,17 @@ app.whenReady().then(() => {
   registerExportsIPC();
   registerEmployeesIPC();
   registerRidersIPC();
+  registerCfdIPC();
   registerSyncIPC(syncEngine, () => mainWindow);
 
   log.info('Starting sync engine & background tasks...');
   syncEngine.start();
+  // Open the customer display now if it's enabled in settings. Errors are
+  // swallowed inside applyCfdConfig — a missing CFD must never block POS
+  // startup.
+  applyCfdConfig().catch((err) => {
+    log.warn('CFD startup failed:', err?.message || err);
+  });
   backupInterval = scheduleDailyBackup();
   
   // Set up 60s pull interval — guard against unhandled rejection so a network

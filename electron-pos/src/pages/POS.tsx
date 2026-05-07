@@ -40,9 +40,22 @@ function TouchInputPad({ input, onClose }: { input: TouchInputRequest; onClose: 
     setValue(input.value || "");
   }, [input]);
 
+  // Push the typed value back to the parent on a microtask so the parent's
+  // re-render never blocks the tap handler. On a busy POS page (with the
+  // huge cart/products tree) this used to make the keypad feel sluggish —
+  // every key tap triggered a synchronous parent re-render. Now the keypad
+  // updates instantly and the parent catches up a few ms later.
+  const commitToParent = (next: string) => {
+    if (typeof queueMicrotask === "function") {
+      queueMicrotask(() => input.setValue(next));
+    } else {
+      setTimeout(() => input.setValue(next), 0);
+    }
+  };
+
   const updateValue = (next: string) => {
     setValue(next);
-    input.setValue(next);
+    commitToParent(next);
   };
 
   const append = (char: string) => {
@@ -51,6 +64,9 @@ function TouchInputPad({ input, onClose }: { input: TouchInputRequest; onClose: 
   };
 
   const finish = () => {
+    // Make sure the parent has the final value before its onDone fires —
+    // microtask above might not have flushed yet on the very last tap.
+    input.setValue(value);
     input.onDone?.();
     onClose();
   };
@@ -221,6 +237,29 @@ export default function POS() {
     const interval = setInterval(fetchData, 60000); // Check for rate updates every minute
     return () => clearInterval(interval);
   }, []);
+
+  // ----- Customer Facing Display (CFD) live cart push -----
+  // Push the running cart total to the 2x20 pole display every time the
+  // cart changes, so the customer can read it as items get rung up. The
+  // backend no-ops these calls when CFD is disabled in settings, so this
+  // useEffect is safe even on terminals without a display attached.
+  // 250ms debounce prevents flooding the serial port when items are added
+  // in quick succession (e.g. typing a custom quantity).
+  useEffect(() => {
+    if (items.length === 0) {
+      const id = setTimeout(() => {
+        window.electronAPI?.cfd?.showWelcome().catch(() => null);
+      }, 250);
+      return () => clearTimeout(id);
+    }
+    const id = setTimeout(() => {
+      window.electronAPI?.cfd?.showCartTotal({
+        itemCount: items.length,
+        total: grandTotal
+      }).catch(() => null);
+    }, 250);
+    return () => clearTimeout(id);
+  }, [items.length, grandTotal]);
 
   const fetchData = async () => {
     const prods = await window.electronAPI?.products?.getAll() || [];
@@ -809,6 +848,15 @@ export default function POS() {
       };
       
       setLastReceiptData(rData);
+
+      // Push thank-you / change-due to the customer display (HP TD620 etc.)
+      // before clearing the cart, so the customer sees the right totals.
+      // Fire-and-forget — never block the sale flow on the CFD.
+      window.electronAPI?.cfd?.showThankYou({
+        grandTotal: receiptGrandTotal,
+        change: paymentMode === "CASH" ? receiptChangeReturned : 0
+      }).catch(() => null);
+
       if (autoPrintReceipt) {
         const printResult = await window.electronAPI?.printer?.printReceipt(rData);
         if (printResult && !printResult.success) {
@@ -822,7 +870,7 @@ export default function POS() {
         setReceiptData(rData);
         addAlert("Sale saved. Auto-print is off, print the receipt manually.");
       }
-      
+
       clearCart();
       setSelectedCustomerId("");
       setCustomerSearchQuery("");

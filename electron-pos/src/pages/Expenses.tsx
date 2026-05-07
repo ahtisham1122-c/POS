@@ -143,54 +143,76 @@ export default function Expenses() {
 
       {/* TOP CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">Today's Expenses</p>
-          <div className="flex items-center gap-3">
-            <TrendingDown className="w-8 h-8 text-danger opacity-50" />
-            <p className="text-2xl font-bold text-danger font-mono">{toMoney(totalDisplay)}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-danger/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center">
+                <TrendingDown className="w-5 h-5 text-danger" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Today's Expenses</p>
+            </div>
+            <p className="text-3xl font-bold text-danger font-mono">{toMoney(totalDisplay)}</p>
           </div>
         </div>
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">This Month</p>
-          <div className="flex items-center gap-3">
-            <Receipt className="w-8 h-8 text-warning opacity-50" />
-            <p className="text-2xl font-bold text-warning font-mono">{toMoney(totalMonth)}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-warning/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-warning/10 flex items-center justify-center">
+                <Receipt className="w-5 h-5 text-warning" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">This Month</p>
+            </div>
+            <p className="text-3xl font-bold text-warning font-mono">{toMoney(totalMonth)}</p>
           </div>
         </div>
-        <div className="card p-5">
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider mb-1">Estimated Profit Today</p>
-          <div className="flex items-center gap-3">
-            <Wallet className="w-8 h-8 text-success opacity-50" />
-            <p className="text-2xl font-bold text-success font-mono">{toMoney(estimatedProfit)}</p>
+        <div className="card p-5 relative overflow-hidden">
+          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-success/5"></div>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center">
+                <Wallet className="w-5 h-5 text-success" />
+              </div>
+              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Estimated Profit</p>
+            </div>
+            <p className="text-3xl font-bold text-success font-mono">{toMoney(estimatedProfit)}</p>
           </div>
         </div>
       </div>
 
       {/* ADD EXPENSE FORM */}
-      <form onSubmit={handleAddExpense} className="card p-4 flex flex-col md:flex-row gap-3 items-end bg-surface-2 border-primary/20 shadow-glow">
-        <div className="w-full md:w-40">
-          <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Date</label>
-          <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="input py-2.5" required />
+      <form onSubmit={handleAddExpense} className="card overflow-hidden">
+        <div className="p-4 border-b border-surface-4 bg-surface-2/70">
+          <h2 className="font-bold text-sm flex items-center gap-2">
+            <Plus className="w-4 h-4 text-primary" /> Quick Add Expense
+          </h2>
         </div>
-        <div className="w-full md:w-48">
-          <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Category</label>
-          <select value={newCategory} onChange={e => setNewCategory(e.target.value as ExpenseCategory)} className="input py-2.5">
-            {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </select>
+        <div className="p-4 flex flex-col md:flex-row gap-3 items-end">
+          <div className="w-full md:w-40">
+            <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Date</label>
+            <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="input py-2.5" required />
+          </div>
+          <div className="w-full md:w-48">
+            <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Category</label>
+            <select value={newCategory} onChange={e => setNewCategory(e.target.value as ExpenseCategory)} className="input py-2.5">
+              {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+          <div className="w-full flex-1">
+            <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Description</label>
+            <input type="text" value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="e.g., Bought 500kg milk from Ali" className="input py-2.5" required />
+          </div>
+          <div className="w-full md:w-40">
+            <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Amount (Rs)</label>
+            <input type="number" value={newAmount} onChange={e => setNewAmount(e.target.value)} placeholder="0" className="input py-2.5 font-mono" required />
+          </div>
+          <button type="submit" className="btn-primary w-full md:w-auto h-[42px] flex items-center justify-center gap-2 whitespace-nowrap">
+            <Plus className="w-4 h-4" /> Save
+          </button>
         </div>
-        <div className="w-full flex-1">
-          <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Description</label>
-          <input type="text" value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="e.g., Bought 500kg milk from Ali" className="input py-2.5" required />
-        </div>
-        <div className="w-full md:w-40">
-          <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Amount (Rs)</label>
-          <input type="number" value={newAmount} onChange={e => setNewAmount(e.target.value)} placeholder="0" className="input py-2.5 font-mono" required />
-        </div>
-        <button type="submit" className="btn-primary w-full md:w-auto h-[42px] flex items-center justify-center gap-2">
-          <Plus className="w-4 h-4" /> Save
-        </button>
       </form>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -253,9 +275,10 @@ export default function Expenses() {
                 ))}
                 {expenses.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-text-secondary">
-                      <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                      <p>No expenses found</p>
+                    <td colSpan={6} className="px-4 py-12 text-center text-text-secondary">
+                      <FileText className="w-14 h-14 mx-auto mb-3 opacity-20" />
+                      <p className="font-bold text-text-primary">No expenses found</p>
+                      <p className="text-sm mt-1">Add your first expense using the form above.</p>
                     </td>
                   </tr>
                 )}
@@ -273,9 +296,11 @@ export default function Expenses() {
         </div>
 
         {/* SUMMARY BAR */}
-        <div className="card p-5 h-max">
-          <h3 className="font-semibold mb-4">Summary</h3>
-          <div className="space-y-4">
+        <div className="card overflow-hidden h-max">
+          <div className="p-4 border-b border-surface-4 bg-surface-2/70">
+            <h3 className="font-bold text-sm">Category Breakdown</h3>
+          </div>
+          <div className="p-5 space-y-4">
             {Object.entries(CATEGORY_LABELS).map(([k, label]) => {
               const catAmount = expenses.filter(e => e.category === k).reduce((s, e) => s + e.amount, 0);
               if (catAmount === 0) return null;
