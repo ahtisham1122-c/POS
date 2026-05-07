@@ -45,19 +45,16 @@ function nextEmployeeCode() {
   return `EMP-${String(Number(row?.count || 0) + 1).padStart(4, '0')}`;
 }
 
-// Calculate default salary period for an employee.
-// Period goes from the employee's start DAY of month to the day before that same day next month.
-// e.g. start_date = 2024-03-10 → period for April = 2024-04-10 to 2024-05-09
-function getDefaultPeriod(startDate: string, targetMonth?: string): { start: string; end: string; periodStart: string; periodEnd: string } {
-  const start = new Date(startDate);
-  const startDay = start.getDate();
-
+// Salary is paid by shop month, not by actual calendar-day count.
+// A 28/30/31-day month still pays the same monthly salary; leave is always
+// deducted as salary / 30 per leave day.
+function getDefaultPeriod(_startDate: string, targetMonth?: string): { start: string; end: string; periodStart: string; periodEnd: string } {
   const ref = targetMonth ? new Date(targetMonth + '-01') : new Date();
   const year = ref.getFullYear();
   const month = ref.getMonth();
 
-  const periodStart = new Date(year, month, startDay);
-  const periodEnd = new Date(year, month + 1, startDay - 1);
+  const periodStart = new Date(year, month, 1);
+  const periodEnd = new Date(year, month + 1, 0);
 
   const startValue = formatLocalDate(periodStart);
   const endValue = formatLocalDate(periodEnd);
@@ -145,14 +142,11 @@ function calculateSalaryForPeriod(employeeId: string, periodStart: string, perio
   `).get(employeeId, periodStart, periodEnd) as any;
   const daysOff = Number(leaveRow?.total_days || 0);
 
-  // Total calendar days in the period (inclusive both ends)
-  const s = new Date(periodStart);
-  const e = new Date(periodEnd);
-  const daysInPeriod = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-  const daysWorked = Math.max(0, daysInPeriod - daysOff);
-
-  // Gross = (salary / 30) * days_worked
-  const grossSalary = dailyRate * daysWorked;
+  const salaryDays = 30;
+  const daysInPeriod = salaryDays;
+  const daysWorked = Math.max(0, salaryDays - daysOff);
+  const leaveDeduction = Math.min(salary, dailyRate * daysOff);
+  const grossSalary = Math.max(0, salary - leaveDeduction);
 
   // Sum of PENDING advances in this period
   const advRow = db.prepare(`
@@ -173,6 +167,7 @@ function calculateSalaryForPeriod(employeeId: string, periodStart: string, perio
     daysInPeriod,
     daysWorked,
     daysOff,
+    leaveDeduction,
     grossSalary,
     advanceDeduction,
     netSalary,

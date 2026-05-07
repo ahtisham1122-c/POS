@@ -32,12 +32,12 @@ export default function Dashboard({ setPage }: { setPage: (p: any) => void }) {
       const last7 = Array.from({length: 7}, (_, i) => {
         const d = new Date();
         d.setDate(d.getDate() - (6 - i));
-        const dateStr = d.toISOString().split('T')[0];
-        const existing = c.find((row: any) => row.date === dateStr);
+        const dateStr = format(d, "yyyy-MM-dd");
+        const existing = (c || []).find((row: any) => row.date === dateStr);
         return { 
           day: format(d, "E"), 
           date: dateStr,
-          total: existing ? existing.total : 0 
+          total: Math.max(0, Number(existing?.total || 0))
         };
       });
       setChartData(last7);

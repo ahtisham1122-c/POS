@@ -6,6 +6,12 @@ import { getBusinessDate } from '../database/businessDay';
 
 type ExportFormat = 'excel' | 'pdf';
 type ExportType = 'daily-sales' | 'z-report' | 'khata-ledger' | 'stock-report' | 'expense-report' | 'supplier-report';
+type ReportData = {
+  title: string;
+  rows: any[];
+  columns: Array<{ key: string; label: string }>;
+  thermal?: boolean;
+};
 
 function money(value: unknown) {
   return Number(value || 0).toLocaleString('en-PK', { maximumFractionDigits: 2 });
@@ -49,6 +55,84 @@ function scopeParams(scope: { date: string; shiftId: string | null }) {
 }
 
 function htmlTable(title: string, rows: any[], columns: Array<{ key: string; label: string }>) {
+  const isThermal = title.startsWith('Z-Report');
+  if (isThermal) {
+    return `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            @page { size: 80mm auto; margin: 2mm; }
+            * { box-sizing: border-box; }
+            body {
+              width: 76mm;
+              margin: 0;
+              padding: 0;
+              color: #000;
+              background: #fff;
+              font-family: "Arial", "Helvetica", sans-serif;
+              font-size: 13px;
+              font-weight: 700;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            h1 {
+              margin: 0 0 4px;
+              text-align: center;
+              font-size: 18px;
+              font-weight: 900;
+              letter-spacing: 0;
+            }
+            .meta {
+              margin: 0 0 8px;
+              padding-bottom: 6px;
+              border-bottom: 2px dashed #000;
+              text-align: center;
+              font-size: 11px;
+              font-weight: 700;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              table-layout: fixed;
+            }
+            thead { display: none; }
+            td {
+              padding: 3px 0;
+              border: 0;
+              border-bottom: 1px dotted #000;
+              vertical-align: top;
+              color: #000;
+            }
+            td:first-child {
+              width: 48mm;
+              padding-right: 3mm;
+              overflow-wrap: anywhere;
+            }
+            td:last-child {
+              width: 28mm;
+              text-align: right;
+              font-family: "Arial", "Helvetica", sans-serif;
+              font-weight: 900;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(title)}</h1>
+          <div class="meta">Noon Dairy POS<br>${escapeHtml(new Date().toLocaleString())}</div>
+          <table>
+            <tbody>
+              ${rows.map((row) => `
+                <tr>${columns.map((column) => `<td>${escapeHtml(row[column.key])}</td>`).join('')}</tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+  }
+
   return `
     <!doctype html>
     <html>
@@ -157,7 +241,7 @@ function getReport(type: ExportType, params: any = {}) {
       { item: 'Counted Cash', value: money(counted) },
       { item: 'Variance', value: money(counted - expectedCash) }
     ];
-    return { title: `Z-Report - ${date}`, rows, columns: [{ key: 'item', label: 'Item' }, { key: 'value', label: 'Value' }] };
+    return { title: `Z-Report - ${date}`, rows, columns: [{ key: 'item', label: 'Item' }, { key: 'value', label: 'Value' }], thermal: true };
   }
 
   if (type === 'khata-ledger') {
@@ -255,7 +339,7 @@ function getReport(type: ExportType, params: any = {}) {
   };
 }
 
-async function savePdf(html: string, defaultPath: string) {
+async function savePdf(html: string, defaultPath: string, thermal = false) {
   const { canceled, filePath } = await dialog.showSaveDialog({
     defaultPath,
     filters: [{ name: 'PDF', extensions: ['pdf'] }]
@@ -264,7 +348,11 @@ async function savePdf(html: string, defaultPath: string) {
 
   const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
   await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-  const pdf = await win.webContents.printToPDF({ printBackground: true, pageSize: 'A4' });
+  const pdf = await win.webContents.printToPDF({
+    printBackground: true,
+    margins: thermal ? { marginType: 'none' } : { marginType: 'default' },
+    pageSize: thermal ? { width: 80000, height: 220000 } : 'A4'
+  });
   const fs = await import('fs');
   fs.writeFileSync(filePath, pdf);
   win.destroy();
@@ -286,11 +374,11 @@ export function registerExportsIPC() {
   ipcMain.handle('exports:report', async (_event, data: { type: ExportType; format: ExportFormat; params?: any }) => {
     try {
       requireCurrentUser(['ADMIN', 'MANAGER']);
-      const report = getReport(data.type, data.params || {});
+      const report = getReport(data.type, data.params || {}) as ReportData;
       const html = htmlTable(report.title, report.rows, report.columns);
       const safeTitle = report.title.replace(/[^a-z0-9-]+/gi, '-').replace(/-+/g, '-');
       if (data.format === 'pdf') {
-        return await savePdf(html, `${safeTitle}.pdf`);
+        return await savePdf(html, `${safeTitle}.pdf`, Boolean(report.thermal || data.type === 'z-report'));
       }
       return await saveExcel(html, `${safeTitle}.xls`);
     } catch (error: any) {

@@ -678,7 +678,8 @@ export default function Employees() {
                   <div className="bg-surface-2 rounded-lg p-5 border border-surface-4">
                     <h3 className="font-semibold text-text-primary mb-1">Calculate Monthly Salary</h3>
                     <p className="text-xs text-text-secondary mb-4">
-                      Period runs from the <strong>{new Date(selected.start_date).getDate()}</strong>th of each month.
+                      Period is the calendar month. Salary stays fixed for 28, 30, or 31 day months.
+                      Leave deduction is always salary / 30 per leave day.
                       Formula: (salary ÷ 30) × days worked — advances deducted automatically.
                     </p>
                     <div className="flex items-end gap-3">
@@ -703,10 +704,10 @@ export default function Employees() {
                         </div>
                         <div className="p-4 space-y-2 text-sm">
                           <div className="flex justify-between"><span className="text-text-secondary">Base Salary</span><span>{toMoney(salaryCalc.salary)}</span></div>
-                          <div className="flex justify-between"><span className="text-text-secondary">Days in Period</span><span>{salaryCalc.daysInPeriod} days</span></div>
+                          <div className="flex justify-between"><span className="text-text-secondary">Salary Days</span><span>{salaryCalc.daysInPeriod} days fixed</span></div>
                           <div className="flex justify-between"><span className="text-text-secondary">Days Off</span><span className="text-danger">{salaryCalc.daysOff} days ({toMoney((salaryCalc.salary / 30) * salaryCalc.daysOff)} deducted)</span></div>
                           <div className="flex justify-between"><span className="text-text-secondary">Days Worked</span><span className="text-success">{salaryCalc.daysWorked} days</span></div>
-                          <div className="flex justify-between font-semibold"><span className="text-text-secondary">Gross Salary</span><span>{toMoney(salaryCalc.grossSalary)}</span></div>
+                          <div className="flex justify-between font-semibold"><span className="text-text-secondary">Salary After Leave</span><span>{toMoney(salaryCalc.grossSalary)}</span></div>
                           <div className="flex justify-between text-danger"><span>Advance Deduction</span><span>— {toMoney(salaryCalc.advanceDeduction)}</span></div>
                           <div className="flex justify-between font-bold text-base border-t border-surface-4 pt-2 mt-2">
                             <span className="text-text-primary">Net Salary to Pay</span>

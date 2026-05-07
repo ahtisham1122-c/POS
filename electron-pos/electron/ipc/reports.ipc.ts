@@ -307,6 +307,10 @@ export function registerReportsIPC() {
 
   ipcMain.handle('reports:getSalesChart', (_event, days: number = 7) => {
     const safeDays = Number.isFinite(days) && days > 0 ? Math.min(days, 90) : 7;
+    const end = getActiveBusinessDate();
+    const startDate = new Date(`${end}T00:00:00`);
+    startDate.setDate(startDate.getDate() - (safeDays - 1));
+    const start = formatLocalDate(startDate);
     const salesRows = db.prepare(`
       SELECT
         COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) as date,
@@ -314,19 +318,23 @@ export function registerReportsIPC() {
         COALESCE(SUM(s.grand_total), 0) as total
       FROM sales s
       LEFT JOIN shifts sh ON sh.id = s.shift_id
-      WHERE s.sale_date >= datetime('now', ?) AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) <= ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
       GROUP BY COALESCE(sh.shift_date, substr(s.sale_date, 1, 10))
       ORDER BY date ASC
-    `).all(`-${safeDays} day`) as Array<{ date: string; orders: number; total: number }>;
+    `).all(start, end) as Array<{ date: string; orders: number; total: number }>;
     const returnRows = db.prepare(`
       SELECT
         COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) as date,
         COALESCE(SUM(r.refund_amount), 0) as refunds
       FROM returns r
       LEFT JOIN shifts sh ON sh.id = r.shift_id
-      WHERE r.return_date >= datetime('now', ?) AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+      WHERE COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) <= ?
+        AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
       GROUP BY COALESCE(sh.shift_date, substr(r.return_date, 1, 10))
-    `).all(`-${safeDays} day`) as Array<{ date: string; refunds: number }>;
+    `).all(start, end) as Array<{ date: string; refunds: number }>;
     const refundsByDate = new Map(returnRows.map((row) => [row.date, Number(row.refunds || 0)]));
     return salesRows.map((row) => {
       const refunds = refundsByDate.get(row.date) || 0;
@@ -360,9 +368,23 @@ export function registerReportsIPC() {
 
   ipcMain.handle('reports:getCustomerDues', () => {
     return db.prepare(`
-      SELECT id, name, phone, current_balance 
-      FROM customers 
-      WHERE current_balance > 0 AND is_active = 1 
+      SELECT *
+      FROM (
+        SELECT
+          c.id,
+          c.name,
+          c.phone,
+          COALESCE((
+            SELECT le.balance_after
+            FROM ledger_entries le
+            WHERE le.customer_id = c.id
+            ORDER BY le.entry_date DESC, le.created_at DESC
+            LIMIT 1
+          ), c.current_balance, 0) as current_balance
+        FROM customers c
+        WHERE c.is_active = 1
+      )
+      WHERE current_balance > 0
       ORDER BY current_balance DESC
     `).all();
   });
@@ -530,8 +552,21 @@ export function registerReportsIPC() {
     `).get(...scopeParams(scope)) as any;
 
     const outstandingDues = db.prepare(`
-      SELECT COALESCE(SUM(current_balance), 0) as total, COUNT(*) as count 
-      FROM customers WHERE current_balance > 0
+      SELECT COALESCE(SUM(current_balance), 0) as total, COUNT(*) as count
+      FROM (
+        SELECT
+          c.id,
+          COALESCE((
+            SELECT le.balance_after
+            FROM ledger_entries le
+            WHERE le.customer_id = c.id
+            ORDER BY le.entry_date DESC, le.created_at DESC
+            LIMIT 1
+          ), c.current_balance, 0) as current_balance
+        FROM customers c
+        WHERE c.is_active = 1
+      )
+      WHERE current_balance > 0
     `).get() as any;
 
     const recentSales = db.prepare(`
@@ -575,15 +610,15 @@ export function registerReportsIPC() {
     // Owner uses returns to fix wrongly-printed receipts. They reverse the
     // sale AND the stock — so they're corrections, not revenue. Gross sales
     // shown on the dashboard must already have refunds subtracted.
-    const grossSales = Number((rawSales - refunds).toFixed(2));
-    const netSales = grossSales;
+    const grossSales = Number(rawSales.toFixed(2));
+    const netSales = Number((rawSales - refunds).toFixed(2));
 
     return {
       kpis: {
         grossSales,
         refunds,
         netSales,
-        revenue: grossSales,
+        revenue: netSales,
         bills: todaySales.bills,
         cashOnHand: drawer.expectedCash,
         expectedCash: drawer.expectedCash,
