@@ -162,6 +162,8 @@ export default function POS() {
   const [customQuantityProduct, setCustomQuantityProduct] = useState<Product | null>(null);
   const [customOtherInput, setCustomOtherInput] = useState("");
   const [customOtherMode, setCustomOtherMode] = useState<"QTY" | "RS">("QTY");
+  const [otherVisibleCount, setOtherVisibleCount] = useState(16);
+  const [customerVisibleCount, setCustomerVisibleCount] = useState(8);
 
   // Hold bills
   const [heldBills, setHeldBills] = useState<any[]>([]);
@@ -231,6 +233,19 @@ export default function POS() {
   const splitRemaining = paymentMode === "SPLIT" ? Math.max(0, grandTotal - cashReceivedValue - onlineReceivedValue) : 0;
   const splitTotalReceived = cashReceivedValue + onlineReceivedValue;
   const ratesReady = !todayRateMissing && rates.milk_rate > 0 && rates.yogurt_rate > 0;
+
+  const choosePaymentMode = (mode: "CASH" | "ONLINE" | "CREDIT" | "SPLIT") => {
+    setPaymentMode(mode);
+    if (mode === "CASH" || mode === "ONLINE" || mode === "CREDIT") {
+      setCashReceived("");
+      setOnlineReceived("");
+    }
+    if (mode !== "CREDIT") {
+      setSelectedCustomerId("");
+      setCustomerSearchQuery("");
+      setCustomers([]);
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -303,15 +318,21 @@ export default function POS() {
   };
 
   useEffect(() => {
-    if (customerSearchQuery.trim() && paymentMode === "CREDIT") {
-      const delay = setTimeout(async () => {
-        const results = await window.electronAPI?.customers?.search(customerSearchQuery);
-        setCustomers(results || []);
-      }, 300);
-      return () => clearTimeout(delay);
-    } else {
+    if (paymentMode !== "CREDIT") {
       setCustomers([]);
+      return;
     }
+
+    const delay = setTimeout(async () => {
+      const query = customerSearchQuery.trim();
+      const results = query
+        ? await window.electronAPI?.customers?.search(query)
+        : await window.electronAPI?.customers?.getAll({ search: "" });
+      setCustomers(results || []);
+      setCustomerVisibleCount(8);
+    }, customerSearchQuery.trim() ? 250 : 0);
+
+    return () => clearTimeout(delay);
   }, [customerSearchQuery, paymentMode]);
 
   // Keyboard Shortcuts
@@ -352,7 +373,7 @@ export default function POS() {
       }
       if (e.key === "F3") {
         e.preventDefault();
-        setPaymentMode(prev => prev === "CASH" ? "ONLINE" : (prev === "ONLINE" ? "CREDIT" : (prev === "CREDIT" ? "SPLIT" : "CASH")));
+        choosePaymentMode(paymentMode === "CASH" ? "ONLINE" : (paymentMode === "ONLINE" ? "CREDIT" : (paymentMode === "CREDIT" ? "SPLIT" : "CASH")));
       }
       if (e.key === "F4") {
         e.preventDefault();
@@ -387,6 +408,13 @@ export default function POS() {
   const milkProduct = useMemo(() => products.find(p => String(p.code).toUpperCase() === "MILK"), [products]);
   const yogurtProduct = useMemo(() => products.find(p => String(p.code).toUpperCase() === "YOGT"), [products]);
   const otherProducts = useMemo(() => products.filter(p => p.id !== milkProduct?.id && p.id !== yogurtProduct?.id && p.name.toLowerCase().includes(otherSearch.toLowerCase())), [products, milkProduct, yogurtProduct, otherSearch]);
+  const visibleOtherProducts = useMemo(() => otherProducts.slice(0, otherVisibleCount), [otherProducts, otherVisibleCount]);
+  const visibleCustomers = useMemo(() => customers.slice(0, customerVisibleCount), [customers, customerVisibleCount]);
+  const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId), [customers, selectedCustomerId]);
+
+  useEffect(() => {
+    setOtherVisibleCount(16);
+  }, [otherSearch, showOtherItems]);
 
   const requireTodaysRates = () => {
     if (ratesReady) return true;
@@ -590,7 +618,7 @@ export default function POS() {
       alert("Maximum 5 bills can be held at once.");
       return;
     }
-    const customerName = selectedCustomerId ? customers.find(c => c.id === selectedCustomerId)?.name || "Khata Customer" : "Walk-in";
+    const customerName = selectedCustomerId ? selectedCustomer?.name || customerSearchQuery || "Khata Customer" : "Walk-in";
     
     const holdData = {
       id: crypto.randomUUID(),
@@ -732,7 +760,7 @@ export default function POS() {
       // Capture current stocks for low-stock alerts check after sale
       const currentStocks = products.reduce((acc, p) => ({ ...acc, [p.id]: p.stock }), {} as Record<string, number>);
       
-      const selectedCustomerObj = customers.find(c => c.id === selectedCustomerId);
+      const selectedCustomerObj = selectedCustomer || customers.find(c => c.id === selectedCustomerId);
       const cashTendered = paymentMode === "CASH"
         ? (cashReceivedValue > 0 ? cashReceivedValue : grandTotal)
         : paymentMode === "SPLIT"
@@ -939,7 +967,7 @@ export default function POS() {
                 {otherProducts.length === 0 ? (
                   <p className="text-center text-sm text-text-secondary py-4">No items found</p>
                 ) : (
-                  otherProducts.map(p => (
+                  visibleOtherProducts.map(p => (
                     <button 
                       key={p.id}
                       onClick={() => openOtherProductQuantity(p)}
@@ -955,6 +983,15 @@ export default function POS() {
                       </div>
                     </button>
                   ))
+                )}
+                {visibleOtherProducts.length < otherProducts.length && (
+                  <button
+                    type="button"
+                    onClick={() => setOtherVisibleCount(count => count + 16)}
+                    className="h-10 rounded-md border border-surface-4 bg-surface-3 text-sm font-bold text-text-primary hover:bg-surface-4"
+                  >
+                    Load more ({otherProducts.length - visibleOtherProducts.length})
+                  </button>
                 )}
               </div>
             </div>
@@ -973,7 +1010,7 @@ export default function POS() {
         <div className="flex items-center gap-3">
           {selectedCustomerId && (
             <div className="bg-danger/20 border border-danger/30 text-danger px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
-              Khata: {customers.find(c => c.id === selectedCustomerId)?.name}
+              Khata: {selectedCustomer?.name || customerSearchQuery || "Selected"}
             </div>
           )}
           <div className="flex items-center gap-1.5 px-2 py-1 bg-surface-3 rounded-full border border-surface-4">
@@ -1115,9 +1152,9 @@ export default function POS() {
         </div>
 
         {/* CART/CHECKOUT PANEL - RIGHT SIDE */}
-        <div className="w-[380px] bg-surface-2 border-l border-surface-4 flex flex-col relative z-30 shadow-[0_-10px_40px_rgba(0,0,0,0.3)]">
+        <div className="w-[420px] bg-surface-2 border-l border-surface-4 flex flex-col relative z-30 shadow-[0_-10px_40px_rgba(0,0,0,0.3)]">
           {/* Section 1: Bill Items */}
-          <div className="flex-1 p-4 flex flex-col relative overflow-hidden">
+          <div className="flex-1 p-3 flex flex-col relative overflow-hidden min-h-0">
             <div className="flex justify-between items-center mb-2">
               <h3 className="text-sm font-bold text-text-secondary uppercase tracking-widest flex items-center gap-2">
                 Current Bill ({items.length})
@@ -1132,33 +1169,38 @@ export default function POS() {
               )}
             </div>
             
-            <div className="flex-1 overflow-y-auto whitespace-normal flex flex-col gap-2 pb-2">
+            <div className="flex-1 overflow-y-auto whitespace-normal flex flex-col gap-1.5 pb-2 pr-1 min-h-0">
               {items.length === 0 ? (
                 <div className="h-full w-full flex items-center justify-center text-text-secondary opacity-50 text-sm">
                   No items added yet
                 </div>
               ) : (
                 items.map(item => (
-                  <div key={item.id} className="flex flex-col bg-surface-3 border border-surface-4 rounded-lg p-3 shadow-sm animate-slide-up">
-                    <div className="flex justify-between items-center gap-4 mb-1">
-                      <span className="font-bold text-text-primary text-sm truncate">{item.name}</span>
+                  <div key={item.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 bg-surface-3 border border-surface-4 rounded-lg px-3 py-2 shadow-sm animate-slide-up">
+                    <div className="min-w-0">
+                      <div className="font-bold text-text-primary text-sm truncate">{item.name}</div>
+                      <div className="text-xs font-mono text-white">
+                        {item.quantity.toFixed(2)} <span className="text-text-secondary">{item.unit}</span>
+                      </div>
+                      {item.discountAmount && item.discountAmount > 0 && (
+                        <div className="text-[10px] font-bold text-warning">Discount -{toMoney(item.discountAmount)}</div>
+                      )}
+                    </div>
+                    <div className="text-right font-mono font-black text-accent">{toMoney(item.lineTotal)}</div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => openItemDiscount(item)}
+                        className={cn(
+                          "rounded-md border px-2 py-1 text-[10px] font-bold transition-colors",
+                          item.discountAmount && item.discountAmount > 0
+                            ? "border-warning/40 bg-warning/10 text-warning"
+                            : "border-surface-4 text-text-secondary hover:bg-surface-4 hover:text-white"
+                        )}
+                      >
+                        Disc
+                      </button>
                       <button onClick={() => removeItem(item.id)} className="text-text-secondary hover:text-danger p-1"><X className="w-4 h-4" /></button>
                     </div>
-                    <div className="flex justify-between items-end">
-                      <div className="text-lg font-mono text-white">{item.quantity.toFixed(2)} <span className="text-xs text-text-secondary">{item.unit}</span></div>
-                      <div className="font-mono font-bold text-accent">{toMoney(item.lineTotal)}</div>
-                    </div>
-                    <button
-                      onClick={() => openItemDiscount(item)}
-                      className={cn(
-                        "mt-2 rounded-md border px-2 py-1 text-[10px] font-bold transition-colors",
-                        item.discountAmount && item.discountAmount > 0
-                          ? "border-warning/40 bg-warning/10 text-warning"
-                          : "border-surface-4 text-text-secondary hover:bg-surface-4 hover:text-white"
-                      )}
-                    >
-                      {item.discountAmount && item.discountAmount > 0 ? `Item Discount: -${toMoney(item.discountAmount)}` : "Add Item Discount"}
-                    </button>
                   </div>
                 ))
               )}
@@ -1206,10 +1248,10 @@ export default function POS() {
           {/* Section 3: Payment */}
           <div className="border-t border-surface-4 p-4 flex flex-col bg-surface-1/30 relative shrink-0">
             <div className="flex bg-surface-3 rounded-lg p-1 border border-surface-4 mb-2">
-              <button onClick={() => setPaymentMode("CASH")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "CASH" ? "bg-success text-white shadow-md" : "text-text-secondary hover:text-white")}>CASH</button>
-              <button onClick={() => setPaymentMode("ONLINE")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "ONLINE" ? "bg-info text-white shadow-md" : "text-text-secondary hover:text-white")}>ONLINE</button>
-              <button onClick={() => setPaymentMode("SPLIT")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "SPLIT" ? "bg-warning text-black shadow-md" : "text-text-secondary hover:text-white")}>SPLIT</button>
-              <button onClick={() => setPaymentMode("CREDIT")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "CREDIT" ? "bg-danger text-white shadow-md" : "text-text-secondary hover:text-white")}>KHATA</button>
+              <button onClick={() => choosePaymentMode("CASH")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "CASH" ? "bg-success text-white shadow-md" : "text-text-secondary hover:text-white")}>CASH</button>
+              <button onClick={() => choosePaymentMode("ONLINE")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "ONLINE" ? "bg-info text-white shadow-md" : "text-text-secondary hover:text-white")}>ONLINE</button>
+              <button onClick={() => choosePaymentMode("SPLIT")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "SPLIT" ? "bg-warning text-black shadow-md" : "text-text-secondary hover:text-white")}>SPLIT</button>
+              <button onClick={() => choosePaymentMode("CREDIT")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "CREDIT" ? "bg-danger text-white shadow-md" : "text-text-secondary hover:text-white")}>KHATA</button>
             </div>
             
             {paymentMode === "CREDIT" && (
@@ -1230,55 +1272,56 @@ export default function POS() {
                      className={cn("w-full bg-surface-3 border rounded-md pl-8 pr-2 py-1.5 text-xs text-white outline-none focus:border-info", selectedCustomerId ? "border-info bg-info/10" : "border-surface-4")}
                    />
                  </div>
-                 
-                 {!selectedCustomerId && customerSearchQuery && customers.length > 0 && (
-                   <div className="absolute bottom-full left-0 right-0 mb-1 bg-surface-2 border border-surface-4 rounded-lg shadow-float max-h-[150px] overflow-y-auto z-[60]">
-                     {customers.map(c => (
-                       <button 
-                         key={c.id} 
-                         onClick={() => { setSelectedCustomerId(c.id); setCustomerSearchQuery(`${c.card_number ? `[${c.card_number}] ` : ''}${c.name}`); setCustomers([]); }}
-                         className="w-full text-left p-2 border-b border-surface-4 hover:bg-surface-3 transition-colors flex justify-between items-center text-xs"
-                       >
-                         <span className="font-bold text-white">{c.name}</span>
-                       </button>
-                     ))}
-                   </div>
-                 )}
+                 <div className="mt-2 max-h-[210px] overflow-y-auto rounded-lg border border-surface-4 bg-surface-2">
+                   {customers.length === 0 ? (
+                     <div className="p-3 text-center text-xs text-text-secondary">
+                       {customerSearchQuery ? "No khata customer found" : "No khata customers yet"}
+                     </div>
+                   ) : (
+                     <div className="flex flex-col">
+                       {visibleCustomers.map(c => (
+                         <button
+                           key={c.id}
+                           onClick={() => { setSelectedCustomerId(c.id); setCustomerSearchQuery(`${c.card_number ? `[${c.card_number}] ` : ''}${c.name}`); }}
+                           className={cn(
+                             "w-full text-left px-3 py-2 border-b border-surface-4 transition-colors flex justify-between items-center text-xs",
+                             selectedCustomerId === c.id ? "bg-danger/20 text-white" : "hover:bg-surface-3 text-text-primary"
+                           )}
+                         >
+                           <span className="min-w-0">
+                             <span className="block truncate font-bold">{c.card_number ? `[${c.card_number}] ` : ""}{c.name}</span>
+                             {c.phone && <span className="block truncate text-[10px] text-text-secondary">{c.phone}</span>}
+                           </span>
+                           <span className="ml-2 shrink-0 font-mono text-[10px] text-warning">{toMoney(c.current_balance || 0)}</span>
+                         </button>
+                       ))}
+                       {visibleCustomers.length < customers.length && (
+                         <button
+                           type="button"
+                           onClick={() => setCustomerVisibleCount(count => count + 8)}
+                           className="h-9 bg-surface-3 text-xs font-bold text-text-primary hover:bg-surface-4"
+                         >
+                           Load more customers ({customers.length - visibleCustomers.length})
+                         </button>
+                       )}
+                     </div>
+                   )}
+                 </div>
                </div>
             )}
 
             {paymentMode === "CASH" && (
-              <div className="flex flex-col bg-success/10 border border-success/30 rounded-lg p-2 animate-slide-up relative">
-                <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex flex-col bg-success/10 border border-success/30 rounded-lg p-3 animate-slide-up relative">
+                <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-[10px] font-bold text-success uppercase">Fast cash sale</div>
-                    <div className="text-[10px] text-text-secondary">Cash box is optional. Press Enter or CASH to complete.</div>
+                    <div className="text-xs font-bold text-success uppercase">Fast cash sale</div>
+                    <div className="text-[11px] text-text-secondary">No cash entry needed. Press Enter or CASH to complete.</div>
                   </div>
                   <div className="text-right">
                     <div className="text-[10px] text-text-secondary uppercase">Bill</div>
-                    <div className="text-lg font-black font-mono text-success">{toMoney(grandTotal)}</div>
+                    <div className="text-2xl font-black font-mono text-success">{toMoney(grandTotal)}</div>
                   </div>
                 </div>
-                <div className="grid grid-cols-4 gap-1.5 mb-2">
-                  {[grandTotal, 500, 1000, 5000].map((amount, index) => (
-                    <button
-                      key={`${index}-${amount}`}
-                      type="button"
-                      onClick={() => setCashReceived(String(Math.round(amount)))}
-                      className="h-8 rounded-md bg-surface-3 hover:bg-surface-4 border border-surface-4 text-[11px] font-bold text-white"
-                    >
-                      {amount === grandTotal ? "Exact" : `Rs ${amount}`}
-                    </button>
-                  ))}
-                </div>
-                <label className="text-[10px] font-bold text-text-secondary uppercase mb-1">Optional change calculator</label>
-                <input type="number" min="0" inputMode="numeric" placeholder="Leave blank for exact cash" value={cashReceived} onChange={e => setCashReceived(e.target.value)} onFocus={() => openTouchInput({ title: "Cash received", mode: "number", value: cashReceived, setValue: setCashReceived, allowDecimal: true })} className="w-full bg-surface-1 border border-surface-4 rounded p-1.5 text-sm font-mono text-white outline-none focus:border-success mb-1" />
-                {cashReceivedValue > 0 && cashReceivedValue < grandTotal && (
-                  <div className="text-xs font-bold text-warning mt-1">Received is short by {toMoney(grandTotal - cashReceivedValue)}</div>
-                )}
-                {cashReceivedValue > grandTotal && (
-                  <div className="text-xs font-bold text-success animate-bounce-in mt-1">Change: {toMoney(changeToReturn)}</div>
-                )}
               </div>
             )}
 
