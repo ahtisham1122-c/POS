@@ -237,8 +237,11 @@ export function registerProductsIPC() {
     const transaction = db.transaction(() => {
       requireCurrentUser(['ADMIN', 'MANAGER']);
       const now = new Date().toISOString();
-      const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(id) as any;
+      const product = db.prepare('SELECT code, stock FROM products WHERE id = ?').get(id) as any;
       if (!product) throw new Error('Product not found');
+      if (String(product.code || '').toUpperCase() === 'MILK') {
+        throw new Error('Milk stock and cost come only from supplier milk collection. Enter farmer milk in Suppliers, not Inventory.');
+      }
       const createdById = data.userId || getCurrentUser()?.id || 'system';
       const quantity = requireNumber(data.quantity, 'Stock-in quantity', { mustBeGreaterThanZero: true });
 

@@ -42,6 +42,28 @@ function getSupplierRate(data: { defaultRate?: number; cowRate?: number; buffalo
   return defaultRate;
 }
 
+function getCollectionRateFromSupplier(supplier: any, milkType: string) {
+  return getSupplierRate({
+    defaultRate: supplier?.default_rate,
+    cowRate: supplier?.cow_rate,
+    buffaloRate: supplier?.buffalo_rate
+  }, milkType);
+}
+
+function getWeightedMilkCostForDate(date: string, fallbackRate: number) {
+  const row = db.prepare(`
+    SELECT
+      COALESCE(SUM(quantity), 0) as total_quantity,
+      COALESCE(SUM(total_amount), 0) as total_amount
+    FROM milk_collections
+    WHERE collection_date = ?
+  `).get(date) as any;
+  const totalQuantity = Number(row?.total_quantity || 0);
+  const totalAmount = Number(row?.total_amount || 0);
+  if (totalQuantity <= 0) return Number(fallbackRate || 0);
+  return Number((totalAmount / totalQuantity).toFixed(2));
+}
+
 function recalculateSupplierLedger(supplierId: string) {
   const rows = db.prepare(`
     SELECT id, entry_type, amount, balance_after, entry_date, created_at
@@ -189,13 +211,9 @@ export function registerSuppliersIPC() {
 
         const milkType = normalizeMilkType(data.milkType);
         const quantity = Number(data.quantity || 0);
-        const rate = Number(data.rate || getSupplierRate({
-          defaultRate: supplier.default_rate,
-          cowRate: supplier.cow_rate,
-          buffaloRate: supplier.buffalo_rate
-        }, milkType));
+        const rate = Number(getCollectionRateFromSupplier(supplier, milkType));
         if (quantity <= 0) throw new Error('Milk quantity must be greater than zero');
-        if (rate <= 0) throw new Error('Purchase rate must be greater than zero');
+        if (rate <= 0) throw new Error(`Set ${milkType.toLowerCase()} milk purchase rate for ${supplier.name} before entering milk collection`);
 
         const duplicate = db.prepare(`
           SELECT id
@@ -285,12 +303,13 @@ export function registerSuppliersIPC() {
         if (milkProduct) {
           const stockBefore = Number(milkProduct.stock || 0);
           const stockAfter = stockBefore + quantity;
+          const weightedCost = getWeightedMilkCostForDate(data.date, rate);
           db.prepare('UPDATE products SET stock = ?, cost_price = ?, updated_at = ?, synced = 0 WHERE id = ?')
-            .run(stockAfter, rate, now, milkProduct.id);
+            .run(stockAfter, weightedCost, now, milkProduct.id);
           createOutboxEntry('products', 'UPDATE', milkProduct.id, {
             id: milkProduct.id,
             stock: stockAfter,
-            cost_price: rate,
+            cost_price: weightedCost,
             updated_at: now
           });
 
@@ -366,13 +385,9 @@ export function registerSuppliersIPC() {
         }
 
         const quantity = Number(data.quantity ?? existing.quantity ?? 0);
-        const rate = Number(data.rate || getSupplierRate({
-          defaultRate: existing.default_rate,
-          cowRate: existing.cow_rate,
-          buffaloRate: existing.buffalo_rate
-        }, milkType));
+        const rate = Number(getCollectionRateFromSupplier(existing, milkType));
         if (quantity <= 0) throw new Error('Milk quantity must be greater than zero');
-        if (rate <= 0) throw new Error('Purchase rate must be greater than zero');
+        if (rate <= 0) throw new Error(`Set ${milkType.toLowerCase()} milk purchase rate for ${existing.supplier_name} before updating milk collection`);
 
         const oldQuantity = Number(existing.quantity || 0);
         const quantityDelta = Number((quantity - oldQuantity).toFixed(3));
@@ -417,12 +432,13 @@ export function registerSuppliersIPC() {
         const milkProduct = getMilkProduct();
         if (milkProduct && (quantityDelta !== 0 || Number(existing.rate || 0) !== rate)) {
           const stockAfter = Number((Number(milkProduct.stock || 0) + quantityDelta).toFixed(3));
+          const weightedCost = getWeightedMilkCostForDate(date, rate);
           db.prepare('UPDATE products SET stock = ?, cost_price = ?, updated_at = ?, synced = 0 WHERE id = ?')
-            .run(stockAfter, rate, now, milkProduct.id);
+            .run(stockAfter, weightedCost, now, milkProduct.id);
           createOutboxEntry('products', 'UPDATE', milkProduct.id, {
             id: milkProduct.id,
             stock: stockAfter,
-            cost_price: rate,
+            cost_price: weightedCost,
             updated_at: now
           });
         }

@@ -584,16 +584,16 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
   const [isEditing, setIsEditing] = useState(false);
   const [milkType, setMilkType] = useState<MilkType>(collection?.milk_type || "BUFFALO");
   const [quantity, setQuantity] = useState(collection ? String(collection.quantity) : "");
-  const [rate, setRate] = useState(collection ? String(collection.rate) : String(supplierRate(supplier, "BUFFALO")));
   const [notes, setNotes] = useState(collection?.notes || "");
   const [isSaving, setIsSaving] = useState(false);
+  const lockedRate = supplierRate(supplier, milkType);
 
-  // Sync rate when milk type changes if not editing an existing collection
   useEffect(() => {
-    if (!collection && !isEditing) {
-      setRate(String(supplierRate(supplier, milkType)));
-    }
-  }, [milkType, supplier, collection, isEditing]);
+    setMilkType(collection?.milk_type || "BUFFALO");
+    setQuantity(collection ? String(collection.quantity) : "");
+    setNotes(collection?.notes || "");
+    setIsEditing(false);
+  }, [collection?.id, collection?.milk_type, collection?.quantity, collection?.notes]);
 
   if (!allowed) {
     return (
@@ -615,7 +615,6 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
         shift,
         milkType,
         quantity: Number(quantity || 0),
-        rate: Number(rate || 0),
         notes,
       };
       const result = collection
@@ -643,7 +642,7 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
           </button>
         )}
         {isEditing && (
-          <button onClick={() => { setIsEditing(false); setQuantity(String(collection.quantity)); setRate(String(collection.rate)); }} className="text-text-secondary hover:text-text-primary">
+          <button onClick={() => { setIsEditing(false); setMilkType(collection.milk_type || "BUFFALO"); setQuantity(String(collection.quantity)); setNotes(collection.notes || ""); }} className="text-text-secondary hover:text-text-primary">
             <X className="w-4 h-4" />
           </button>
         )}
@@ -673,18 +672,28 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
               <input type="number" className="input font-mono text-lg py-2" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="0.00" />
             </div>
             <div>
-              <label className="text-[10px] text-text-secondary font-bold uppercase mb-1 block">Rate / kg</label>
-              <input type="number" className="input font-mono text-lg py-2" value={rate} onChange={e => setRate(e.target.value)} />
+              <label className="text-[10px] text-text-secondary font-bold uppercase mb-1 block">Farmer Rate / kg</label>
+              <div className={cn(
+                "input font-mono text-lg py-2 flex items-center justify-end",
+                lockedRate > 0 ? "text-text-primary" : "text-danger"
+              )}>
+                {toMoney(lockedRate)}
+              </div>
             </div>
           </div>
+          {lockedRate <= 0 && (
+            <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-semibold text-danger">
+              Set this farmer's {milkType.toLowerCase()} milk rate first. Milk cost is taken from the farmer profile.
+            </div>
+          )}
           <input className="input text-sm" placeholder="Notes (optional)" value={notes} onChange={e => setNotes(e.target.value)} />
           
           <div className="mt-auto pt-4 flex items-center justify-between">
             <div>
               <p className="text-[10px] text-text-secondary font-bold uppercase">Payable</p>
-              <p className="font-mono font-bold text-accent">{toMoney(Number(quantity || 0) * Number(rate || 0))}</p>
+              <p className="font-mono font-bold text-accent">{toMoney(Number(quantity || 0) * lockedRate)}</p>
             </div>
-            <button onClick={handleSave} disabled={isSaving || !quantity || Number(quantity) <= 0} className="btn-primary px-5 py-2">
+            <button onClick={handleSave} disabled={isSaving || !quantity || Number(quantity) <= 0 || lockedRate <= 0} className="btn-primary px-5 py-2">
               {isSaving ? "..." : "Save"}
             </button>
           </div>

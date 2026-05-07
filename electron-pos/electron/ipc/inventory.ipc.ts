@@ -77,6 +77,13 @@ export function registerInventoryIPC() {
       requireCurrentUser(['ADMIN', 'MANAGER']);
       const quantity = requirePositiveQuantity(data.quantity, 'Stock-in quantity');
       const product = db.prepare('SELECT code FROM products WHERE id = ?').get(id) as any;
+      const code = String(product?.code || '').toUpperCase();
+      if (code === 'MILK') {
+        return {
+          success: false,
+          error: 'Milk stock and cost come only from supplier milk collection. Enter farmer milk in Suppliers, not Inventory.'
+        };
+      }
 
       // Optional per-line cost from the new "Stock In" cart (issue #4: owner
       // wanted to enter custom price per receipt). When provided we:
@@ -104,7 +111,7 @@ export function registerInventoryIPC() {
       }
 
       // Yogurt is produced from milk — deduct same quantity from Milk in same transaction
-      if (product?.code === 'YOGT') {
+      if (code === 'YOGT') {
         return db.transaction(() => {
           const milkProduct = db.prepare(`SELECT id, stock FROM products WHERE code = 'MILK' AND is_active = 1`).get() as any;
           if (!milkProduct) throw new Error('Milk product not found. Yogurt is made from milk.');

@@ -541,9 +541,21 @@ export default function Inventory() {
                         </td>
                         <td className="px-4 py-3 text-right space-x-2">
                           <button
-                            onClick={() => { setSelectedProduct(p); setStockInModalOpen(true); }}
-                            className={cn("p-1.5 rounded transition-colors", isYogurt ? "text-amber-400 hover:bg-amber-500/10" : "text-success hover:bg-success/10")}
-                            title={isYogurt ? "Produce Yogurt (uses milk)" : isMilk ? "Stock In (use Suppliers page for collections)" : "Stock In"}
+                            disabled={isMilk}
+                            onClick={() => {
+                              if (isMilk) return;
+                              setSelectedProduct(p);
+                              setStockInModalOpen(true);
+                            }}
+                            className={cn(
+                              "p-1.5 rounded transition-colors",
+                              isMilk
+                                ? "text-text-secondary/40 cursor-not-allowed"
+                                : isYogurt
+                                  ? "text-amber-400 hover:bg-amber-500/10"
+                                  : "text-success hover:bg-success/10"
+                            )}
+                            title={isYogurt ? "Produce Yogurt (uses milk)" : isMilk ? "Milk stock comes from Suppliers milk collection" : "Stock In"}
                           >
                             <ArrowUpCircle className="w-4 h-4" />
                           </button>
@@ -907,7 +919,7 @@ export default function Inventory() {
               })()}
               {selectedProduct.code === 'MILK' && (
                 <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-sm text-blue-400">
-                  💡 Milk stock normally comes from supplier entries (Suppliers page). Use this only for manual corrections.
+                  Milk stock and cost are controlled by supplier milk collections. Go to Suppliers to enter farmer milk.
                 </div>
               )}
               <div className="bg-surface-3 rounded-lg p-4 flex justify-between items-center">
