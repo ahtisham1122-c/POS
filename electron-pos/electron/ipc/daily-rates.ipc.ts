@@ -24,6 +24,11 @@ export function registerDailyRatesIPC() {
     return db.prepare('SELECT * FROM daily_rates ORDER BY date DESC LIMIT 1').get() || null;
   });
 
+  ipcMain.handle('dailyRates:getByDate', (_event, date: string) => {
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return null;
+    return db.prepare('SELECT * FROM daily_rates WHERE date = ?').get(date) || null;
+  });
+
   ipcMain.handle('dailyRates:getHistory', () => {
     return db.prepare(`
       SELECT dr.*, u.name as updated_by_name

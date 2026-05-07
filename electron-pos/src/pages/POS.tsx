@@ -17,6 +17,16 @@ function toMoney(value: number) {
   return `Rs. ${Math.round(Number(value || 0)).toLocaleString("en-PK")}`;
 }
 
+function localDateString(date = new Date()) {
+  return format(date, "yyyy-MM-dd");
+}
+
+function previousDateString() {
+  const date = new Date();
+  date.setDate(date.getDate() - 1);
+  return localDateString(date);
+}
+
 type TouchInputRequest = {
   title: string;
   mode: "number" | "text";
@@ -143,6 +153,10 @@ export default function POS() {
   const [onlineReceived, setOnlineReceived] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [customerSearchQuery, setCustomerSearchQuery] = useState("");
+  const [backdateKhata, setBackdateKhata] = useState(false);
+  const [backdateDate, setBackdateDate] = useState(previousDateString());
+  const [backdateRates, setBackdateRates] = useState<DailyRate | null>(null);
+  const [backdateRateMissing, setBackdateRateMissing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [receiptData, setReceiptData] = useState<any>(null);
   const [lastReceiptData, setLastReceiptData] = useState<any>(null);
@@ -233,6 +247,11 @@ export default function POS() {
   const splitRemaining = paymentMode === "SPLIT" ? Math.max(0, grandTotal - cashReceivedValue - onlineReceivedValue) : 0;
   const splitTotalReceived = cashReceivedValue + onlineReceivedValue;
   const ratesReady = !todayRateMissing && rates.milk_rate > 0 && rates.yogurt_rate > 0;
+  const isBackdatedKhata = paymentMode === "CREDIT" && backdateKhata;
+  const activeRates = isBackdatedKhata && backdateRates ? backdateRates : rates;
+  const activeRatesReady = isBackdatedKhata
+    ? Boolean(backdateRates && !backdateRateMissing && backdateRates.milk_rate > 0 && backdateRates.yogurt_rate > 0)
+    : ratesReady;
 
   const choosePaymentMode = (mode: "CASH" | "ONLINE" | "CREDIT" | "SPLIT") => {
     setPaymentMode(mode);
@@ -244,6 +263,7 @@ export default function POS() {
       setSelectedCustomerId("");
       setCustomerSearchQuery("");
       setCustomers([]);
+      setBackdateKhata(false);
     }
   };
 
@@ -335,6 +355,26 @@ export default function POS() {
     return () => clearTimeout(delay);
   }, [customerSearchQuery, paymentMode]);
 
+  useEffect(() => {
+    if (!isBackdatedKhata || !backdateDate) {
+      setBackdateRates(null);
+      setBackdateRateMissing(false);
+      return;
+    }
+
+    const loadBackdateRates = async () => {
+      const found = await window.electronAPI?.dailyRates?.getByDate(backdateDate);
+      if (found) {
+        setBackdateRates({ date: found.date, milk_rate: Number(found.milk_rate || 0), yogurt_rate: Number(found.yogurt_rate || 0) });
+        setBackdateRateMissing(false);
+      } else {
+        setBackdateRates(null);
+        setBackdateRateMissing(true);
+      }
+    };
+    loadBackdateRates();
+  }, [isBackdatedKhata, backdateDate]);
+
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -346,7 +386,7 @@ export default function POS() {
         e.preventDefault();
         setShowOtherItems(true);
       }
-      if (e.key === "Enter" && ratesReady && items.length > 0 && !isSubmitting && !receiptData && !showOtherItems) {
+      if (e.key === "Enter" && activeRatesReady && items.length > 0 && !isSubmitting && !receiptData && !showOtherItems) {
         if (paymentMode !== "CREDIT" || selectedCustomerId) {
           handleCheckout();
         }
@@ -395,7 +435,7 @@ export default function POS() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [items, isSubmitting, receiptData, paymentMode, selectedCustomerId, showOtherItems, lastReceiptData, heldBills, ratesReady]);
+  }, [items, isSubmitting, receiptData, paymentMode, selectedCustomerId, showOtherItems, lastReceiptData, heldBills, activeRatesReady]);
 
   const loadEndOfDay = async () => {
     const day = await window.electronAPI?.system?.getBusinessDate();
@@ -416,10 +456,34 @@ export default function POS() {
     setOtherVisibleCount(16);
   }, [otherSearch, showOtherItems]);
 
-  const requireTodaysRates = () => {
-    if (ratesReady) return true;
+  const requireActiveRates = () => {
+    if (activeRatesReady) return true;
+    if (isBackdatedKhata) {
+      addAlert(`Enter milk and yogurt rates for ${backdateDate} before saving previous-day khata.`);
+      return false;
+    }
     addAlert("Enter today's milk and yogurt rates before making sales.");
     return false;
+  };
+
+  const setBackdateKhataMode = (enabled: boolean) => {
+    if (enabled === backdateKhata) return;
+    if (items.length > 0 && !window.confirm("Changing previous-day mode will clear the current cart so rates stay correct. Continue?")) {
+      return;
+    }
+    clearCart();
+    setBackdateKhata(enabled);
+    setBackdateDate(previousDateString());
+    setBackdateRates(null);
+    setBackdateRateMissing(false);
+  };
+
+  const updateBackdateDate = (date: string) => {
+    if (items.length > 0 && date !== backdateDate && !window.confirm("Changing the khata date will clear the cart so old rates are used correctly. Continue?")) {
+      return;
+    }
+    clearCart();
+    setBackdateDate(date);
   };
 
   const saveTodaysRates = async () => {
@@ -455,7 +519,7 @@ export default function POS() {
   };
 
   const addMilk = (qty: number) => {
-    if (!requireTodaysRates()) return;
+    if (!requireActiveRates()) return;
     if (!milkProduct) {
       addAlert("Milk system product is missing. Restart the app once to repair products.");
       return;
@@ -466,14 +530,14 @@ export default function POS() {
       name: milkProduct.name,
       unit: "kg",
       quantity: qty,
-      price: rates.milk_rate,
+      price: activeRates.milk_rate,
       costPrice: milkProduct.cost_price,
-      lineTotal: qty * rates.milk_rate
+      lineTotal: qty * activeRates.milk_rate
     });
   };
 
   const addYogurtKg = (qty: number) => {
-    if (!requireTodaysRates()) return;
+    if (!requireActiveRates()) return;
     if (!yogurtProduct) {
       addAlert("Yogurt system product is missing. Restart the app once to repair products.");
       return;
@@ -484,47 +548,47 @@ export default function POS() {
       name: yogurtProduct.name,
       unit: "kg",
       quantity: qty,
-      price: rates.yogurt_rate,
+      price: activeRates.yogurt_rate,
       costPrice: yogurtProduct.cost_price,
-      lineTotal: qty * rates.yogurt_rate
+      lineTotal: qty * activeRates.yogurt_rate
     });
   };
 
   const addYogurtRs = (amount: number) => {
-    if (!requireTodaysRates()) return;
+    if (!requireActiveRates()) return;
     if (!yogurtProduct) {
       addAlert("Yogurt system product is missing. Restart the app once to repair products.");
       return;
     }
-    if (rates.yogurt_rate <= 0) return;
-    const qty = Math.round((amount / rates.yogurt_rate) * 1000) / 1000;
+    if (activeRates.yogurt_rate <= 0) return;
+    const qty = Math.round((amount / activeRates.yogurt_rate) * 1000) / 1000;
     addItem({
       id: crypto.randomUUID(),
       productId: yogurtProduct.id,
       name: yogurtProduct.name,
       unit: "kg",
       quantity: qty,
-      price: rates.yogurt_rate,
+      price: activeRates.yogurt_rate,
       costPrice: yogurtProduct.cost_price,
       lineTotal: amount // exact amount
     });
   };
 
   const addMilkRs = (amount: number) => {
-    if (!requireTodaysRates()) return;
+    if (!requireActiveRates()) return;
     if (!milkProduct) {
       addAlert("Milk system product is missing. Restart the app once to repair products.");
       return;
     }
-    if (rates.milk_rate <= 0) return;
-    const qty = Math.round((amount / rates.milk_rate) * 1000) / 1000;
+    if (activeRates.milk_rate <= 0) return;
+    const qty = Math.round((amount / activeRates.milk_rate) * 1000) / 1000;
     addItem({
       id: crypto.randomUUID(),
       productId: milkProduct.id,
       name: milkProduct.name,
       unit: "kg",
       quantity: qty,
-      price: rates.milk_rate,
+      price: activeRates.milk_rate,
       costPrice: milkProduct.cost_price,
       lineTotal: amount // exact amount
     });
@@ -554,7 +618,7 @@ export default function POS() {
   };
 
   const openOtherProductQuantity = (product: Product) => {
-    if (!requireTodaysRates()) return;
+    if (!requireActiveRates()) return;
     setCustomQuantityProduct(product);
     setCustomOtherMode("QTY");
     setCustomOtherInput("1");
@@ -708,10 +772,20 @@ export default function POS() {
 
   const handleCheckout = async () => {
     if (items.length === 0 || isSubmitting) return;
-    if (!requireTodaysRates()) return;
+    if (!requireActiveRates()) return;
     if (paymentMode === "CREDIT" && !selectedCustomerId) {
       alert("Please select a customer for khata/credit sale.");
       return;
+    }
+    if (isBackdatedKhata) {
+      if (!backdateDate || backdateDate >= localDateString()) {
+        alert("Previous-day khata date must be before today.");
+        return;
+      }
+      if (!backdateRates) {
+        alert(`Daily rates are not saved for ${backdateDate}. Set that date's rates first.`);
+        return;
+      }
     }
 
     if (discountInput.trim()) {
@@ -781,6 +855,15 @@ export default function POS() {
         }
         managerPin = enteredPin;
       }
+      let backdateManagerPin: string | undefined;
+      if (isBackdatedKhata) {
+        const enteredPin = await askManagerPin(`Backdate khata sale to ${backdateDate} — Manager PIN required.`);
+        if (!enteredPin) {
+          setIsSubmitting(false);
+          return;
+        }
+        backdateManagerPin = enteredPin;
+      }
 
       const saleData = {
         transactionId,
@@ -799,6 +882,8 @@ export default function POS() {
         cashTendered,
         changeReturned: paymentMode === "CASH" ? changeToReturn : 0,
         managerPin,
+        backdateDate: isBackdatedKhata ? backdateDate : undefined,
+        backdateManagerPin,
         taxAmount,
         taxRate: taxConfig.rate,
         taxLabel: taxConfig.label,
@@ -858,7 +943,7 @@ export default function POS() {
       
       const rData = {
         billNumber: billNo,
-        date: new Date(),
+        date: savedSale?.sale_date ? new Date(savedSale.sale_date) : new Date(),
         customer: selectedCustomerObj?.name || "Walk-in",
         items: savedItems.length > 0 ? savedItems : [...items],
         subtotal: receiptSubtotal,
@@ -903,6 +988,10 @@ export default function POS() {
       setSelectedCustomerId("");
       setCustomerSearchQuery("");
       setPaymentMode("CASH");
+      setBackdateKhata(false);
+      setBackdateDate(previousDateString());
+      setBackdateRates(null);
+      setBackdateRateMissing(false);
       setCashReceived("");
       setOnlineReceived("");
       setDiscountInput("");
@@ -1027,7 +1116,7 @@ export default function POS() {
         <div className="flex-1 bg-[#040f09] border-r border-surface-4 flex flex-col relative">
           <div className="p-4 shrink-0 text-center border-b border-white/5">
             <h1 className="text-3xl font-black text-white tracking-wide">🥛 MILK</h1>
-            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{ratesReady ? `Rs.${rates.milk_rate}/kg` : "Rate required"}</p>
+            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{activeRatesReady ? `Rs.${activeRates.milk_rate}/kg` : "Rate required"}</p>
           </div>
           
           <div className="flex-1 p-4 flex flex-col gap-4 overflow-hidden">
@@ -1062,7 +1151,7 @@ export default function POS() {
                 {[1, 2, 3, 4, 5, 6].map(kg => (
                   <button key={kg} onClick={() => addMilk(kg)} className="flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
                     <span className="text-3xl font-bold text-white group-active:text-success">{kg} kg</span>
-                    <span className="text-lg font-mono text-accent mt-1">{toMoney(kg * rates.milk_rate)}</span>
+                    <span className="text-lg font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>
                   </button>
                 ))}
               </div>
@@ -1070,7 +1159,7 @@ export default function POS() {
                 {[0.5, 1.5, 2.5, 3.5, 4.5, 5.5].map(kg => (
                   <button key={kg} onClick={() => addMilk(kg)} className="flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
                     <span className="text-3xl font-bold text-white group-active:text-success">{kg} kg</span>
-                    <span className="text-lg font-mono text-accent mt-1">{toMoney(kg * rates.milk_rate)}</span>
+                    <span className="text-lg font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>
                   </button>
                 ))}
               </div>
@@ -1078,7 +1167,7 @@ export default function POS() {
                 {[7, 8, 9, 10, 11, 12].map(kg => (
                   <button key={kg} onClick={() => addMilk(kg)} className="flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
                     <span className="text-3xl font-bold text-white group-active:text-success">{kg} kg</span>
-                    <span className="text-lg font-mono text-accent mt-1">{toMoney(kg * rates.milk_rate)}</span>
+                    <span className="text-lg font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>
                   </button>
                 ))}
               </div>
@@ -1092,7 +1181,7 @@ export default function POS() {
         <div className="flex-1 bg-[#04090f] flex flex-col relative">
           <div className="p-4 shrink-0 text-center border-b border-white/5">
             <h1 className="text-3xl font-black text-white tracking-wide">🫙 YOGURT</h1>
-            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{ratesReady ? `Rs.${rates.yogurt_rate}/kg` : "Rate required"}</p>
+            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{activeRatesReady ? `Rs.${activeRates.yogurt_rate}/kg` : "Rate required"}</p>
           </div>
           
           <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
@@ -1129,7 +1218,7 @@ export default function POS() {
                   {[0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00].map(kg => (
                     <button key={kg} onClick={() => addYogurtKg(kg)} className="flex-1 bg-info/10 hover:bg-info/20 active:bg-info/40 border border-info/20 rounded-xl flex flex-row items-center justify-between px-6 transition-all active:scale-95 group">
                       <span className="text-2xl font-bold text-white">{kg.toFixed(2)} kg</span>
-                      <span className="text-lg font-mono text-info/80">{toMoney(kg * rates.yogurt_rate)}</span>
+                      <span className="text-lg font-mono text-info/80">{toMoney(kg * activeRates.yogurt_rate)}</span>
                     </button>
                   ))}
                 </div>
@@ -1142,7 +1231,7 @@ export default function POS() {
                   {[50, 100, 150, 200, 250, 300].map(amt => (
                     <button key={amt} onClick={() => addYogurtRs(amt)} className="flex-1 bg-purple-500/10 hover:bg-purple-500/20 active:bg-purple-500/40 border border-purple-500/20 rounded-xl flex flex-row items-center justify-between px-6 transition-all active:scale-95 group">
                       <span className="text-2xl font-bold text-white">Rs. {amt}</span>
-                      <span className="text-sm font-mono text-purple-300/80">≈ {((amt / rates.yogurt_rate) || 0).toFixed(2)} kg</span>
+                      <span className="text-sm font-mono text-purple-300/80">≈ {((amt / activeRates.yogurt_rate) || 0).toFixed(2)} kg</span>
                     </button>
                   ))}
                 </div>
@@ -1272,6 +1361,34 @@ export default function POS() {
                      className={cn("w-full bg-surface-3 border rounded-md pl-8 pr-2 py-1.5 text-xs text-white outline-none focus:border-info", selectedCustomerId ? "border-info bg-info/10" : "border-surface-4")}
                    />
                  </div>
+                 <div className="mt-2 rounded-lg border border-surface-4 bg-surface-3 p-2">
+                   <label className="flex items-center justify-between gap-3 text-xs font-bold text-text-primary">
+                     <span>Previous-day khata</span>
+                     <input
+                       type="checkbox"
+                       checked={backdateKhata}
+                       onChange={(event) => setBackdateKhataMode(event.target.checked)}
+                       className="h-5 w-5"
+                     />
+                   </label>
+                   {backdateKhata && (
+                     <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-2">
+                       <input
+                         type="date"
+                         value={backdateDate}
+                         max={previousDateString()}
+                         onChange={(event) => updateBackdateDate(event.target.value)}
+                         className="input h-9 text-xs"
+                       />
+                       <div className={cn("rounded px-2 py-1 text-[10px] font-bold", backdateRateMissing ? "bg-danger/20 text-danger" : "bg-success/15 text-success")}>
+                         {backdateRateMissing ? "No rates" : backdateRates ? `M ${backdateRates.milk_rate} / Y ${backdateRates.yogurt_rate}` : "Checking"}
+                       </div>
+                       <div className="col-span-2 text-[10px] text-text-secondary">
+                         Manager PIN required. This sale appears in reports for the selected date.
+                       </div>
+                     </div>
+                   )}
+                 </div>
                  <div className="mt-2 max-h-[210px] overflow-y-auto rounded-lg border border-surface-4 bg-surface-2">
                    {customers.length === 0 ? (
                      <div className="p-3 text-center text-xs text-text-secondary">
@@ -1363,10 +1480,10 @@ export default function POS() {
           <div className="border-t border-surface-4 p-4 flex flex-col gap-3 bg-surface-2 shrink-0">
             <button 
               onClick={handleCheckout} 
-              disabled={!ratesReady || items.length === 0 || isSubmitting || (paymentMode === "CREDIT" && !selectedCustomerId)}
+              disabled={!activeRatesReady || items.length === 0 || isSubmitting || (paymentMode === "CREDIT" && !selectedCustomerId)}
               className="w-full h-14 bg-success hover:bg-success/90 disabled:bg-surface-4 disabled:text-text-secondary text-white font-black text-xl rounded-xl shadow-glow disabled:shadow-none transition-all flex items-center justify-center gap-2 active:scale-95"
             >
-              {!ratesReady ? "ENTER TODAY'S RATES" : isSubmitting ? "..." : (paymentMode === "CASH" ? "CASH ✓" : (paymentMode === "ONLINE" ? "ONLINE ✓" : (paymentMode === "CREDIT" ? "KHATA ✓" : "SPLIT ✓")))}
+              {!activeRatesReady ? (isBackdatedKhata ? "ENTER PREVIOUS DATE RATES" : "ENTER TODAY'S RATES") : isSubmitting ? "..." : (paymentMode === "CASH" ? "CASH ✓" : (paymentMode === "ONLINE" ? "ONLINE ✓" : (paymentMode === "CREDIT" ? "KHATA ✓" : "SPLIT ✓")))}
             </button>
             
             <div className="flex gap-2 h-10">
@@ -1839,3 +1956,4 @@ export default function POS() {
     </div>
   );
 }
+

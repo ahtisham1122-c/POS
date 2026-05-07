@@ -40,6 +40,12 @@ function getSaleDailyRate(businessDate: string) {
   throw new Error(`Today's milk/yogurt rates are not set for ${businessDate}. Enter Daily Rates before making sales.`);
 }
 
+function normalizeBackdate(value: unknown) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  return date;
+}
+
 export function registerSalesIPC() {
   ipcMain.handle('sales:getAll', (_event, filters?: any) => {
     const date = filters?.date?.trim();
@@ -302,16 +308,40 @@ export function registerSalesIPC() {
         throw new Error('Please open a shift before making sales');
       }
 
-      const saleDate = openShift.shift_date;
-      const lateSaleNote = getLateSaleNote(openShift, new Date(now));
-
-      const cashRegister = db.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(openShift.id, saleDate) as any;
-      if (!cashRegister) {
-        throw new Error('Please open the cash register before making sales');
+      const requestedBackdate = normalizeBackdate(data.backdateDate);
+      const todayBusinessDate = openShift.shift_date;
+      const isBackdatedCredit = Boolean(requestedBackdate && requestedBackdate !== todayBusinessDate);
+      if (requestedBackdate) {
+        if (paymentType !== 'CREDIT') {
+          throw new Error('Only khata credit sales can be backdated');
+        }
+        const today = getBusinessDate(new Date(now));
+        if (requestedBackdate > today) {
+          throw new Error('Backdate cannot be in the future');
+        }
+        const daysOld = Math.floor((new Date(`${today}T00:00:00`).getTime() - new Date(`${requestedBackdate}T00:00:00`).getTime()) / (24 * 60 * 60 * 1000));
+        if (daysOld > 31) {
+          throw new Error('Backdated khata sales are limited to the last 31 days');
+        }
+        if (isBackdatedCredit) {
+          requireManagerApproval(data.backdateManagerPin || data.managerPin, `backdating khata sale to ${requestedBackdate}`);
+        }
       }
 
-      if (Number(cashRegister.is_closed_for_day || 0) === 1) {
-        throw new Error('Cash register is closed for today. No more sales can be made.');
+      const saleDate = requestedBackdate || todayBusinessDate;
+      const saleTimestamp = isBackdatedCredit ? `${saleDate}T12:00:00.000+05:00` : now;
+      const saleShiftId = isBackdatedCredit ? null : openShift.id;
+      const lateSaleNote = isBackdatedCredit ? `Backdated khata sale saved for ${saleDate}.` : getLateSaleNote(openShift, new Date(now));
+
+      if (!isBackdatedCredit) {
+        const cashRegister = db.prepare('SELECT * FROM cash_register WHERE shift_id = ? OR (shift_id IS NULL AND date = ?) ORDER BY created_at DESC LIMIT 1').get(openShift.id, saleDate) as any;
+        if (!cashRegister) {
+          throw new Error('Please open the cash register before making sales');
+        }
+
+        if (Number(cashRegister.is_closed_for_day || 0) === 1) {
+          throw new Error('Cash register is closed for today. No more sales can be made.');
+        }
       }
 
       const transactionId = String(data.transactionId || '').trim();
@@ -459,7 +489,7 @@ export function registerSalesIPC() {
           amount_paid, cash_tendered, change_returned, balance_due, status, created_at, synced
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
       `).run(
-        saleId, transactionId, openShift.id, billNumber, now, data.customerId || null, cashierId, paymentType,
+        saleId, transactionId, saleShiftId, billNumber, saleTimestamp, data.customerId || null, cashierId, paymentType,
         subtotal, discount.discountType, discount.discountValue, discount.discountAmount,
         tax.taxEnabled ? 1 : 0, taxLabel, taxRate, tax.taxableAmount, tax.taxAmount, grandTotal,
         amountPaid, cashTendered, changeReturned, balanceDue, 'COMPLETED', now
@@ -467,8 +497,8 @@ export function registerSalesIPC() {
 
       // Create sync outbox entry for sale
       createOutboxEntry('sales', 'INSERT', saleId, {
-        id: saleId, transaction_id: transactionId, bill_number: billNumber, sale_date: now, customer_id: data.customerId || null,
-        shift_id: openShift.id, cashier_id: cashierId, payment_type: paymentType, subtotal,
+        id: saleId, transaction_id: transactionId, bill_number: billNumber, sale_date: saleTimestamp, customer_id: data.customerId || null,
+        shift_id: saleShiftId, cashier_id: cashierId, payment_type: paymentType, subtotal,
         discount_type: discount.discountType, discount_value: discount.discountValue, discount_amount: discount.discountAmount,
         tax_enabled: tax.taxEnabled ? 1 : 0,
         tax_label: taxLabel,
@@ -500,7 +530,7 @@ export function registerSalesIPC() {
           insertItem.run(
             itemId, saleId, item.productId, item.productName, item.unit, 
             item.quantity, item.sellingPrice, item.costPrice || 0,
-            item.discountType, item.discountValue, item.discountAmount, item.lineTotal, now
+            item.discountType, item.discountValue, item.discountAmount, item.lineTotal, saleTimestamp
           );
           
           createOutboxEntry('sale_items', 'INSERT', itemId, {
@@ -516,7 +546,7 @@ export function registerSalesIPC() {
             discount_value: item.discountValue,
             discount_amount: item.discountAmount,
             line_total: item.lineTotal,
-            created_at: now
+            created_at: saleTimestamp
           });
 
           // 3. Stock management
@@ -535,16 +565,16 @@ export function registerSalesIPC() {
             const movId = crypto.randomUUID();
             insertMovement.run(
               movId, item.productId, 'STOCK_OUT', item.quantity, 
-              currentStock, currentStock - item.quantity, saleId, cashierId, now
+              currentStock, currentStock - item.quantity, saleId, cashierId, saleTimestamp
             );
             createOutboxEntry('stock_movements', 'INSERT', movId, {
               id: movId, product_id: item.productId, movement_type: 'STOCK_OUT',
               quantity: item.quantity,
               stock_before: currentStock,
               stock_after: currentStock - item.quantity,
-              reference_id: saleId,
-              created_by_id: cashierId,
-              created_at: now
+            reference_id: saleId,
+            created_by_id: cashierId,
+              created_at: saleTimestamp
             });
           }
         }
@@ -559,7 +589,7 @@ export function registerSalesIPC() {
 
       if (cashPaid > 0) {
         const splitPaymentId = crypto.randomUUID();
-        insertSplitPayment.run(splitPaymentId, saleId, 'CASH', cashPaid, null, cashierId, now);
+        insertSplitPayment.run(splitPaymentId, saleId, 'CASH', cashPaid, null, cashierId, saleTimestamp);
         createOutboxEntry('split_payments', 'INSERT', splitPaymentId, {
           id: splitPaymentId,
           sale_id: saleId,
@@ -567,13 +597,13 @@ export function registerSalesIPC() {
           amount: cashPaid,
           customer_id: null,
           received_by_id: cashierId,
-          created_at: now
+          created_at: saleTimestamp
         });
       }
 
       if (onlinePaid > 0) {
         const onlineSplitPaymentId = crypto.randomUUID();
-        insertSplitPayment.run(onlineSplitPaymentId, saleId, 'ONLINE', onlinePaid, null, cashierId, now);
+        insertSplitPayment.run(onlineSplitPaymentId, saleId, 'ONLINE', onlinePaid, null, cashierId, saleTimestamp);
         createOutboxEntry('split_payments', 'INSERT', onlineSplitPaymentId, {
           id: onlineSplitPaymentId,
           sale_id: saleId,
@@ -581,13 +611,13 @@ export function registerSalesIPC() {
           amount: onlinePaid,
           customer_id: null,
           received_by_id: cashierId,
-          created_at: now
+          created_at: saleTimestamp
         });
       }
 
       if (data.customerId && paymentType === 'CREDIT') {
         const creditSplitPaymentId = crypto.randomUUID();
-        insertSplitPayment.run(creditSplitPaymentId, saleId, 'KHATA', balanceDue, data.customerId, cashierId, now);
+        insertSplitPayment.run(creditSplitPaymentId, saleId, 'KHATA', balanceDue, data.customerId, cashierId, saleTimestamp);
         createOutboxEntry('split_payments', 'INSERT', creditSplitPaymentId, {
           id: creditSplitPaymentId,
           sale_id: saleId,
@@ -595,7 +625,7 @@ export function registerSalesIPC() {
           amount: balanceDue,
           customer_id: data.customerId,
           received_by_id: cashierId,
-          created_at: now
+          created_at: saleTimestamp
         });
 
         const newBalance = (customer?.current_balance || 0) + balanceDue;
@@ -607,7 +637,7 @@ export function registerSalesIPC() {
         db.prepare(`
           INSERT INTO ledger_entries (id, customer_id, sale_id, entry_type, amount, balance_after, description, entry_date, created_at, synced)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-        `).run(ledgerId, data.customerId, saleId, 'SALE_CREDIT', balanceDue, newBalance, `Credit Sale #${billNumber}`, now, now);
+        `).run(ledgerId, data.customerId, saleId, 'SALE_CREDIT', balanceDue, newBalance, isBackdatedCredit ? `Backdated Khata Sale #${billNumber} (${saleDate})` : `Credit Sale #${billNumber}`, saleTimestamp, now);
         createOutboxEntry('ledger_entries', 'INSERT', ledgerId, {
           id: ledgerId,
           customer_id: data.customerId,
@@ -615,8 +645,8 @@ export function registerSalesIPC() {
           entry_type: 'SALE_CREDIT',
           amount: balanceDue,
           balance_after: newBalance,
-          description: `Credit Sale #${billNumber}`,
-          entry_date: now,
+          description: isBackdatedCredit ? `Backdated Khata Sale #${billNumber} (${saleDate})` : `Credit Sale #${billNumber}`,
+          entry_date: saleTimestamp,
           created_at: now
         });
       }
@@ -633,6 +663,15 @@ export function registerSalesIPC() {
           entityId: saleId,
           after: { billNumber, orderDiscount: discount.discountAmount, itemDiscount: totalItemDiscount, totalDiscountGiven },
           approvedBy: discountApprover
+        });
+      }
+
+      if (isBackdatedCredit) {
+        logAudit({
+          actionType: 'BACKDATED_KHATA_SALE',
+          entityType: 'sales',
+          entityId: saleId,
+          after: { billNumber, saleDate, customerId: data.customerId, amount: balanceDue }
         });
       }
 
