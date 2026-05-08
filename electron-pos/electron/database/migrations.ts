@@ -592,6 +592,18 @@ export function runMigrations() {
           }
           db.exec(`CREATE INDEX IF NOT EXISTS idx_sales_token_number ON sales(token_number)`);
         }
+      },
+      {
+        version: 20,
+        up: () => {
+          log.info('Running migration v20: Linking sale token numbers to cash register sessions');
+          const saleColumns = db.prepare(`PRAGMA table_info(sales)`).all() as Array<{ name: string }>;
+          const saleNames = new Set(saleColumns.map((column) => column.name));
+          if (!saleNames.has('cash_register_id')) {
+            db.exec(`ALTER TABLE sales ADD COLUMN cash_register_id TEXT`);
+          }
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_sales_cash_register ON sales(cash_register_id)`);
+        }
       }
     ];
 

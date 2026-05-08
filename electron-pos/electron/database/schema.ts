@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS sales (
   id TEXT PRIMARY KEY,
   transaction_id TEXT UNIQUE,
   shift_id TEXT,
+  cash_register_id TEXT,
   bill_number TEXT UNIQUE NOT NULL,
   token_number INTEGER,
   sale_date TEXT NOT NULL,
@@ -565,6 +566,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_outbox_status_table_created ON sync_outbox(s
 CREATE INDEX IF NOT EXISTS idx_sync_outbox_status_attempted ON sync_outbox(status, last_attempted_at);
 CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(sale_date);
 CREATE INDEX IF NOT EXISTS idx_sales_shift ON sales(shift_id);
+CREATE INDEX IF NOT EXISTS idx_sales_cash_register ON sales(cash_register_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
 CREATE INDEX IF NOT EXISTS idx_sale_voids_sale ON sale_voids(sale_id);
 CREATE INDEX IF NOT EXISTS idx_sale_voids_shift ON sale_voids(shift_id);
@@ -673,6 +675,8 @@ function addColumnIfMissing(tableName: string, columnName: string, definition: s
 
 function prepareLegacyTablesForSchemaIndexes() {
   addColumnIfMissing('sales', 'shift_id', 'TEXT');
+  addColumnIfMissing('sales', 'cash_register_id', 'TEXT');
+  addColumnIfMissing('sales', 'token_number', 'INTEGER');
   addColumnIfMissing('sale_voids', 'shift_id', 'TEXT');
   addColumnIfMissing('returns', 'shift_id', 'TEXT');
   addColumnIfMissing('cash_register', 'shift_id', 'TEXT');
