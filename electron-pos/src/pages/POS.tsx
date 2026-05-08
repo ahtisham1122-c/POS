@@ -1017,7 +1017,7 @@ export default function POS() {
   };
 
   return (
-      <div className="flex flex-col h-full bg-surface-1 overflow-hidden font-sans select-none">
+      <div className="hp-engage-pos flex flex-col h-full bg-surface-1 overflow-hidden font-sans select-none">
       {/* TOP STRIP */}
       {/* Alerts bar */}
     {alerts.length > 0 && (
@@ -1029,18 +1029,18 @@ export default function POS() {
         ))}
       </div>
     )}
-    <div className="h-12 bg-surface-2 border-b border-surface-4 flex items-center justify-between px-4 shrink-0 relative z-20">
+    <div className="hp-pos-top h-11 bg-surface-2 border-b border-surface-4 flex items-center justify-between px-3 shrink-0 relative z-20">
         <div className="relative">
           <button 
             onClick={() => setShowOtherItems(!showOtherItems)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-surface-3 hover:bg-surface-4 border border-surface-4 rounded text-sm font-medium text-text-primary transition-colors"
+            className="flex items-center gap-2 min-h-9 px-3 py-1.5 bg-surface-3 hover:bg-surface-4 border border-surface-4 rounded text-sm font-bold text-text-primary transition-colors"
           >
             <Plus className="w-4 h-4" /> Other Items (F2)
           </button>
           
           {/* Other Items Dropdown */}
           {showOtherItems && (
-            <div className="absolute top-full left-0 mt-2 w-80 bg-surface-2 border border-surface-4 rounded-lg shadow-float p-3 flex flex-col gap-3 max-h-[60vh]">
+            <div className="absolute top-full left-0 mt-2 w-[360px] bg-surface-2 border border-surface-4 rounded-lg shadow-float p-3 flex flex-col gap-3 max-h-[72vh]">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
                 <input 
@@ -1061,7 +1061,7 @@ export default function POS() {
                     <button 
                       key={p.id}
                       onClick={() => openOtherProductQuantity(p)}
-                      className="flex items-center justify-between p-2 rounded-md hover:bg-surface-3 transition-colors text-left"
+                      className="flex items-center justify-between min-h-[54px] p-2 rounded-md hover:bg-surface-3 transition-colors text-left"
                     >
                       <div>
                         <div className="font-medium text-text-primary text-sm">{p.emoji || "📦"} {p.name}</div>
@@ -1088,7 +1088,7 @@ export default function POS() {
           )}
         </div>
 
-        <div className="text-lg font-bold text-text-primary flex items-center gap-2">
+        <div className="text-base font-black text-text-primary flex items-center gap-2">
           <img
             src="./brand/gujjar-logo-square.png"
             alt="Gujjar Milk Shop"
@@ -1111,16 +1111,16 @@ export default function POS() {
       </div>
 
       {/* MAIN PANELS */}
-      <div className="flex-1 flex overflow-hidden relative z-10">
+      <div className="hp-pos-main flex-1 flex overflow-hidden relative z-10">
         
         {/* MILK PANEL - LEFT HALF */}
-        <div className="flex-1 bg-[#040f09] border-r border-surface-4 flex flex-col relative">
-          <div className="p-4 shrink-0 text-center border-b border-white/5">
-            <h1 className="text-3xl font-black text-white tracking-wide">🥛 MILK</h1>
-            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{activeRatesReady ? `Rs.${activeRates.milk_rate}/kg` : "Rate required"}</p>
+        <div className="hp-product-panel flex-1 min-w-0 bg-[#040f09] border-r border-surface-4 flex flex-col relative">
+          <div className="hp-product-header p-3 shrink-0 text-center border-b border-white/5">
+            <h1 className="hp-product-title text-2xl font-black text-white tracking-wide">🥛 MILK</h1>
+            <p className="hp-product-rate text-lg font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{activeRatesReady ? `Rs.${activeRates.milk_rate}/kg` : "Rate required"}</p>
           </div>
           
-          <div className="flex-1 p-4 flex flex-col gap-4 overflow-hidden">
+          <div className="hp-product-body flex-1 p-3 flex flex-col gap-3 overflow-hidden">
             {/* Custom Input */}
             <div className="flex gap-2 shrink-0 bg-white/5 p-2 rounded-xl border border-white/10">
               <input 
@@ -1129,7 +1129,7 @@ export default function POS() {
                 value={customMilkQty}
                 onChange={e => setCustomMilkQty(e.target.value)}
                 onFocus={() => openTouchInput({ title: "Milk custom value", mode: "number", value: customMilkQty, setValue: setCustomMilkQty, allowDecimal: true })}
-                className="flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
+                className="min-w-0 flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
               />
               <div className="flex bg-surface-1 rounded-lg p-1">
                 <button
@@ -1141,34 +1141,34 @@ export default function POS() {
                   className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customMilkType === "KG" ? "bg-success text-white" : "text-text-secondary hover:text-white")}
                 >KG</button>
               </div>
-              <button onClick={handleCustomMilkAdd} disabled={!customMilkQty} className="bg-success hover:bg-success/90 text-white font-bold px-6 rounded-lg transition-colors disabled:opacity-50">
+              <button onClick={handleCustomMilkAdd} disabled={!customMilkQty} className="min-w-[70px] bg-success hover:bg-success/90 text-white font-bold px-5 rounded-lg transition-colors disabled:opacity-50">
                 Add
               </button>
             </div>
 
             {/* 6x3 Grid */}
-            <div className="flex-1 grid grid-cols-3 gap-3">
-              <div className="flex flex-col gap-3">
+            <div className="hp-choice-grid flex-1 grid grid-cols-3 gap-2.5">
+              <div className="flex flex-col gap-2.5">
                 {[1, 2, 3, 4, 5, 6].map(kg => (
-                  <button key={kg} onClick={() => addMilk(kg)} className="flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
-                    <span className="text-3xl font-bold text-white group-active:text-success">{kg} kg</span>
-                    <span className="text-lg font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>
+                  <button key={kg} onClick={() => addMilk(kg)} className="hp-choice-button flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
+                    <span className="hp-choice-main text-2xl font-black text-white group-active:text-success">{kg} kg</span>
+                    <span className="hp-choice-sub text-base font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>
                   </button>
                 ))}
               </div>
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2.5">
                 {[0.5, 1.5, 2.5, 3.5, 4.5, 5.5].map(kg => (
-                  <button key={kg} onClick={() => addMilk(kg)} className="flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
-                    <span className="text-3xl font-bold text-white group-active:text-success">{kg} kg</span>
-                    <span className="text-lg font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>
+                  <button key={kg} onClick={() => addMilk(kg)} className="hp-choice-button flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
+                    <span className="hp-choice-main text-2xl font-black text-white group-active:text-success">{kg} kg</span>
+                    <span className="hp-choice-sub text-base font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>
                   </button>
                 ))}
               </div>
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2.5">
                 {[7, 8, 9, 10, 11, 12].map(kg => (
-                  <button key={kg} onClick={() => addMilk(kg)} className="flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
-                    <span className="text-3xl font-bold text-white group-active:text-success">{kg} kg</span>
-                    <span className="text-lg font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>
+                  <button key={kg} onClick={() => addMilk(kg)} className="hp-choice-button flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
+                    <span className="hp-choice-main text-2xl font-black text-white group-active:text-success">{kg} kg</span>
+                    <span className="hp-choice-sub text-base font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>
                   </button>
                 ))}
               </div>
@@ -1179,13 +1179,13 @@ export default function POS() {
         </div>
 
         {/* YOGURT PANEL - RIGHT HALF */}
-        <div className="flex-1 bg-[#04090f] flex flex-col relative">
-          <div className="p-4 shrink-0 text-center border-b border-white/5">
-            <h1 className="text-3xl font-black text-white tracking-wide">🫙 YOGURT</h1>
-            <p className="text-xl font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{activeRatesReady ? `Rs.${activeRates.yogurt_rate}/kg` : "Rate required"}</p>
+        <div className="hp-product-panel flex-1 min-w-0 bg-[#04090f] flex flex-col relative">
+          <div className="hp-product-header p-3 shrink-0 text-center border-b border-white/5">
+            <h1 className="hp-product-title text-2xl font-black text-white tracking-wide">🫙 YOGURT</h1>
+            <p className="hp-product-rate text-lg font-mono text-accent mt-1 tracking-widest font-bold border border-accent/20 bg-accent/10 inline-block px-4 py-1 rounded-full">{activeRatesReady ? `Rs.${activeRates.yogurt_rate}/kg` : "Rate required"}</p>
           </div>
           
-          <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
+          <div className="hp-product-body flex-1 p-3 flex flex-col gap-3 overflow-y-auto">
             {/* Custom Input */}
             <div className="flex gap-2 shrink-0 bg-white/5 p-2 rounded-xl border border-white/10">
               <input 
@@ -1194,7 +1194,7 @@ export default function POS() {
                 value={customYogurtInput}
                 onChange={e => setCustomYogurtInput(e.target.value)}
                 onFocus={() => openTouchInput({ title: "Yogurt custom value", mode: "number", value: customYogurtInput, setValue: setCustomYogurtInput, allowDecimal: true })}
-                className="flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
+                className="min-w-0 flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
               />
               <div className="flex bg-surface-1 rounded-lg p-1">
                 <button
@@ -1206,20 +1206,20 @@ export default function POS() {
                   className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customYogurtType === "KG" ? "bg-info text-white" : "text-text-secondary hover:text-white")}
                 >KG</button>
               </div>
-              <button onClick={handleCustomYogurtAdd} disabled={!customYogurtInput} className="bg-surface-3 hover:bg-surface-4 text-white font-bold px-6 rounded-lg transition-colors border border-surface-4 disabled:opacity-50">
+              <button onClick={handleCustomYogurtAdd} disabled={!customYogurtInput} className="min-w-[70px] bg-surface-3 hover:bg-surface-4 text-white font-bold px-5 rounded-lg transition-colors border border-surface-4 disabled:opacity-50">
                 Add
               </button>
             </div>
 
-            <div className="flex-1 flex gap-4">
+            <div className="flex-1 flex gap-3 min-h-0">
               {/* By Weight */}
               <div className="flex-1 flex flex-col">
-                <h3 className="text-sm font-bold text-white/50 text-center mb-3 uppercase tracking-widest">By Weight (kg)</h3>
-                <div className="flex-1 flex flex-col gap-3">
+                <h3 className="hp-subtitle text-xs font-bold text-white/50 text-center mb-2 uppercase tracking-widest">By Weight (kg)</h3>
+                <div className="hp-choice-grid flex-1 flex flex-col gap-2.5">
                   {[0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00].map(kg => (
-                    <button key={kg} onClick={() => addYogurtKg(kg)} className="flex-1 bg-info/10 hover:bg-info/20 active:bg-info/40 border border-info/20 rounded-xl flex flex-row items-center justify-between px-6 transition-all active:scale-95 group">
-                      <span className="text-2xl font-bold text-white">{kg.toFixed(2)} kg</span>
-                      <span className="text-lg font-mono text-info/80">{toMoney(kg * activeRates.yogurt_rate)}</span>
+                    <button key={kg} onClick={() => addYogurtKg(kg)} className="hp-choice-button flex-1 bg-info/10 hover:bg-info/20 active:bg-info/40 border border-info/20 rounded-xl flex flex-row items-center justify-between px-4 transition-all active:scale-95 group">
+                      <span className="hp-choice-main text-xl font-black text-white">{kg.toFixed(2)} kg</span>
+                      <span className="hp-choice-sub text-base font-mono text-info/80">{toMoney(kg * activeRates.yogurt_rate)}</span>
                     </button>
                   ))}
                 </div>
@@ -1227,12 +1227,12 @@ export default function POS() {
 
               {/* By Amount */}
               <div className="flex-1 flex flex-col">
-                <h3 className="text-sm font-bold text-white/50 text-center mb-3 uppercase tracking-widest">By Amount (Rs)</h3>
-                <div className="flex-1 flex flex-col gap-3">
+                <h3 className="hp-subtitle text-xs font-bold text-white/50 text-center mb-2 uppercase tracking-widest">By Amount (Rs)</h3>
+                <div className="hp-choice-grid flex-1 flex flex-col gap-2.5">
                   {[50, 100, 150, 200, 250, 300].map(amt => (
-                    <button key={amt} onClick={() => addYogurtRs(amt)} className="flex-1 bg-purple-500/10 hover:bg-purple-500/20 active:bg-purple-500/40 border border-purple-500/20 rounded-xl flex flex-row items-center justify-between px-6 transition-all active:scale-95 group">
-                      <span className="text-2xl font-bold text-white">Rs. {amt}</span>
-                      <span className="text-sm font-mono text-purple-300/80">≈ {((amt / activeRates.yogurt_rate) || 0).toFixed(2)} kg</span>
+                    <button key={amt} onClick={() => addYogurtRs(amt)} className="hp-choice-button flex-1 bg-purple-500/10 hover:bg-purple-500/20 active:bg-purple-500/40 border border-purple-500/20 rounded-xl flex flex-row items-center justify-between px-4 transition-all active:scale-95 group">
+                      <span className="hp-choice-main text-xl font-black text-white">Rs. {amt}</span>
+                      <span className="hp-choice-sub text-sm font-mono text-purple-300/80">≈ {((amt / activeRates.yogurt_rate) || 0).toFixed(2)} kg</span>
                     </button>
                   ))}
                 </div>
@@ -1242,9 +1242,9 @@ export default function POS() {
         </div>
 
         {/* CART/CHECKOUT PANEL - RIGHT SIDE */}
-        <div className="w-[420px] bg-surface-2 border-l border-surface-4 flex flex-col relative z-30 shadow-[0_-10px_40px_rgba(0,0,0,0.3)]">
+        <div className="hp-cart-panel w-[390px] 2xl:w-[420px] bg-surface-2 border-l border-surface-4 flex flex-col relative z-30 shadow-[0_-10px_40px_rgba(0,0,0,0.3)]">
           {/* Section 1: Bill Items */}
-          <div className="flex-1 p-3 flex flex-col relative overflow-hidden min-h-0">
+          <div className="flex-1 p-2.5 flex flex-col relative overflow-hidden min-h-0">
             <div className="flex justify-between items-center mb-2">
               <h3 className="text-sm font-bold text-text-secondary uppercase tracking-widest flex items-center gap-2">
                 Current Bill ({items.length})
@@ -1259,16 +1259,16 @@ export default function POS() {
               )}
             </div>
             
-            <div className="flex-1 overflow-y-auto whitespace-normal flex flex-col gap-1.5 pb-2 pr-1 min-h-0">
+            <div className="hp-cart-items flex-1 overflow-y-auto whitespace-normal flex flex-col gap-1.5 pb-2 pr-1 min-h-0">
               {items.length === 0 ? (
                 <div className="h-full w-full flex items-center justify-center text-text-secondary opacity-50 text-sm">
                   No items added yet
                 </div>
               ) : (
                 items.map(item => (
-                  <div key={item.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 bg-surface-3 border border-surface-4 rounded-lg px-3 py-2 shadow-sm animate-slide-up">
+                  <div key={item.id} className="hp-cart-row grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 bg-surface-3 border border-surface-4 rounded-lg px-2.5 py-2 shadow-sm animate-slide-up">
                     <div className="min-w-0">
-                      <div className="font-bold text-text-primary text-sm truncate">{item.name}</div>
+                      <div className="font-black text-text-primary text-sm truncate">{item.name}</div>
                       <div className="text-xs font-mono text-white">
                         {item.quantity.toFixed(2)} <span className="text-text-secondary">{item.unit}</span>
                       </div>
@@ -1276,7 +1276,7 @@ export default function POS() {
                         <div className="text-[10px] font-bold text-warning">Discount -{toMoney(item.discountAmount)}</div>
                       )}
                     </div>
-                    <div className="text-right font-mono font-black text-accent">{toMoney(item.lineTotal)}</div>
+                    <div className="text-right font-mono font-black text-accent text-sm">{toMoney(item.lineTotal)}</div>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => openItemDiscount(item)}
@@ -1298,7 +1298,7 @@ export default function POS() {
           </div>
 
           {/* Section 2: Bill Summary */}
-          <div className="border-t border-surface-4 p-4 flex flex-col bg-surface-2/50 relative overflow-visible shrink-0">
+          <div className="hp-cart-summary border-t border-surface-4 p-3 flex flex-col bg-surface-2/50 relative overflow-visible shrink-0">
             <div className="text-sm text-text-secondary font-medium mb-1">Subtotal: <span className="float-right text-text-primary">{toMoney(subtotal)}</span></div>
             
             {showDiscount ? (
@@ -1332,16 +1332,16 @@ export default function POS() {
             )}
 
             <div className="text-sm text-text-secondary font-bold mb-1 border-t border-surface-4 pt-2">TOTAL</div>
-            <div className="text-3xl font-black font-mono text-accent drop-shadow-md">{toMoney(grandTotal)}</div>
+            <div className="text-3xl font-black font-mono text-accent drop-shadow-md leading-tight">{toMoney(grandTotal)}</div>
           </div>
 
           {/* Section 3: Payment */}
-          <div className="border-t border-surface-4 p-4 flex flex-col bg-surface-1/30 relative shrink-0">
-            <div className="flex bg-surface-3 rounded-lg p-1 border border-surface-4 mb-2">
-              <button onClick={() => choosePaymentMode("CASH")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "CASH" ? "bg-success text-white shadow-md" : "text-text-secondary hover:text-white")}>CASH</button>
-              <button onClick={() => choosePaymentMode("ONLINE")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "ONLINE" ? "bg-info text-white shadow-md" : "text-text-secondary hover:text-white")}>ONLINE</button>
-              <button onClick={() => choosePaymentMode("SPLIT")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "SPLIT" ? "bg-warning text-black shadow-md" : "text-text-secondary hover:text-white")}>SPLIT</button>
-              <button onClick={() => choosePaymentMode("CREDIT")} className={cn("flex-1 py-1.5 rounded-md font-bold text-[10px] transition-all flex items-center justify-center", paymentMode === "CREDIT" ? "bg-danger text-white shadow-md" : "text-text-secondary hover:text-white")}>KHATA</button>
+          <div className="hp-payment-panel border-t border-surface-4 p-3 flex flex-col bg-surface-1/30 relative shrink-0">
+            <div className="grid grid-cols-4 gap-1 bg-surface-3 rounded-lg p-1 border border-surface-4 mb-2">
+              <button onClick={() => choosePaymentMode("CASH")} className={cn("min-h-9 rounded-md font-black text-[10px] transition-all flex items-center justify-center", paymentMode === "CASH" ? "bg-success text-white shadow-md" : "text-text-secondary hover:text-white")}>CASH</button>
+              <button onClick={() => choosePaymentMode("ONLINE")} className={cn("min-h-9 rounded-md font-black text-[10px] transition-all flex items-center justify-center", paymentMode === "ONLINE" ? "bg-info text-white shadow-md" : "text-text-secondary hover:text-white")}>ONLINE</button>
+              <button onClick={() => choosePaymentMode("SPLIT")} className={cn("min-h-9 rounded-md font-black text-[10px] transition-all flex items-center justify-center", paymentMode === "SPLIT" ? "bg-warning text-black shadow-md" : "text-text-secondary hover:text-white")}>SPLIT</button>
+              <button onClick={() => choosePaymentMode("CREDIT")} className={cn("min-h-9 rounded-md font-black text-[10px] transition-all flex items-center justify-center", paymentMode === "CREDIT" ? "bg-danger text-white shadow-md" : "text-text-secondary hover:text-white")}>KHATA</button>
             </div>
             
             {paymentMode === "CREDIT" && (
@@ -1478,7 +1478,7 @@ export default function POS() {
           </div>
 
           {/* Section 4: Actions */}
-          <div className="border-t border-surface-4 p-4 flex flex-col gap-3 bg-surface-2 shrink-0">
+          <div className="hp-action-panel border-t border-surface-4 p-3 flex flex-col gap-2.5 bg-surface-2 shrink-0">
             <button 
               onClick={handleCheckout} 
               disabled={!activeRatesReady || items.length === 0 || isSubmitting || (paymentMode === "CREDIT" && !selectedCustomerId)}

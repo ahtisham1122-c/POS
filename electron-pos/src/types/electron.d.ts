@@ -60,7 +60,7 @@ export interface ElectronAPI {
     getAll: (filters?: any) => Promise<any[]>;
     getOne: (id: string) => Promise<any>;
     getReceipt: (id: string) => Promise<any>;
-    create: (data: any) => Promise<{ success: boolean; duplicate?: boolean; saleId?: string; transactionId?: string; billNumber?: string; subtotal?: number; discountAmount?: number; taxAmount?: number; taxRate?: number; taxLabel?: string; grandTotal?: number; amountPaid?: number; balanceDue?: number; cashPaid?: number; onlinePaid?: number; cashTendered?: number; changeReturned?: number; lateSaleNote?: string | null; error?: string }>;
+    create: (data: any) => Promise<{ success: boolean; duplicate?: boolean; saleId?: string; transactionId?: string; billNumber?: string; tokenNumber?: number | null; subtotal?: number; discountAmount?: number; taxAmount?: number; taxRate?: number; taxLabel?: string; grandTotal?: number; amountPaid?: number; balanceDue?: number; cashPaid?: number; onlinePaid?: number; cashTendered?: number; changeReturned?: number; lateSaleNote?: string | null; error?: string }>;
     void: (data: { saleId: string; reason: string; restockItems?: boolean; managerPin?: string }) => Promise<{ success: boolean; voidId?: string; billNumber?: string; cashReversed?: number; creditReversed?: number; restockedItems?: boolean; error?: string }>;
     hold: (data: any) => Promise<{ success: boolean; holdId?: string; error?: string }>;
     getHeld: () => Promise<any[]>;

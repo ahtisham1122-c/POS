@@ -12,7 +12,7 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run rebuild:native && npm run build:renderer && npm run build:electron && electron-builder",
-    "build:win": "npm run rebuild:native && npm run build:renderer && npm run build:electron && electron-builder --win",
+    "build:win": "npm run rebuild:native && npm run typecheck && npm run build:renderer && npm run build:electron && electron-builder --win",
     "test:sales-math": "npm run build:electron && node scripts/sales-math-smoke.cjs",
     "test:sync-security": "npm run build:electron && node scripts/sync-security-smoke.cjs",
     "reset:local-transactional-data": "node scripts/reset-local-transactional-data.cjs",

@@ -70,6 +70,89 @@
   }
 }
 
+/* HP Engage One 145: 14-inch FHD touch POS.
+   Keep the cashier screen dense enough for Windows scaling while preserving
+   reliable finger-sized controls. */
+.hp-engage-pos button,
+.hp-engage-pos input {
+  touch-action: manipulation;
+}
+
+.hp-engage-pos input {
+  min-height: 42px;
+}
+
+@media (max-width: 1600px), (max-height: 900px) {
+  .hp-engage-pos .hp-cart-panel {
+    width: 380px;
+  }
+
+  .hp-engage-pos .hp-product-header {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .hp-engage-pos .hp-product-title {
+    font-size: 1.35rem;
+    line-height: 1.1;
+  }
+
+  .hp-engage-pos .hp-product-rate {
+    font-size: 0.95rem;
+    padding: 0.2rem 0.75rem;
+  }
+
+  .hp-engage-pos .hp-product-body {
+    padding: 0.65rem;
+    gap: 0.65rem;
+  }
+
+  .hp-engage-pos .hp-choice-grid,
+  .hp-engage-pos .hp-product-body .gap-2\.5 {
+    gap: 0.5rem;
+  }
+
+  .hp-engage-pos .hp-choice-button {
+    border-radius: 0.625rem;
+    min-height: 46px;
+  }
+
+  .hp-engage-pos .hp-choice-main {
+    font-size: 1.25rem;
+    line-height: 1.05;
+  }
+
+  .hp-engage-pos .hp-choice-sub {
+    font-size: 0.82rem;
+    line-height: 1.05;
+  }
+
+  .hp-engage-pos .hp-subtitle {
+    margin-bottom: 0.4rem;
+    font-size: 0.68rem;
+  }
+
+  .hp-engage-pos .hp-cart-summary,
+  .hp-engage-pos .hp-payment-panel,
+  .hp-engage-pos .hp-action-panel {
+    padding: 0.65rem;
+  }
+
+  .hp-engage-pos .hp-cart-row {
+    padding: 0.45rem 0.55rem;
+  }
+}
+
+@media (max-width: 1400px) {
+  .hp-engage-pos .hp-cart-panel {
+    width: 360px;
+  }
+
+  .hp-engage-pos .hp-pos-top {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+}
+
 @media print {
   body * {
     visibility: hidden;
