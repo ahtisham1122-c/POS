@@ -101,6 +101,10 @@ export function runMigrations() {
               address TEXT,
               allowed_shifts TEXT NOT NULL DEFAULT 'BOTH',
               default_rate REAL DEFAULT 0,
+              guaranteed_advance_balance REAL DEFAULT 0,
+              payment_cycle TEXT NOT NULL DEFAULT 'MONTHLY',
+              payment_cycle_days INTEGER DEFAULT 30,
+              payment_cycle_notes TEXT,
               current_balance REAL DEFAULT 0,
               is_active INTEGER DEFAULT 1,
               created_at TEXT NOT NULL,
@@ -411,6 +415,7 @@ export function runMigrations() {
               address TEXT,
               start_date TEXT NOT NULL,
               salary REAL NOT NULL DEFAULT 0,
+              default_advance_balance REAL DEFAULT 0,
               is_active INTEGER DEFAULT 1,
               left_date TEXT,
               notes TEXT,
@@ -517,6 +522,7 @@ export function runMigrations() {
               session_id TEXT NOT NULL,
               rider_id TEXT NOT NULL,
               entry_type TEXT NOT NULL,
+              pickup_number TEXT,
               quantity REAL NOT NULL,
               stock_movement_id TEXT,
               notes TEXT,
@@ -603,6 +609,24 @@ export function runMigrations() {
             db.exec(`ALTER TABLE sales ADD COLUMN cash_register_id TEXT`);
           }
           db.exec(`CREATE INDEX IF NOT EXISTS idx_sales_cash_register ON sales(cash_register_id)`);
+        }
+      },
+      {
+        version: 21,
+        up: () => {
+          log.info('Running migration v21: Adding employee permanent advance and delivery pickup slip numbers');
+          const employeeColumns = db.prepare(`PRAGMA table_info(employees)`).all() as Array<{ name: string }>;
+          const employeeNames = new Set(employeeColumns.map((column) => column.name));
+          if (!employeeNames.has('default_advance_balance')) {
+            db.exec(`ALTER TABLE employees ADD COLUMN default_advance_balance REAL DEFAULT 0`);
+          }
+
+          const deliveryColumns = db.prepare(`PRAGMA table_info(delivery_entries)`).all() as Array<{ name: string }>;
+          const deliveryNames = new Set(deliveryColumns.map((column) => column.name));
+          if (!deliveryNames.has('pickup_number')) {
+            db.exec(`ALTER TABLE delivery_entries ADD COLUMN pickup_number TEXT`);
+          }
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_delivery_entries_pickup_number ON delivery_entries(pickup_number)`);
         }
       }
     ];

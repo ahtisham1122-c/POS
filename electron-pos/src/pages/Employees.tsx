@@ -36,6 +36,7 @@ type Employee = {
   address?: string;
   start_date: string;
   salary: number;
+  default_advance_balance?: number;
   is_active: number;
   left_date?: string;
   notes?: string;
@@ -81,11 +82,11 @@ export default function Employees() {
 
   // Add employee form
   const [showAddForm, setShowAddForm] = useState(false);
-  const [empForm, setEmpForm] = useState({ name: "", phone: "", address: "", startDate: today(), salary: "", notes: "" });
+  const [empForm, setEmpForm] = useState({ name: "", phone: "", address: "", startDate: today(), salary: "", defaultAdvanceBalance: "0", notes: "" });
 
   // Edit form
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: "", phone: "", address: "", notes: "" });
+  const [editForm, setEditForm] = useState({ name: "", phone: "", address: "", startDate: today(), defaultAdvanceBalance: "0", notes: "" });
 
   // Salary update
   const [showSalaryUpdate, setShowSalaryUpdate] = useState(false);
@@ -113,7 +114,6 @@ export default function Employees() {
   // Mark as left
   const [showMarkLeft, setShowMarkLeft] = useState(false);
   const [leftDate, setLeftDate] = useState(today());
-  const [leavingPay, setLeavingPay] = useState<any>(null);
 
   useEffect(() => { loadEmployees(); }, [showInactive]);
   useEffect(() => { loadPayrollSummary(); }, [salaryMonth]);
@@ -155,13 +155,14 @@ export default function Employees() {
       address: empForm.address,
       startDate: empForm.startDate,
       salary: Number(empForm.salary),
+      defaultAdvanceBalance: Number(empForm.defaultAdvanceBalance || 0),
       notes: empForm.notes,
     });
 
     if (res?.success) {
       flash("success", "Employee added");
       setShowAddForm(false);
-      setEmpForm({ name: "", phone: "", address: "", startDate: today(), salary: "", notes: "" });
+      setEmpForm({ name: "", phone: "", address: "", startDate: today(), salary: "", defaultAdvanceBalance: "0", notes: "" });
       await loadEmployees();
       await loadPayrollSummary();
     } else {
@@ -202,7 +203,7 @@ export default function Employees() {
   // ── Add Advance ─────────────────────────────────────────────────────────────
   async function handleAddAdvance() {
     if (!selected) return;
-    if (!advAmount || Number(advAmount) <= 0) return flash("error", "Enter advance amount");
+    if (!advAmount || Number(advAmount) <= 0) return flash("error", "Enter kharcha / paid amount");
     const res = await window.electronAPI?.employees?.addAdvance({
       employeeId: selected.id,
       amount: Number(advAmount),
@@ -210,12 +211,12 @@ export default function Employees() {
       description: advDesc,
     });
     if (res?.success) {
-      flash("success", "Advance recorded");
+      flash("success", "Kharcha recorded");
       setAdvAmount(""); setAdvDesc("");
       await selectEmployee(selected);
       await loadPayrollSummary();
     } else {
-      flash("error", res?.error || "Failed to record advance");
+      flash("error", res?.error || "Failed to record kharcha");
     }
   }
 
@@ -288,12 +289,6 @@ export default function Employees() {
     } else {
       flash("error", res?.error || "Failed");
     }
-  }
-
-  async function loadLeavingPay() {
-    if (!selected) return;
-    const res = await window.electronAPI?.employees?.calculateLeavingPay(selected.id);
-    if (res?.success) setLeavingPay(res.data);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -401,7 +396,7 @@ export default function Employees() {
               <div className="flex gap-2">
                 {selected.is_active && (
                   <button
-                    onClick={() => { setShowMarkLeft(true); loadLeavingPay(); }}
+                    onClick={() => setShowMarkLeft(true)}
                     className="btn-danger px-3 py-1.5 text-sm"
                   >
                     Mark as Left
@@ -415,9 +410,9 @@ export default function Employees() {
               <StatCard label="Monthly Salary" value={toMoney(selected.salary)} sub="Current" />
               <StatCard label="Daily Rate" value={toMoney(selected.salary / 30)} sub="salary ÷ 30" />
               <StatCard
-                label="Pending Advances"
+                label="Pending Kharcha"
                 value={toMoney(selected.advances?.filter((a: any) => a.status === "PENDING").reduce((s: number, a: any) => s + Number(a.amount), 0) || 0)}
-                sub="not yet deducted"
+                sub={`Permanent advance: ${toMoney(selected.default_advance_balance || 0)}`}
               />
             </div>
 
@@ -456,7 +451,7 @@ export default function Employees() {
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-semibold text-text-primary">Employee Info</h3>
                     {!editing ? (
-                      <button onClick={() => { setEditing(true); setEditForm({ name: selected.name, phone: selected.phone || "", address: selected.address || "", notes: selected.notes || "" }); }} className="btn-secondary px-3 py-1.5 text-sm">Edit</button>
+                      <button onClick={() => { setEditing(true); setEditForm({ name: selected.name, phone: selected.phone || "", address: selected.address || "", startDate: selected.start_date, defaultAdvanceBalance: String(selected.default_advance_balance || 0), notes: selected.notes || "" }); }} className="btn-secondary px-3 py-1.5 text-sm">Edit</button>
                     ) : (
                       <div className="flex gap-2">
                         <button onClick={handleUpdateInfo} className="btn-primary px-3 py-1.5 text-sm flex gap-1"><Save className="w-4 h-4" /> Save</button>
@@ -474,6 +469,14 @@ export default function Employees() {
                         <label className="label">Phone</label>
                         <input className="input" value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} />
                       </div>
+                      <div>
+                        <label className="label">Date of Joining</label>
+                        <input type="date" className="input" value={editForm.startDate} onChange={e => setEditForm(f => ({ ...f, startDate: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label className="label">Permanent Advance</label>
+                        <input type="number" className="input" value={editForm.defaultAdvanceBalance} onChange={e => setEditForm(f => ({ ...f, defaultAdvanceBalance: e.target.value }))} />
+                      </div>
                       <div className="col-span-2">
                         <label className="label">Address</label>
                         <input className="input" value={editForm.address} onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))} />
@@ -488,6 +491,7 @@ export default function Employees() {
                       <div><span className="text-text-secondary">Phone:</span> <span className="text-text-primary ml-2">{selected.phone || "-"}</span></div>
                       <div><span className="text-text-secondary">Address:</span> <span className="text-text-primary ml-2">{selected.address || "-"}</span></div>
                       <div><span className="text-text-secondary">Start Date:</span> <span className="text-text-primary ml-2">{formatDate(selected.start_date)}</span></div>
+                      <div><span className="text-text-secondary">Permanent Advance:</span> <span className="text-text-primary ml-2">{toMoney(selected.default_advance_balance || 0)}</span></div>
                       <div><span className="text-text-secondary">Notes:</span> <span className="text-text-primary ml-2">{selected.notes || "-"}</span></div>
                     </div>
                   )}
@@ -544,7 +548,7 @@ export default function Employees() {
                 {selected.is_active && (
                   <div className="bg-surface-2 rounded-lg p-5 border border-surface-4">
                     <h3 className="font-semibold text-text-primary mb-4 flex items-center gap-2">
-                      <Banknote className="w-4 h-4 text-warning" /> Record Advance Payment
+                      <Banknote className="w-4 h-4 text-warning" /> Record Kharcha / Paid Amount
                     </h3>
                     <div className="grid grid-cols-3 gap-3">
                       <div>
@@ -560,19 +564,19 @@ export default function Employees() {
                         <input className="input" value={advDesc} onChange={e => setAdvDesc(e.target.value)} placeholder="Reason..." />
                       </div>
                     </div>
-                    <button onClick={handleAddAdvance} className="btn-primary px-3 py-1.5 text-sm mt-3">Save Advance</button>
+                    <button onClick={handleAddAdvance} className="btn-primary px-3 py-1.5 text-sm mt-3">Save Kharcha</button>
                   </div>
                 )}
 
                 <div className="bg-surface-2 rounded-lg border border-surface-4 overflow-hidden">
                   <div className="p-4 border-b border-surface-4 flex items-center justify-between">
-                    <h3 className="font-semibold text-text-primary">Advance History</h3>
+                    <h3 className="font-semibold text-text-primary">Kharcha History</h3>
                     <span className="text-sm text-text-secondary">
-                      Pending: {toMoney(selected.advances?.filter((a: any) => a.status === "PENDING").reduce((s: number, a: any) => s + Number(a.amount), 0) || 0)}
+                      Pending salary deduction: {toMoney(selected.advances?.filter((a: any) => a.status === "PENDING").reduce((s: number, a: any) => s + Number(a.amount), 0) || 0)}
                     </span>
                   </div>
                   {!selected.advances?.length ? (
-                    <div className="p-6 text-center text-text-secondary text-sm">No advances recorded</div>
+                    <div className="p-6 text-center text-text-secondary text-sm">No kharcha recorded</div>
                   ) : (
                     <table className="w-full text-sm">
                       <thead className="bg-surface-3">
@@ -680,7 +684,7 @@ export default function Employees() {
                     <p className="text-xs text-text-secondary mb-4">
                       Period is the calendar month. Salary stays fixed for 28, 30, or 31 day months.
                       Leave deduction is always salary / 30 per leave day.
-                      Formula: (salary ÷ 30) × days worked — advances deducted automatically.
+                      Formula: monthly salary minus leave deduction minus kharcha paid during the month.
                     </p>
                     <div className="flex items-end gap-3">
                       <div>
@@ -708,7 +712,7 @@ export default function Employees() {
                           <div className="flex justify-between"><span className="text-text-secondary">Days Off</span><span className="text-danger">{salaryCalc.daysOff} days ({toMoney((salaryCalc.salary / 30) * salaryCalc.daysOff)} deducted)</span></div>
                           <div className="flex justify-between"><span className="text-text-secondary">Days Worked</span><span className="text-success">{salaryCalc.daysWorked} days</span></div>
                           <div className="flex justify-between font-semibold"><span className="text-text-secondary">Salary After Leave</span><span>{toMoney(salaryCalc.grossSalary)}</span></div>
-                          <div className="flex justify-between text-danger"><span>Advance Deduction</span><span>— {toMoney(salaryCalc.advanceDeduction)}</span></div>
+                          <div className="flex justify-between text-danger"><span>Kharcha / Paid Deduction</span><span>— {toMoney(salaryCalc.advanceDeduction)}</span></div>
                           <div className="flex justify-between font-bold text-base border-t border-surface-4 pt-2 mt-2">
                             <span className="text-text-primary">Net Salary to Pay</span>
                             <span className="text-success text-lg">{toMoney(salaryCalc.netSalary)}</span>
@@ -743,7 +747,7 @@ export default function Employees() {
                         <tr>
                           <th className="text-left px-4 py-2 text-text-secondary font-medium">Period</th>
                           <th className="text-right px-4 py-2 text-text-secondary font-medium">Gross</th>
-                          <th className="text-right px-4 py-2 text-text-secondary font-medium">Advances</th>
+                          <th className="text-right px-4 py-2 text-text-secondary font-medium">Kharcha</th>
                           <th className="text-right px-4 py-2 text-text-secondary font-medium">Net Paid</th>
                           <th className="text-left px-4 py-2 text-text-secondary font-medium">Paid On</th>
                         </tr>
@@ -795,6 +799,10 @@ export default function Employees() {
                   <input type="number" className="input" value={empForm.salary} onChange={e => setEmpForm(f => ({ ...f, salary: e.target.value }))} placeholder="e.g. 25000" />
                 </div>
                 <div>
+                  <label className="label">Permanent Advance</label>
+                  <input type="number" className="input" value={empForm.defaultAdvanceBalance} onChange={e => setEmpForm(f => ({ ...f, defaultAdvanceBalance: e.target.value }))} placeholder="0" />
+                </div>
+                <div>
                   <label className="label">Address</label>
                   <input className="input" value={empForm.address} onChange={e => setEmpForm(f => ({ ...f, address: e.target.value }))} placeholder="Optional" />
                 </div>
@@ -835,15 +843,9 @@ export default function Employees() {
                 <label className="label">Last Working Date</label>
                 <input type="date" className="input" value={leftDate} onChange={e => setLeftDate(e.target.value)} />
               </div>
-              {leavingPay && (
-                <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 text-sm">
-                  <p className="font-semibold text-warning mb-2">Notice Pay (1 month + 5 days)</p>
-                  <div className="space-y-1 text-text-secondary">
-                    <div className="flex justify-between"><span>Daily rate</span><span>{toMoney(leavingPay.dailyRate)}</span></div>
-                    <div className="flex justify-between"><span>× {leavingPay.days} days</span><span className="font-bold text-text-primary">{toMoney(leavingPay.leavingPay)}</span></div>
-                  </div>
-                </div>
-              )}
+              <div className="bg-surface-3 border border-surface-4 rounded-lg p-4 text-sm text-text-secondary">
+                No notice pay will be added. Final salary should be handled from the Salary tab before marking the employee as left.
+            </div>
             </div>
             <div className="flex justify-end gap-3 p-5 border-t border-surface-4">
               <button onClick={() => setShowMarkLeft(false)} className="btn-secondary">Cancel</button>

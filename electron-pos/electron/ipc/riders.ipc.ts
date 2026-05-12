@@ -19,6 +19,16 @@ function todayDate() {
   return new Date().toISOString().split('T')[0];
 }
 
+function nextPickupNumber(date: string) {
+  const compactDate = date.replace(/-/g, '');
+  const row = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM delivery_entries
+    WHERE entry_type = 'PICKUP' AND pickup_number LIKE ?
+  `).get(`PU-${compactDate}-%`) as any;
+  return `PU-${compactDate}-${String(Number(row?.count || 0) + 1).padStart(3, '0')}`;
+}
+
 // Recalculate and persist totals on a session from its entries
 function refreshSessionTotals(sessionId: string) {
   const pickupRow = db.prepare(`
@@ -172,6 +182,7 @@ export function registerRidersIPC() {
       const entryId = crypto.randomUUID();
       const qty = Number(data.quantity);
       const rider = db.prepare('SELECT name FROM riders WHERE id = ?').get(data.riderId) as any;
+      const pickupNumber = nextPickupNumber(session.session_date || todayDate());
 
       // Deduct from milk inventory
       const stockResult = handleStockMutation(milkProduct.id, -qty, 'DELIVERY_OUT', {
@@ -183,14 +194,14 @@ export function registerRidersIPC() {
       if (!stockResult?.success) return { success: false, error: stockResult?.error || 'Failed to update milk stock' };
 
       db.prepare(`
-        INSERT INTO delivery_entries (id, session_id, rider_id, entry_type, quantity, notes, created_by_id, created_at)
-        VALUES (?, ?, ?, 'PICKUP', ?, ?, ?, ?)
-      `).run(entryId, data.sessionId, data.riderId, qty, data.notes || null, user?.id || 'system', now);
+        INSERT INTO delivery_entries (id, session_id, rider_id, entry_type, pickup_number, quantity, notes, created_by_id, created_at)
+        VALUES (?, ?, ?, 'PICKUP', ?, ?, ?, ?, ?)
+      `).run(entryId, data.sessionId, data.riderId, pickupNumber, qty, data.notes || null, user?.id || 'system', now);
 
       const totals = refreshSessionTotals(data.sessionId);
       const milkStock = db.prepare('SELECT stock FROM products WHERE id = ?').get(milkProduct.id) as any;
 
-      return { success: true, entryId, totals, milkStockRemaining: milkStock?.stock || 0 };
+      return { success: true, entryId, pickupNumber, totals, milkStockRemaining: milkStock?.stock || 0 };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -278,6 +289,59 @@ export function registerRidersIPC() {
       SELECT * FROM delivery_entries WHERE session_id = ? ORDER BY created_at ASC
     `).all(sessionId);
     return { ...session, entries };
+  });
+
+  ipcMain.handle('deliveries:getPickupSlip', (_event, entryId: string) => {
+    const entry = db.prepare(`
+      SELECT de.*, ds.session_date, ds.total_pickup, ds.total_return, ds.total_delivered,
+             r.name as rider_name, r.code as rider_code, r.area as rider_area
+      FROM delivery_entries de
+      JOIN delivery_sessions ds ON ds.id = de.session_id
+      JOIN riders r ON r.id = de.rider_id
+      WHERE de.id = ? AND de.entry_type = 'PICKUP'
+    `).get(entryId) as any;
+    if (!entry) return { success: false, error: 'Pickup slip not found' };
+    return {
+      success: true,
+      slip: {
+        shopName: 'GUJJAR MILK SHOP',
+        pickupNumber: entry.pickup_number || entry.id.slice(0, 8).toUpperCase(),
+        date: entry.session_date,
+        time: entry.created_at,
+        riderName: entry.rider_name,
+        riderCode: entry.rider_code,
+        riderArea: entry.rider_area,
+        quantity: Number(entry.quantity || 0),
+        notes: entry.notes || '',
+      }
+    };
+  });
+
+  ipcMain.handle('deliveries:getMonthlyStatement', (_event, riderId: string, month?: string) => {
+    const ref = month && /^\d{4}-\d{2}$/.test(month) ? new Date(`${month}-01T00:00:00`) : new Date();
+    const start = `${ref.getFullYear()}-${String(ref.getMonth() + 1).padStart(2, '0')}-01`;
+    const endDate = new Date(ref.getFullYear(), ref.getMonth() + 1, 0);
+    const end = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+    const rider = db.prepare(`SELECT * FROM riders WHERE id = ?`).get(riderId) as any;
+    if (!rider) return { success: false, error: 'Rider not found' };
+    const rows = db.prepare(`
+      SELECT * FROM delivery_sessions
+      WHERE rider_id = ? AND session_date >= ? AND session_date <= ?
+      ORDER BY session_date ASC
+    `).all(riderId, start, end) as any[];
+    return {
+      success: true,
+      statement: {
+        shopName: 'GUJJAR MILK SHOP',
+        rider,
+        start,
+        end,
+        rows,
+        totalPickup: rows.reduce((s, row) => s + Number(row.total_pickup || 0), 0),
+        totalReturn: rows.reduce((s, row) => s + Number(row.total_return || 0), 0),
+        totalDelivered: rows.reduce((s, row) => s + Number(row.total_delivered || 0), 0),
+      }
+    };
   });
 
   // ── History: past sessions for a rider ─────────────────────────────────────

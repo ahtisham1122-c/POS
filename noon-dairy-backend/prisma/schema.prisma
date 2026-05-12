@@ -370,6 +370,10 @@ model Supplier {
   defaultRate    Decimal  @default(0) @db.Decimal(10, 2)
   cowRate        Decimal  @default(0) @db.Decimal(10, 2)
   buffaloRate    Decimal  @default(0) @db.Decimal(10, 2)
+  guaranteedAdvanceBalance Decimal @default(0) @db.Decimal(10, 2)
+  paymentCycle   String   @default("MONTHLY")
+  paymentCycleDays Int    @default(30)
+  paymentCycleNotes String?
   currentBalance Decimal  @default(0) @db.Decimal(10, 2)
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())

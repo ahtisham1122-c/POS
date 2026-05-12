@@ -193,6 +193,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     addReturn: (data: any) => ipcRenderer.invoke('deliveries:addReturn', data),
     completeSession: (sessionId: string, notes?: string) => ipcRenderer.invoke('deliveries:completeSession', sessionId, notes),
     getSession: (sessionId: string) => ipcRenderer.invoke('deliveries:getSession', sessionId),
+    getPickupSlip: (entryId: string) => ipcRenderer.invoke('deliveries:getPickupSlip', entryId),
+    getMonthlyStatement: (riderId: string, month?: string) => ipcRenderer.invoke('deliveries:getMonthlyStatement', riderId, month),
     getRiderHistory: (riderId: string, limit?: number) => ipcRenderer.invoke('deliveries:getRiderHistory', riderId, limit),
     getAllHistory: (limit?: number) => ipcRenderer.invoke('deliveries:getAllHistory', limit),
     getMilkStock: () => ipcRenderer.invoke('deliveries:getMilkStock'),

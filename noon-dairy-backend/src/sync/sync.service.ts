@@ -181,6 +181,9 @@ export class SyncService {
       if (data.defaultRate === undefined || data.defaultRate === null) data.defaultRate = 0;
       if (data.cowRate === undefined || data.cowRate === null) data.cowRate = data.defaultRate || 0;
       if (data.buffaloRate === undefined || data.buffaloRate === null) data.buffaloRate = data.defaultRate || 0;
+      if (data.guaranteedAdvanceBalance === undefined || data.guaranteedAdvanceBalance === null) data.guaranteedAdvanceBalance = 0;
+      if (!data.paymentCycle) data.paymentCycle = 'MONTHLY';
+      if (data.paymentCycleDays === undefined || data.paymentCycleDays === null) data.paymentCycleDays = 30;
       if (data.currentBalance === undefined || data.currentBalance === null) data.currentBalance = 0;
       if (data.isActive === undefined || data.isActive === null) data.isActive = false;
     }
@@ -322,6 +325,9 @@ export class SyncService {
         defaultRate: 0,
         cowRate: 0,
         buffaloRate: 0,
+        guaranteedAdvanceBalance: 0,
+        paymentCycle: 'MONTHLY',
+        paymentCycleDays: 30,
         currentBalance: 0,
         isActive: false
       }

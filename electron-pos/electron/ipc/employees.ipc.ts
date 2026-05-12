@@ -14,6 +14,7 @@ type EmployeeInput = {
   address?: string;
   startDate: string;
   salary: number;
+  defaultAdvanceBalance?: number;
   notes?: string;
 };
 
@@ -225,9 +226,9 @@ export function registerEmployeesIPC() {
 
       db.transaction(() => {
         db.prepare(`
-          INSERT INTO employees (id, code, name, phone, address, start_date, salary, is_active, notes, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-        `).run(id, code, data.name.trim(), data.phone || null, data.address || null, data.startDate, Number(data.salary), data.notes || null, now, now);
+          INSERT INTO employees (id, code, name, phone, address, start_date, salary, default_advance_balance, is_active, notes, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+        `).run(id, code, data.name.trim(), data.phone || null, data.address || null, data.startDate, Number(data.salary), Number(data.defaultAdvanceBalance || 0), data.notes || null, now, now);
 
         // Record the starting salary in history
         db.prepare(`
@@ -248,9 +249,24 @@ export function registerEmployeesIPC() {
       const now = new Date().toISOString();
       db.prepare(`
         UPDATE employees
-        SET name = COALESCE(?, name), phone = ?, address = ?, notes = ?, updated_at = ?
+        SET name = COALESCE(?, name),
+            phone = ?,
+            address = ?,
+            start_date = COALESCE(?, start_date),
+            default_advance_balance = COALESCE(?, default_advance_balance),
+            notes = ?,
+            updated_at = ?
         WHERE id = ?
-      `).run(data.name?.trim() || null, data.phone || null, data.address || null, data.notes || null, now, id);
+      `).run(
+        data.name?.trim() || null,
+        data.phone || null,
+        data.address || null,
+        data.startDate || null,
+        data.defaultAdvanceBalance === undefined ? null : Number(data.defaultAdvanceBalance || 0),
+        data.notes || null,
+        now,
+        id
+      );
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -455,14 +471,14 @@ export function registerEmployeesIPC() {
     }
   });
 
-  // Calculate notice pay when employee leaves: (salary/30) * 35 days
+  // No notice pay policy for this shop. Kept only for backward-compatible callers.
   ipcMain.handle('employees:calculateLeavingPay', (_event, employeeId: string) => {
     try {
       const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as any;
       if (!employee) return { success: false, error: 'Employee not found' };
       const dailyRate = Number(employee.salary) / 30;
-      const leavingDays = 35; // 1 month + 5 days
-      const leavingPay = dailyRate * leavingDays;
+      const leavingDays = 0;
+      const leavingPay = 0;
       return { success: true, data: { salary: employee.salary, dailyRate, days: leavingDays, leavingPay } };
     } catch (err: any) {
       return { success: false, error: err.message };

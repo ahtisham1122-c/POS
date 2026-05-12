@@ -13,6 +13,10 @@ type SupplierInput = {
   defaultRate: number;
   cowRate?: number;
   buffaloRate?: number;
+  guaranteedAdvanceBalance?: number;
+  paymentCycle?: '10_DAYS' | '15_DAYS' | 'MONTHLY' | 'CUSTOM';
+  paymentCycleDays?: number;
+  paymentCycleNotes?: string;
 };
 
 type CollectionInput = {
@@ -48,6 +52,19 @@ function getCollectionRateFromSupplier(supplier: any, milkType: string) {
     cowRate: supplier?.cow_rate,
     buffaloRate: supplier?.buffalo_rate
   }, milkType);
+}
+
+function normalizePaymentCycle(value?: string) {
+  const cycle = String(value || 'MONTHLY').toUpperCase();
+  return ['10_DAYS', '15_DAYS', 'MONTHLY', 'CUSTOM'].includes(cycle) ? cycle : 'MONTHLY';
+}
+
+function normalizeCycleDays(cycle: string, days?: number) {
+  if (cycle === '10_DAYS') return 10;
+  if (cycle === '15_DAYS') return 15;
+  if (cycle === 'MONTHLY') return 30;
+  const parsed = Math.floor(Number(days || 30));
+  return Math.max(1, Math.min(31, Number.isFinite(parsed) ? parsed : 30));
 }
 
 function getWeightedMilkCostForDate(date: string, fallbackRate: number) {
@@ -124,15 +141,35 @@ export function registerSuppliersIPC() {
       const defaultRate = Number(data.defaultRate || 0);
       const cowRate = Number(data.cowRate || defaultRate || 0);
       const buffaloRate = Number(data.buffaloRate || defaultRate || 0);
+      const paymentCycle = normalizePaymentCycle(data.paymentCycle);
+      const paymentCycleDays = normalizeCycleDays(paymentCycle, data.paymentCycleDays);
+      const guaranteedAdvanceBalance = Number(data.guaranteedAdvanceBalance || 0);
 
       if (!data.name?.trim()) return { success: false, error: 'Supplier name is required' };
 
       db.prepare(`
         INSERT INTO suppliers (
           id, code, name, phone, address, allowed_shifts, default_rate, cow_rate, buffalo_rate,
+          guaranteed_advance_balance, payment_cycle, payment_cycle_days, payment_cycle_notes,
           current_balance, is_active, created_at, updated_at, synced
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, 0)
-      `).run(id, code, data.name.trim(), data.phone || null, data.address || null, allowedShifts, defaultRate, cowRate, buffaloRate, now, now);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, 0)
+      `).run(
+        id,
+        code,
+        data.name.trim(),
+        data.phone || null,
+        data.address || null,
+        allowedShifts,
+        defaultRate,
+        cowRate,
+        buffaloRate,
+        guaranteedAdvanceBalance,
+        paymentCycle,
+        paymentCycleDays,
+        data.paymentCycleNotes || null,
+        now,
+        now
+      );
 
       createOutboxEntry('suppliers', 'INSERT', id, {
         id,
@@ -144,6 +181,10 @@ export function registerSuppliersIPC() {
         default_rate: defaultRate,
         cow_rate: cowRate,
         buffalo_rate: buffaloRate,
+        guaranteed_advance_balance: guaranteedAdvanceBalance,
+        payment_cycle: paymentCycle,
+        payment_cycle_days: paymentCycleDays,
+        payment_cycle_notes: data.paymentCycleNotes || null,
         current_balance: 0,
         created_at: now,
         updated_at: now
@@ -160,10 +201,15 @@ export function registerSuppliersIPC() {
       requireCurrentUser(['ADMIN', 'MANAGER']);
       const now = new Date().toISOString();
       if (!data.name?.trim()) return { success: false, error: 'Supplier name is required' };
+      const paymentCycle = normalizePaymentCycle(data.paymentCycle);
+      const paymentCycleDays = normalizeCycleDays(paymentCycle, data.paymentCycleDays);
+      const guaranteedAdvanceBalance = Number(data.guaranteedAdvanceBalance || 0);
 
       db.prepare(`
         UPDATE suppliers
-        SET name = ?, phone = ?, address = ?, allowed_shifts = ?, default_rate = ?, cow_rate = ?, buffalo_rate = ?, updated_at = ?, synced = 0
+        SET name = ?, phone = ?, address = ?, allowed_shifts = ?, default_rate = ?, cow_rate = ?, buffalo_rate = ?,
+            guaranteed_advance_balance = ?, payment_cycle = ?, payment_cycle_days = ?, payment_cycle_notes = ?,
+            updated_at = ?, synced = 0
         WHERE id = ?
       `).run(
         data.name.trim(),
@@ -173,6 +219,10 @@ export function registerSuppliersIPC() {
         Number(data.defaultRate || 0),
         Number(data.cowRate || data.defaultRate || 0),
         Number(data.buffaloRate || data.defaultRate || 0),
+        guaranteedAdvanceBalance,
+        paymentCycle,
+        paymentCycleDays,
+        data.paymentCycleNotes || null,
         now,
         id
       );
@@ -186,6 +236,10 @@ export function registerSuppliersIPC() {
         default_rate: Number(data.defaultRate || 0),
         cow_rate: Number(data.cowRate || data.defaultRate || 0),
         buffalo_rate: Number(data.buffaloRate || data.defaultRate || 0),
+        guaranteed_advance_balance: guaranteedAdvanceBalance,
+        payment_cycle: paymentCycle,
+        payment_cycle_days: paymentCycleDays,
+        payment_cycle_notes: data.paymentCycleNotes || null,
         updated_at: now
       });
 
@@ -479,12 +533,11 @@ export function registerSuppliersIPC() {
 
         const amount = Number(data.amount || 0);
         if (amount <= 0) throw new Error('Payment amount must be greater than zero');
-        if (amount > Number(supplier.current_balance || 0)) throw new Error('Payment cannot be more than supplier balance');
-
         const now = new Date().toISOString();
         const userId = getCurrentUser()?.id || 'system';
         const paymentId = crypto.randomUUID();
         const balanceAfter = Number(supplier.current_balance || 0) - amount;
+        const isAdvance = balanceAfter < 0;
 
         db.prepare(`
           INSERT INTO supplier_payments (
@@ -516,7 +569,7 @@ export function registerSuppliersIPC() {
             id, supplier_id, payment_id, entry_type, amount, balance_after,
             description, entry_date, created_at, synced
           ) VALUES (?, ?, ?, 'PAYMENT', ?, ?, ?, ?, ?, 0)
-        `).run(ledgerId, supplierId, paymentId, amount, balanceAfter, `Paid supplier Rs. ${amount}`, now, now);
+        `).run(ledgerId, supplierId, paymentId, amount, balanceAfter, isAdvance ? `Paid supplier Rs. ${amount} (extra carried as next-cycle advance)` : `Paid supplier Rs. ${amount}`, now, now);
         createOutboxEntry('supplier_ledger_entries', 'INSERT', ledgerId, {
           id: ledgerId,
           supplier_id: supplierId,
@@ -524,7 +577,7 @@ export function registerSuppliersIPC() {
           entry_type: 'PAYMENT',
           amount,
           balance_after: balanceAfter,
-          description: `Paid supplier Rs. ${amount}`,
+          description: isAdvance ? `Paid supplier Rs. ${amount} (extra carried as next-cycle advance)` : `Paid supplier Rs. ${amount}`,
           entry_date: now,
           created_at: now
         });

@@ -185,6 +185,8 @@ export interface ElectronAPI {
     addReturn: (data: any) => Promise<any>;
     completeSession: (sessionId: string, notes?: string) => Promise<any>;
     getSession: (sessionId: string) => Promise<any>;
+    getPickupSlip: (entryId: string) => Promise<any>;
+    getMonthlyStatement: (riderId: string, month?: string) => Promise<any>;
     getRiderHistory: (riderId: string, limit?: number) => Promise<any[]>;
     getAllHistory: (limit?: number) => Promise<any[]>;
     getMilkStock: () => Promise<any>;

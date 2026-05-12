@@ -12,10 +12,15 @@ type Supplier = {
   default_rate: number;
   cow_rate?: number;
   buffalo_rate?: number;
+  guaranteed_advance_balance?: number;
+  payment_cycle?: PaymentCycle;
+  payment_cycle_days?: number;
+  payment_cycle_notes?: string;
   current_balance: number;
 };
 
 type MilkType = "COW" | "BUFFALO" | "MIXED";
+type PaymentCycle = "10_DAYS" | "15_DAYS" | "MONTHLY" | "CUSTOM";
 
 function toMoney(value: number) {
   return `Rs. ${Number(value || 0).toLocaleString("en-PK", { maximumFractionDigits: 2 })}`;
@@ -33,6 +38,69 @@ function supplierRate(supplier: Supplier | undefined, type: MilkType) {
   return fallback;
 }
 
+function cycleLabel(supplier?: Supplier) {
+  const cycle = supplier?.payment_cycle || "MONTHLY";
+  if (cycle === "10_DAYS") return "10-day cycle";
+  if (cycle === "15_DAYS") return "15-day cycle";
+  if (cycle === "CUSTOM") return `${supplier?.payment_cycle_days || 30}-day cycle`;
+  return "Monthly cycle";
+}
+
+function formatDateOnly(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function monthLastDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function dateInMonth(date: Date, day: number) {
+  return new Date(date.getFullYear(), date.getMonth(), day);
+}
+
+function nextMonthDate(date: Date, day: number) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, day);
+}
+
+function getSupplierCycleWindow(supplier?: Supplier, base = new Date()) {
+  const cycle = supplier?.payment_cycle || "MONTHLY";
+  const day = base.getDate();
+  const lastDay = monthLastDay(base);
+
+  if (cycle === "10_DAYS") {
+    if (day <= 10) return { start: formatDateOnly(dateInMonth(base, 1)), end: formatDateOnly(dateInMonth(base, 10)), payWindow: "Pay 11-15" };
+    if (day <= 20) return { start: formatDateOnly(dateInMonth(base, 11)), end: formatDateOnly(dateInMonth(base, 20)), payWindow: "Pay 21-25" };
+    return { start: formatDateOnly(dateInMonth(base, 21)), end: formatDateOnly(dateInMonth(base, lastDay)), payWindow: "Pay 1-5 next month" };
+  }
+
+  if (cycle === "15_DAYS") {
+    if (day <= 15) return { start: formatDateOnly(dateInMonth(base, 1)), end: formatDateOnly(dateInMonth(base, 15)), payWindow: "Pay 16-20" };
+    return { start: formatDateOnly(dateInMonth(base, 16)), end: formatDateOnly(dateInMonth(base, lastDay)), payWindow: "Pay 1-5 next month" };
+  }
+
+  if (cycle === "CUSTOM") {
+    const cycleDays = Math.max(1, Math.min(31, Number(supplier?.payment_cycle_days || 30)));
+    const startDay = Math.floor((day - 1) / cycleDays) * cycleDays + 1;
+    const endDay = Math.min(startDay + cycleDays - 1, lastDay);
+    const payStart = endDay === lastDay ? nextMonthDate(base, 1) : dateInMonth(base, endDay + 1);
+    const payEnd = endDay === lastDay ? nextMonthDate(base, 5) : dateInMonth(base, Math.min(endDay + 5, lastDay));
+    return {
+      start: formatDateOnly(dateInMonth(base, startDay)),
+      end: formatDateOnly(dateInMonth(base, endDay)),
+      payWindow: `Pay ${formatDateOnly(payStart).slice(5)} to ${formatDateOnly(payEnd).slice(5)}`
+    };
+  }
+
+  return {
+    start: formatDateOnly(dateInMonth(base, 1)),
+    end: formatDateOnly(dateInMonth(base, lastDay)),
+    payWindow: "Pay 1-5 next month"
+  };
+}
+
 export default function Suppliers() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [collections, setCollections] = useState<any[]>([]);
@@ -47,7 +115,7 @@ export default function Suppliers() {
   const [paymentAmount, setPaymentAmount] = useState("");
   
   // Report Mode
-  const [reportMode, setReportMode] = useState<"1-10" | "1-15" | "1-25" | "FULL" | "CUSTOM">("1-10");
+  const [reportMode, setReportMode] = useState<"SUPPLIER" | "1-10" | "1-15" | "1-25" | "FULL" | "CUSTOM">("1-10");
   const [reportStart, setReportStart] = useState(() => new Date().toISOString().slice(0, 8) + "01");
   const [reportEnd, setReportEnd] = useState(() => new Date().toISOString().slice(0, 8) + "10");
   const [statement, setStatement] = useState<any>(null);
@@ -60,6 +128,10 @@ export default function Suppliers() {
     defaultRate: "0",
     cowRate: "0",
     buffaloRate: "0",
+    guaranteedAdvanceBalance: "0",
+    paymentCycle: "MONTHLY" as PaymentCycle,
+    paymentCycleDays: "30",
+    paymentCycleNotes: "",
   });
   const [editingSupplierId, setEditingSupplierId] = useState("");
   
@@ -70,6 +142,10 @@ export default function Suppliers() {
     () => suppliers.find((supplier) => supplier.id === selectedSupplierId),
     [suppliers, selectedSupplierId]
   );
+  const selectedCycleWindow = useMemo(
+    () => getSupplierCycleWindow(selectedSupplier),
+    [selectedSupplier]
+  );
 
   const supplierCollections = useMemo(
     () => collections.filter(c => c.supplier_id === selectedSupplierId),
@@ -79,7 +155,8 @@ export default function Suppliers() {
   const morningCollection = supplierCollections.find(c => c.shift === "MORNING");
   const eveningCollection = supplierCollections.find(c => c.shift === "EVENING");
 
-  const payableTotal = suppliers.reduce((sum, supplier) => sum + Number(supplier.current_balance || 0), 0);
+  const payableTotal = suppliers.reduce((sum, supplier) => sum + Math.max(0, Number(supplier.current_balance || 0)), 0);
+  const supplierCreditTotal = suppliers.reduce((sum, supplier) => sum + Math.max(0, -Number(supplier.current_balance || 0)), 0);
   const todayQuantity = collections.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 
   useEffect(() => {
@@ -95,6 +172,14 @@ export default function Suppliers() {
       loadStatement();
     }
   }, [selectedSupplierId, activeTab, reportStart, reportEnd]);
+
+  useEffect(() => {
+    if (selectedSupplier && reportMode === "SUPPLIER") {
+      const window = getSupplierCycleWindow(selectedSupplier);
+      setReportStart(window.start);
+      setReportEnd(window.end);
+    }
+  }, [selectedSupplier?.id, selectedSupplier?.payment_cycle, selectedSupplier?.payment_cycle_days, reportMode]);
 
   async function loadData() {
     setIsLoading(true);
@@ -112,7 +197,7 @@ export default function Suppliers() {
 
   function openAddSupplier() {
     setEditingSupplierId("");
-    setSupplierForm({ name: "", phone: "", address: "", allowedShifts: "BOTH", defaultRate: "0", cowRate: "0", buffaloRate: "0" });
+    setSupplierForm({ name: "", phone: "", address: "", allowedShifts: "BOTH", defaultRate: "0", cowRate: "0", buffaloRate: "0", guaranteedAdvanceBalance: "0", paymentCycle: "MONTHLY", paymentCycleDays: "30", paymentCycleNotes: "" });
     setIsSupplierModalOpen(true);
   }
 
@@ -126,6 +211,10 @@ export default function Suppliers() {
       defaultRate: String(supplier.default_rate || 0),
       cowRate: String(supplier.cow_rate || supplier.default_rate || 0),
       buffaloRate: String(supplier.buffalo_rate || supplier.default_rate || 0),
+      guaranteedAdvanceBalance: String(supplier.guaranteed_advance_balance || 0),
+      paymentCycle: (supplier.payment_cycle || "MONTHLY") as PaymentCycle,
+      paymentCycleDays: String(supplier.payment_cycle_days || 30),
+      paymentCycleNotes: supplier.payment_cycle_notes || "",
     });
     setIsSupplierModalOpen(true);
   }
@@ -140,6 +229,10 @@ export default function Suppliers() {
       defaultRate: Number(supplierForm.defaultRate || 0),
       cowRate: Number(supplierForm.cowRate || supplierForm.defaultRate || 0),
       buffaloRate: Number(supplierForm.buffaloRate || supplierForm.defaultRate || 0),
+      guaranteedAdvanceBalance: Number(supplierForm.guaranteedAdvanceBalance || 0),
+      paymentCycle: supplierForm.paymentCycle,
+      paymentCycleDays: Number(supplierForm.paymentCycleDays || 30),
+      paymentCycleNotes: supplierForm.paymentCycleNotes,
     };
     const result = editingSupplierId
       ? await window.electronAPI?.suppliers?.update(editingSupplierId, payload)
@@ -180,6 +273,12 @@ export default function Suppliers() {
 
   function applyReportMode(mode: typeof reportMode) {
     setReportMode(mode);
+    if (mode === "SUPPLIER") {
+      const window = getSupplierCycleWindow(selectedSupplier);
+      setReportStart(window.start);
+      setReportEnd(window.end);
+      return;
+    }
     if (mode === "CUSTOM") return;
 
     const base = new Date();
@@ -226,6 +325,11 @@ export default function Suppliers() {
             <span className="text-xs text-text-secondary uppercase font-bold tracking-wider">Total Payables</span>
             <span className="font-mono font-bold text-warning">{toMoney(payableTotal)}</span>
           </div>
+          <div className="h-8 w-px bg-surface-4"></div>
+          <div className="flex flex-col items-end">
+            <span className="text-xs text-text-secondary uppercase font-bold tracking-wider">Next-Cycle Credit</span>
+            <span className="font-mono font-bold text-success">{toMoney(supplierCreditTotal)}</span>
+          </div>
           <button onClick={loadData} className="btn-secondary h-10 w-10 p-0 flex items-center justify-center rounded-full ml-2">
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -265,10 +369,10 @@ export default function Suppliers() {
                   <p className="text-xs text-text-secondary mt-0.5 truncate">{supplier.phone || supplier.code}</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className={cn("font-mono text-sm font-bold", Number(supplier.current_balance) > 0 ? "text-warning" : "text-text-secondary")}>
-                    {toMoney(supplier.current_balance)}
+                  <p className={cn("font-mono text-sm font-bold", Number(supplier.current_balance) > 0 ? "text-warning" : Number(supplier.current_balance) < 0 ? "text-success" : "text-text-secondary")}>
+                    {Number(supplier.current_balance) < 0 ? `Credit ${toMoney(Math.abs(Number(supplier.current_balance)))}` : toMoney(supplier.current_balance)}
                   </p>
-                  <p className="text-[10px] text-text-secondary uppercase">{supplier.allowed_shifts}</p>
+                  <p className="text-[10px] text-text-secondary uppercase">{cycleLabel(supplier)}</p>
                 </div>
               </button>
             ))}
@@ -300,11 +404,19 @@ export default function Suppliers() {
                     {(selectedSupplier.cow_rate || 0) > 0 && <span>• Cow: {toMoney(selectedSupplier.cow_rate || 0)}</span>}
                     {(selectedSupplier.buffalo_rate || 0) > 0 && <span>• Buffalo: {toMoney(selectedSupplier.buffalo_rate || 0)}</span>}
                   </div>
+                  <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
+                    <span className="rounded-full border border-info/30 bg-info/10 px-2 py-1 text-info font-bold">{cycleLabel(selectedSupplier)}</span>
+                    <span className="rounded-full border border-surface-4 bg-surface-3 px-2 py-1 text-text-secondary">{selectedCycleWindow.start} to {selectedCycleWindow.end}</span>
+                    <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-1 text-warning font-bold">{selectedCycleWindow.payWindow}</span>
+                    <span className="rounded-full border border-success/30 bg-success/10 px-2 py-1 text-success font-bold">Guaranteed Advance: {toMoney(selectedSupplier.guaranteed_advance_balance || 0)}</span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-4 bg-surface-1 p-3 rounded-xl border border-surface-4">
                   <div>
-                    <p className="text-xs text-text-secondary uppercase font-bold tracking-wider">Payable Balance</p>
-                    <p className="text-xl font-mono font-bold text-warning">{toMoney(selectedSupplier.current_balance)}</p>
+                    <p className="text-xs text-text-secondary uppercase font-bold tracking-wider">{Number(selectedSupplier.current_balance) < 0 ? "Next-Cycle Credit" : "Payable Balance"}</p>
+                    <p className={cn("text-xl font-mono font-bold", Number(selectedSupplier.current_balance) < 0 ? "text-success" : "text-warning")}>
+                      {toMoney(Math.abs(Number(selectedSupplier.current_balance || 0)))}
+                    </p>
                   </div>
                   <button onClick={() => setIsPaymentModalOpen(true)} className="btn-primary h-10 px-4 flex items-center gap-2 whitespace-nowrap">
                     <Banknote className="w-4 h-4" /> Pay
@@ -362,13 +474,13 @@ export default function Suppliers() {
                   <div className="space-y-6 animate-fade-in h-full flex flex-col max-w-5xl mx-auto">
                     <div className="flex flex-wrap items-center justify-between gap-4 card p-4 shrink-0">
                       <div className="flex flex-wrap gap-2">
-                        {(["1-10", "1-15", "1-25", "FULL", "CUSTOM"] as const).map((mode) => (
+                        {(["SUPPLIER", "1-10", "1-15", "1-25", "FULL", "CUSTOM"] as const).map((mode) => (
                           <button
                             key={mode}
                             onClick={() => applyReportMode(mode)}
                             className={cn("px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors", reportMode === mode ? "bg-primary border-primary text-white" : "border-surface-4 text-text-secondary hover:bg-surface-3")}
                           >
-                            {mode === "FULL" ? "Full Month" : mode}
+                            {mode === "SUPPLIER" ? "Farmer Cycle" : mode === "FULL" ? "Full Month" : mode}
                           </button>
                         ))}
                       </div>
@@ -502,7 +614,7 @@ export default function Suppliers() {
       {/* Supplier Modal */}
       {isSupplierModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-lg overflow-hidden border border-surface-4 animate-slide-up">
+          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-2xl overflow-hidden border border-surface-4 animate-slide-up">
             <div className="p-5 border-b border-surface-4 flex justify-between items-center">
               <h3 className="font-bold text-lg">{editingSupplierId ? "Edit Farm" : "Add Farm"}</h3>
               <button onClick={() => setIsSupplierModalOpen(false)} className="text-text-secondary hover:text-text-primary"><X className="w-5 h-5"/></button>
@@ -535,6 +647,32 @@ export default function Suppliers() {
                   <input className="input" type="number" value={supplierForm.buffaloRate} onChange={(e) => setSupplierForm(c => ({ ...c, buffaloRate: e.target.value }))} />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-text-secondary font-bold mb-1 block">Guaranteed Advance</label>
+                  <input className="input" type="number" value={supplierForm.guaranteedAdvanceBalance} onChange={(e) => setSupplierForm(c => ({ ...c, guaranteedAdvanceBalance: e.target.value }))} />
+                  <p className="mt-1 text-[11px] text-text-secondary">Permanent advance/security. It is not deducted from daily milk automatically.</p>
+                </div>
+                <div>
+                  <label className="text-xs text-text-secondary font-bold mb-1 block">Payment Cycle</label>
+                  <select className="input" value={supplierForm.paymentCycle} onChange={(e) => setSupplierForm(c => ({ ...c, paymentCycle: e.target.value as PaymentCycle }))}>
+                    <option value="10_DAYS">10 days</option>
+                    <option value="15_DAYS">15 days</option>
+                    <option value="MONTHLY">Monthly</option>
+                    <option value="CUSTOM">Custom days</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-text-secondary font-bold mb-1 block">Custom Cycle Days</label>
+                  <input className="input" type="number" min="1" max="31" disabled={supplierForm.paymentCycle !== "CUSTOM"} value={supplierForm.paymentCycleDays} onChange={(e) => setSupplierForm(c => ({ ...c, paymentCycleDays: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="text-xs text-text-secondary font-bold mb-1 block">Cycle Notes</label>
+                  <input className="input" value={supplierForm.paymentCycleNotes} onChange={(e) => setSupplierForm(c => ({ ...c, paymentCycleNotes: e.target.value }))} placeholder="e.g. Pay 11-15 after 1-10 cycle" />
+                </div>
+              </div>
             </div>
             <div className="p-4 bg-surface-3 border-t border-surface-4 flex justify-end gap-3">
               <button onClick={() => setIsSupplierModalOpen(false)} className="btn-secondary">Cancel</button>
@@ -558,8 +696,9 @@ export default function Suppliers() {
                 <p className="font-bold text-lg">{selectedSupplier.name}</p>
               </div>
               <div>
-                <p className="text-sm text-text-secondary mb-1">Current Payable</p>
-                <p className="font-mono font-bold text-warning">{toMoney(selectedSupplier.current_balance)}</p>
+                <p className="text-sm text-text-secondary mb-1">{Number(selectedSupplier.current_balance || 0) < 0 ? "Current Next-Cycle Credit" : "Current Payable"}</p>
+                <p className="font-mono font-bold text-warning">{toMoney(Math.abs(Number(selectedSupplier.current_balance || 0)))}</p>
+                <p className="mt-1 text-xs text-text-secondary">You can pay more than payable. Extra becomes credit for the next cycle.</p>
               </div>
               <div className="pt-2">
                 <label className="text-sm font-bold text-text-primary mb-2 block">Payment Amount</label>

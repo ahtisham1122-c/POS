@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Bike, Plus, ArrowUpFromLine, ArrowDownToLine, CheckCircle2,
-  AlertTriangle, X, Milk, MapPin, RefreshCw, History, ChevronRight
+  AlertTriangle, X, Milk, MapPin, RefreshCw, History, ChevronRight, Printer, FileText
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -56,6 +56,8 @@ export default function Deliveries() {
   const [returnNotes, setReturnNotes] = useState("");
   const [completeNotes, setCompleteNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [pickupSlip, setPickupSlip] = useState<any>(null);
+  const [monthlyStatement, setMonthlyStatement] = useState<any>(null);
 
   // Rider management
   const [showAddRider, setShowAddRider] = useState(false);
@@ -125,6 +127,8 @@ export default function Deliveries() {
     setSubmitting(false);
     if (res?.success) {
       flash("success", `Pickup recorded — ${toKg(Number(pickupQty))} deducted from milk stock`);
+      const slipRes = await window.electronAPI?.deliveries?.getPickupSlip?.(res.entryId);
+      if (slipRes?.success) setPickupSlip(slipRes.slip);
       setPickupQty(""); setPickupNotes("");
       await refreshSession();
     } else {
@@ -189,6 +193,13 @@ export default function Deliveries() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+
+  async function openMonthlyStatement(riderId: string) {
+    const month = new Date().toISOString().slice(0, 7);
+    const res = await window.electronAPI?.deliveries?.getMonthlyStatement?.(riderId, month);
+    if (res?.success) setMonthlyStatement(res.statement);
+    else flash("error", res?.error || "Monthly statement failed");
+  }
 
   // Find selected rider name
   const selectedRider = riders.find(r => r.id === selectedRiderId);
@@ -302,7 +313,12 @@ export default function Deliveries() {
                         }
                       </p>
                     </div>
-                    <button onClick={refreshSession} className="btn btn-ghost btn-sm"><RefreshCw className="w-4 h-4" /></button>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => openMonthlyStatement(activeSession.rider_id)} className="btn btn-ghost btn-sm flex items-center gap-1">
+                        <FileText className="w-4 h-4" /> Statement
+                      </button>
+                      <button onClick={refreshSession} className="btn btn-ghost btn-sm"><RefreshCw className="w-4 h-4" /></button>
+                    </div>
                   </div>
 
                   {/* Live summary */}
@@ -419,11 +435,23 @@ export default function Deliveries() {
                                   {entry.entry_type === "PICKUP" ? "Pickup" : "Return"}
                                 </p>
                                 {entry.notes && <p className="text-xs text-text-secondary">{entry.notes}</p>}
+                                {entry.pickup_number && <p className="text-[11px] text-text-secondary">Pickup #{entry.pickup_number}</p>}
                               </div>
                             </div>
                             <div className="text-right">
                               <p className="font-bold text-text-primary">{toKg(entry.quantity)}</p>
                               <p className="text-xs text-text-secondary">{formatTime(entry.created_at)}</p>
+                              {entry.entry_type === "PICKUP" && (
+                                <button
+                                  onClick={async () => {
+                                    const slipRes = await window.electronAPI?.deliveries?.getPickupSlip?.(entry.id);
+                                    if (slipRes?.success) setPickupSlip(slipRes.slip);
+                                  }}
+                                  className="mt-1 text-xs text-primary hover:underline"
+                                >
+                                  Slip
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -626,6 +654,91 @@ export default function Deliveries() {
       )}
 
       {/* ── Toast ────────────────────────────────────────────────────────────── */}
+      {pickupSlip && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-2 rounded-xl shadow-xl w-full max-w-sm border border-surface-4 overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-surface-4">
+              <h2 className="font-bold text-text-primary">Rider Milk Pickup Slip</h2>
+              <button onClick={() => setPickupSlip(null)} className="text-text-secondary hover:text-text-primary"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="print-target bg-white text-black p-5 font-mono text-sm">
+              <div className="text-center border-b border-black pb-2 mb-3">
+                <h1 className="text-lg font-black">{pickupSlip.shopName}</h1>
+                <p className="text-xs font-bold">RIDER MILK PICKUP</p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex justify-between"><span>Pickup No</span><strong>{pickupSlip.pickupNumber}</strong></div>
+                <div className="flex justify-between"><span>Date</span><span>{formatDate(pickupSlip.date)}</span></div>
+                <div className="flex justify-between"><span>Time</span><span>{formatTime(pickupSlip.time)}</span></div>
+                <div className="flex justify-between"><span>Rider</span><strong>{pickupSlip.riderName}</strong></div>
+                <div className="flex justify-between"><span>Area</span><span>{pickupSlip.riderArea || "-"}</span></div>
+                <div className="border-t border-black mt-3 pt-3 flex justify-between text-base">
+                  <span>Milk Pickup</span><strong>{toKg(pickupSlip.quantity)}</strong>
+                </div>
+              </div>
+              <div className="mt-8 flex justify-between text-xs">
+                <span>Issued By</span>
+                <span>Received By</span>
+              </div>
+            </div>
+            <div className="p-4 border-t border-surface-4 flex justify-end gap-3">
+              <button onClick={() => setPickupSlip(null)} className="btn btn-ghost">Close</button>
+              <button onClick={() => window.print()} className="btn btn-primary flex items-center gap-2"><Printer className="w-4 h-4" /> Print</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {monthlyStatement && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-2 rounded-xl shadow-xl w-full max-w-2xl border border-surface-4 overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-surface-4">
+              <h2 className="font-bold text-text-primary">Rider Monthly Statement</h2>
+              <button onClick={() => setMonthlyStatement(null)} className="text-text-secondary hover:text-text-primary"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="print-target bg-white text-black p-6">
+              <div className="text-center border-b-2 border-black pb-3 mb-4">
+                <h1 className="text-xl font-black">{monthlyStatement.shopName}</h1>
+                <p className="text-sm">Rider Monthly Milk Statement</p>
+                <p className="text-xs">{monthlyStatement.start} to {monthlyStatement.end}</p>
+              </div>
+              <div className="mb-4 text-sm">
+                <strong>{monthlyStatement.rider.name}</strong> {monthlyStatement.rider.area ? `- ${monthlyStatement.rider.area}` : ""}
+              </div>
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-black">
+                    <th className="text-left py-1">Date</th>
+                    <th className="text-right py-1">Pickup</th>
+                    <th className="text-right py-1">Return</th>
+                    <th className="text-right py-1">Delivered</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlyStatement.rows.map((row: any) => (
+                    <tr key={row.id} className="border-b border-gray-300">
+                      <td className="py-1">{row.session_date}</td>
+                      <td className="py-1 text-right">{toKg(row.total_pickup)}</td>
+                      <td className="py-1 text-right">{toKg(row.total_return)}</td>
+                      <td className="py-1 text-right font-bold">{toKg(row.total_delivered)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="mt-4 border-t-2 border-black pt-2 grid grid-cols-3 gap-2 text-sm font-bold">
+                <div>Pickup: {toKg(monthlyStatement.totalPickup)}</div>
+                <div>Return: {toKg(monthlyStatement.totalReturn)}</div>
+                <div>Delivered: {toKg(monthlyStatement.totalDelivered)}</div>
+              </div>
+            </div>
+            <div className="p-4 border-t border-surface-4 flex justify-end gap-3">
+              <button onClick={() => setMonthlyStatement(null)} className="btn btn-ghost">Close</button>
+              <button onClick={() => window.print()} className="btn btn-primary flex items-center gap-2"><Printer className="w-4 h-4" /> Print</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {msg && (
         <div className={cn(
           "fixed bottom-6 right-6 px-5 py-3 rounded-lg shadow-xl text-white font-medium z-50 flex items-center gap-2 max-w-sm",
