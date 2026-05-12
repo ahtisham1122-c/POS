@@ -42,8 +42,8 @@ export default {
         full: "9999px"
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
-        mono: ["JetBrains Mono", "monospace"]
+        sans: ["Segoe UI", "Arial", "system-ui", "sans-serif"],
+        mono: ["Consolas", "Cascadia Mono", "monospace"]
       },
       boxShadow: {
         card: "0 1px 3px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.3)",

@@ -1022,6 +1022,9 @@ export default function Inventory() {
                     <option value="kg">Kilograms (kg)</option>
                     <option value="ltr">Liters (ltr)</option>
                     <option value="gm">Grams (gm)</option>
+                    <option value="glass">Glass</option>
+                    <option value="half glass">Half Glass</option>
+                    <option value="full glass">Full Glass</option>
                   </select>
                 </div>
               </div>
@@ -1159,6 +1162,9 @@ export default function Inventory() {
                     <option value="kg">Kilograms (kg)</option>
                     <option value="ltr">Liters (ltr)</option>
                     <option value="gm">Grams (gm)</option>
+                    <option value="glass">Glass</option>
+                    <option value="half glass">Half Glass</option>
+                    <option value="full glass">Full Glass</option>
                   </select>
                 </div>
               </div>

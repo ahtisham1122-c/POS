@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 import db from '../database/db';
 import * as crypto from 'crypto';
 import { createOutboxEntry } from '../sync/outboxHelper';
-import { addCashOut } from '../database/cashRegister';
+import { addCashOut, adjustCashIn } from '../database/cashRegister';
 import { requireCurrentUser, requireManagerApproval } from './auth.ipc';
 import { logAudit } from '../audit/auditLog';
 import { getActiveBusinessDate, getOpenShift } from '../database/businessDay';
@@ -37,6 +37,20 @@ function getAlreadyReturnedQty(saleItemId: string) {
   `).get(saleItemId) as any;
 
   return Number(row?.qty || 0);
+}
+
+function getCashTenderPortionForReturn(saleId: string, saleGrandTotal: number, returnAmount: number) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as cashTender
+    FROM split_payments
+    WHERE sale_id = ? AND method = 'CASH'
+  `).get(saleId) as any;
+
+  const cashTender = Number(row?.cashTender || 0);
+  if (cashTender <= 0 || returnAmount <= 0) return 0;
+  const grandTotal = Number(saleGrandTotal || 0);
+  if (grandTotal <= 0) return Number(Math.min(cashTender, returnAmount).toFixed(2));
+  return Number(Math.min(cashTender, cashTender * (returnAmount / grandTotal)).toFixed(2));
 }
 
 export function registerReturnsIPC() {
@@ -270,7 +284,12 @@ export function registerReturnsIPC() {
           }
         }
 
-        if (correctionType !== 'CORRECTION') {
+        if (correctionType === 'CORRECTION') {
+          const cashTenderToReverse = getCashTenderPortionForReturn(sale.id, Number(sale.grand_total || 0), refundAmount);
+          if (cashTenderToReverse > 0) {
+            adjustCashIn(-cashTenderToReverse, actionShift?.shift_date || getActiveBusinessDate(new Date(now)), actionShift?.id || null);
+          }
+        } else {
           if (input.refundMethod === 'CASH') {
             addCashOut(refundAmount, actionShift?.shift_date || getActiveBusinessDate(new Date(now)), actionShift?.id || null);
           }

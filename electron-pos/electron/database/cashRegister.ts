@@ -115,8 +115,13 @@ export function ensureOpenCashRegister(date = getTodayDate(), shiftId?: string |
 
 export function addCashIn(amount: number, date = getTodayDate(), shiftId?: string | null) {
   if (amount <= 0) return;
+  adjustCashIn(amount, date, shiftId);
+}
+
+export function adjustCashIn(delta: number, date = getTodayDate(), shiftId?: string | null) {
+  if (delta === 0) return;
   const register = ensureOpenCashRegister(date, shiftId);
-  const nextCashIn = Number(register.cash_in || 0) + amount;
+  const nextCashIn = Math.max(0, Number((Number(register.cash_in || 0) + delta).toFixed(2)));
   db.prepare('UPDATE cash_register SET cash_in = ?, synced = 0 WHERE id = ?').run(nextCashIn, register.id);
   createOutboxEntry('cash_register', 'UPDATE', register.id, {
     id: register.id,
