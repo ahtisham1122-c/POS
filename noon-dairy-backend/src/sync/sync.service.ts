@@ -103,6 +103,12 @@ export class SyncService {
       const allowed = new Set([
         'MILK_PURCHASE',
         'SALARY',
+        'SHOPPING_BAG',
+        'WASHING_MATERIAL',
+        'ROTI',
+        'ELECTRICITY_BILL',
+        'WASA_BILL',
+        'GAS_BILL',
         'ELECTRICITY',
         'FUEL',
         'PACKAGING',

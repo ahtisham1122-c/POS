@@ -1,67 +1,201 @@
 import { useState, useMemo, useEffect } from "react";
-import { Receipt, TrendingDown, Wallet, Plus, Trash2, Edit2, FileText } from "lucide-react";
+import {
+  BarChart3,
+  CalendarDays,
+  Edit2,
+  FileText,
+  Flame,
+  Plus,
+  Receipt,
+  ShoppingBag,
+  Trash2,
+  TrendingDown,
+  Wallet,
+  Zap,
+} from "lucide-react";
 import { cn } from "../lib/utils";
 
-type ExpenseCategory = "MILK_PURCHASE" | "SALARY" | "ELECTRICITY" | "FUEL" | "RENT" | "OTHER";
+type ExpenseCategory =
+  | "MILK_PURCHASE"
+  | "SALARY"
+  | "SHOPPING_BAG"
+  | "WASHING_MATERIAL"
+  | "ROTI"
+  | "ELECTRICITY_BILL"
+  | "WASA_BILL"
+  | "GAS_BILL"
+  | "ELECTRICITY"
+  | "FUEL"
+  | "PACKAGING"
+  | "RENT"
+  | "MAINTENANCE"
+  | "CLEANING"
+  | "MISCELLANEOUS"
+  | "OTHER";
 
 type Expense = {
   id: string;
-  date: string;
+  date?: string;
+  expense_date?: string;
   category: ExpenseCategory;
   description: string;
   amount: number;
-  addedBy: string;
-};
-
-const CATEGORY_COLORS: Record<ExpenseCategory, string> = {
-  MILK_PURCHASE: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  SALARY: "bg-purple-500/15 text-purple-400 border-purple-500/30",
-  ELECTRICITY: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
-  FUEL: "bg-orange-500/15 text-orange-400 border-orange-500/30",
-  RENT: "bg-indigo-500/15 text-indigo-400 border-indigo-500/30",
-  OTHER: "bg-gray-500/15 text-gray-400 border-gray-500/30",
+  addedBy?: string;
+  created_by_id?: string;
 };
 
 const CATEGORY_LABELS: Record<ExpenseCategory, string> = {
   MILK_PURCHASE: "Milk Purchase",
   SALARY: "Salary",
+  SHOPPING_BAG: "Shopping Bag",
+  WASHING_MATERIAL: "Washing Material",
+  ROTI: "Roti",
+  ELECTRICITY_BILL: "Electricity Bill",
+  WASA_BILL: "WASA Bill",
+  GAS_BILL: "Gas Bill",
   ELECTRICITY: "Electricity",
   FUEL: "Fuel",
+  PACKAGING: "Packaging",
   RENT: "Rent",
+  MAINTENANCE: "Maintenance",
+  CLEANING: "Cleaning",
+  MISCELLANEOUS: "Miscellaneous",
   OTHER: "Other",
 };
 
+const CATEGORY_COLORS: Record<ExpenseCategory, string> = {
+  MILK_PURCHASE: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  SALARY: "bg-purple-500/15 text-purple-400 border-purple-500/30",
+  SHOPPING_BAG: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  WASHING_MATERIAL: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+  ROTI: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  ELECTRICITY_BILL: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  WASA_BILL: "bg-sky-500/15 text-sky-400 border-sky-500/30",
+  GAS_BILL: "bg-red-500/15 text-red-400 border-red-500/30",
+  ELECTRICITY: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  FUEL: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  PACKAGING: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  RENT: "bg-indigo-500/15 text-indigo-400 border-indigo-500/30",
+  MAINTENANCE: "bg-slate-500/15 text-slate-300 border-slate-500/30",
+  CLEANING: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+  MISCELLANEOUS: "bg-gray-500/15 text-gray-300 border-gray-500/30",
+  OTHER: "bg-gray-500/15 text-gray-300 border-gray-500/30",
+};
+
+const BAR_COLORS: Record<ExpenseCategory, string> = {
+  MILK_PURCHASE: "bg-blue-500",
+  SALARY: "bg-purple-500",
+  SHOPPING_BAG: "bg-emerald-500",
+  WASHING_MATERIAL: "bg-cyan-500",
+  ROTI: "bg-amber-500",
+  ELECTRICITY_BILL: "bg-yellow-500",
+  WASA_BILL: "bg-sky-500",
+  GAS_BILL: "bg-red-500",
+  ELECTRICITY: "bg-yellow-500",
+  FUEL: "bg-orange-500",
+  PACKAGING: "bg-emerald-500",
+  RENT: "bg-indigo-500",
+  MAINTENANCE: "bg-slate-500",
+  CLEANING: "bg-cyan-500",
+  MISCELLANEOUS: "bg-gray-500",
+  OTHER: "bg-gray-500",
+};
+
+function localDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function startOfWeek() {
+  const date = new Date();
+  const day = date.getDay() || 7;
+  date.setDate(date.getDate() - day + 1);
+  return localDate(date);
+}
+
+function displayDate(value?: string) {
+  const raw = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  return "-";
+}
+
 function toMoney(value: number) {
   return `Rs. ${Number(value || 0).toLocaleString("en-PK", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
+
+function categoryLabel(category: ExpenseCategory) {
+  return CATEGORY_LABELS[category] || String(category || "Other").replace(/_/g, " ");
 }
 
 export default function Expenses() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [summary, setSummary] = useState({ totalToday: 0, totalMonth: 0, profitToday: 0 });
-  
   const [filter, setFilter] = useState<"TODAY" | "WEEK" | "MONTH" | "ALL">("TODAY");
+
+  const [newDate, setNewDate] = useState(localDate());
+  const [newCategory, setNewCategory] = useState<ExpenseCategory>("SHOPPING_BAG");
+  const [newDesc, setNewDesc] = useState("");
+  const [newAmount, setNewAmount] = useState("");
+
+  const visibleTotal = useMemo(
+    () => expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0),
+    [expenses]
+  );
+
+  const categoryBreakdown = useMemo(() => {
+    const totals = new Map<ExpenseCategory, number>();
+    expenses.forEach((expense) => {
+      totals.set(expense.category, (totals.get(expense.category) || 0) + Number(expense.amount || 0));
+    });
+    return Array.from(totals.entries())
+      .map(([category, amount]) => ({
+        category,
+        amount,
+        percent: visibleTotal > 0 ? Math.round((amount / visibleTotal) * 100) : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [expenses, visibleTotal]);
+
+  const largestCategory = categoryBreakdown[0];
+  const dailyAverage = summary.totalMonth / Math.max(1, new Date().getDate());
 
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const today = new Date().toISOString().split('T')[0];
-      const monthStr = today.substring(0, 7);
-      
-      const [all, stats] = await Promise.all([
-        window.electronAPI?.expenses?.getAll(filter === "TODAY" ? { date: today } : (filter === "MONTH" ? { date: monthStr } : {})),
-        window.electronAPI?.reports?.getDashboardStats()
+      const today = localDate();
+      const monthStr = today.slice(0, 7);
+      const listFilter =
+        filter === "TODAY"
+          ? { date: today }
+          : filter === "WEEK"
+            ? { startDate: startOfWeek(), endDate: today }
+            : filter === "MONTH"
+              ? { date: monthStr }
+              : {};
+
+      const [all, stats, monthExpenses, todayExpenses] = await Promise.all([
+        window.electronAPI?.expenses?.getAll(listFilter),
+        window.electronAPI?.reports?.getDashboardStats(),
+        window.electronAPI?.expenses?.getAll({ date: monthStr }),
+        window.electronAPI?.expenses?.getAll({ date: today }),
       ]);
 
-      const monthExpenses = await window.electronAPI?.expenses?.getAll({ date: monthStr });
-      const monthTotal = monthExpenses?.reduce((sum: number, e: any) => sum + e.amount, 0) || 0;
-      const todayTotal = all?.reduce((sum: number, e: any) => sum + e.amount, 0) || 0;
+      const normalized = (all || []).map((expense: any) => ({
+        ...expense,
+        category: expense.category || "MISCELLANEOUS",
+        amount: Number(expense.amount || 0),
+      }));
+      const monthTotal = (monthExpenses || []).reduce((sum: number, expense: any) => sum + Number(expense.amount || 0), 0);
+      const todayTotal = (todayExpenses || []).reduce((sum: number, expense: any) => sum + Number(expense.amount || 0), 0);
 
-      setExpenses(all || []);
+      setExpenses(normalized);
       setSummary({
         totalToday: todayTotal,
         totalMonth: monthTotal,
-        profitToday: (stats?.kpis?.revenue || 0) - todayTotal
+        profitToday: Number(stats?.kpis?.revenue || 0) - todayTotal,
       });
     } catch (err) {
       console.error(err);
@@ -74,31 +208,24 @@ export default function Expenses() {
     loadData();
   }, [filter]);
 
-  // Form State
-  const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
-  const [newCategory, setNewCategory] = useState<ExpenseCategory>("OTHER");
-  const [newDesc, setNewDesc] = useState("");
-  const [newAmount, setNewAmount] = useState("");
+  const handleAddExpense = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!newAmount || !newDesc.trim()) return;
 
-  const handleAddExpense = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newAmount || !newDesc) return;
-    
     try {
       const res = await window.electronAPI?.expenses?.create({
         date: newDate,
         category: newCategory,
-        description: newDesc,
+        description: newDesc.trim(),
         amount: Number(newAmount),
-        userId: "admin"
       });
-      
+
       if (res?.success) {
         setNewDesc("");
         setNewAmount("");
         loadData();
       } else {
-        alert("Failed to save expense: " + res?.error);
+        alert("Failed to save expense: " + (res?.error || "Unknown error"));
       }
     } catch (err) {
       alert("Error saving expense");
@@ -106,34 +233,28 @@ export default function Expenses() {
   };
 
   const handleDeleteExpense = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this expense?")) return;
-    try {
-      const res = await window.electronAPI?.expenses?.remove(id);
-      if (res?.success) {
-        loadData();
-      }
-    } catch (err) {
-      alert("Error deleting expense");
-    }
+    const managerPin = prompt("Enter manager PIN to delete this expense");
+    if (!managerPin) return;
+    const reason = prompt("Reason for deleting this expense");
+    if (!reason) return;
+    const res = await window.electronAPI?.expenses?.remove(id, { managerPin, reason });
+    if (res?.success) loadData();
+    else alert(res?.error || "Could not delete expense");
   };
 
   const exportExpenses = async (format: "excel" | "pdf") => {
-    const today = new Date().toISOString().split('T')[0];
-    const startDate = filter === "MONTH" ? today.substring(0, 7) + "-01" : filter === "ALL" ? "2000-01-01" : today;
+    const today = localDate();
+    const startDate = filter === "MONTH" ? `${today.slice(0, 7)}-01` : filter === "ALL" ? "2000-01-01" : filter === "WEEK" ? startOfWeek() : today;
     const result = await window.electronAPI?.reports?.exportReport({ type: "expense-report", format, params: { startDate, endDate: today } });
     if (!result?.success && result?.reason !== "canceled") alert(result?.error || "Export failed");
   };
-
-  const totalDisplay = summary.totalToday;
-  const totalMonth = summary.totalMonth;
-  const estimatedProfit = summary.profitToday;
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto animate-slide-up">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Expenses</h1>
-          <p className="text-text-secondary mt-1">Manage shop operations and purchases.</p>
+          <h1 className="text-2xl font-bold text-text-primary">Expense Dashboard</h1>
+          <p className="text-text-secondary mt-1">Track shop costs, bills, salaries, and profit leakage.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => exportExpenses("excel")} className="btn-secondary flex items-center gap-2"><FileText className="w-4 h-4" /> Excel</button>
@@ -141,85 +262,51 @@ export default function Expenses() {
         </div>
       </div>
 
-      {/* TOP CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="card p-5 relative overflow-hidden">
-          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-danger/5"></div>
-          <div className="relative">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center">
-                <TrendingDown className="w-5 h-5 text-danger" />
-              </div>
-              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Today's Expenses</p>
-            </div>
-            <p className="text-3xl font-bold text-danger font-mono">{toMoney(totalDisplay)}</p>
-          </div>
-        </div>
-        <div className="card p-5 relative overflow-hidden">
-          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-warning/5"></div>
-          <div className="relative">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-warning/10 flex items-center justify-center">
-                <Receipt className="w-5 h-5 text-warning" />
-              </div>
-              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">This Month</p>
-            </div>
-            <p className="text-3xl font-bold text-warning font-mono">{toMoney(totalMonth)}</p>
-          </div>
-        </div>
-        <div className="card p-5 relative overflow-hidden">
-          <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full bg-success/5"></div>
-          <div className="relative">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center">
-                <Wallet className="w-5 h-5 text-success" />
-              </div>
-              <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">Estimated Profit</p>
-            </div>
-            <p className="text-3xl font-bold text-success font-mono">{toMoney(estimatedProfit)}</p>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+        <StatCard icon={TrendingDown} label="Today Expense" value={toMoney(summary.totalToday)} tone="danger" />
+        <StatCard icon={Receipt} label="This Month" value={toMoney(summary.totalMonth)} tone="warning" />
+        <StatCard icon={Wallet} label="After Expense Today" value={toMoney(summary.profitToday)} tone={summary.profitToday >= 0 ? "success" : "danger"} />
+        <StatCard icon={BarChart3} label="Daily Avg This Month" value={toMoney(dailyAverage)} tone="primary" />
+        <StatCard icon={ShoppingBag} label="Biggest Cost" value={largestCategory ? categoryLabel(largestCategory.category) : "No data"} hint={largestCategory ? toMoney(largestCategory.amount) : ""} tone="accent" />
       </div>
 
-      {/* ADD EXPENSE FORM */}
       <form onSubmit={handleAddExpense} className="card overflow-hidden">
         <div className="p-4 border-b border-surface-4 bg-surface-2/70">
           <h2 className="font-bold text-sm flex items-center gap-2">
-            <Plus className="w-4 h-4 text-primary" /> Quick Add Expense
+            <Plus className="w-4 h-4 text-primary" /> Add Expense
           </h2>
         </div>
-        <div className="p-4 flex flex-col md:flex-row gap-3 items-end">
-          <div className="w-full md:w-40">
+        <div className="p-4 grid grid-cols-1 md:grid-cols-[150px_220px_1fr_150px_auto] gap-3 items-end">
+          <div>
             <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Date</label>
-            <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="input py-2.5" required />
+            <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} className="input py-2.5" required />
           </div>
-          <div className="w-full md:w-48">
+          <div>
             <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Category</label>
-            <select value={newCategory} onChange={e => setNewCategory(e.target.value as ExpenseCategory)} className="input py-2.5">
-              {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
+            <select value={newCategory} onChange={(e) => setNewCategory(e.target.value as ExpenseCategory)} className="input py-2.5">
+              {Object.entries(CATEGORY_LABELS).map(([key, value]) => (
+                <option key={key} value={key}>{value}</option>
               ))}
             </select>
           </div>
-          <div className="w-full flex-1">
+          <div>
             <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Description</label>
-            <input type="text" value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="e.g., Bought 500kg milk from Ali" className="input py-2.5" required />
+            <input type="text" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="e.g., shopping bags, washing powder, gas bill" className="input py-2.5" required />
           </div>
-          <div className="w-full md:w-40">
+          <div>
             <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Amount (Rs)</label>
-            <input type="number" value={newAmount} onChange={e => setNewAmount(e.target.value)} placeholder="0" className="input py-2.5 font-mono" required />
+            <input type="number" min="1" step="0.01" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} placeholder="0" className="input py-2.5 font-mono" required />
           </div>
-          <button type="submit" className="btn-primary w-full md:w-auto h-[42px] flex items-center justify-center gap-2 whitespace-nowrap">
+          <button type="submit" className="btn-primary h-[42px] px-5 flex items-center justify-center gap-2 whitespace-nowrap">
             <Plus className="w-4 h-4" /> Save
           </button>
         </div>
       </form>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* MAIN LIST */}
-        <div className="lg:col-span-3 card overflow-hidden">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-6">
+        <div className="card overflow-hidden">
           <div className="flex border-b border-surface-4 bg-surface-2/50 overflow-x-auto">
-            {["TODAY", "WEEK", "MONTH", "ALL"].map(tab => (
+            {["TODAY", "WEEK", "MONTH", "ALL"].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setFilter(tab as any)}
@@ -232,104 +319,132 @@ export default function Expenses() {
               </button>
             ))}
           </div>
-          
+
           <div className="overflow-x-auto">
             {isLoading ? (
-               <div className="p-12 flex justify-center"><div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div></div>
+              <div className="p-12 flex justify-center"><div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" /></div>
             ) : (
-            <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead className="bg-surface-3 text-text-secondary uppercase text-[10px] tracking-wider font-semibold border-b border-surface-4">
-                <tr>
-                  <th className="px-4 py-3">Date</th>
-                  <th className="px-4 py-3">Category</th>
-                  <th className="px-4 py-3">Description</th>
-                  <th className="px-4 py-3 text-right">Amount</th>
-                  <th className="px-4 py-3">Added By</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-4">
-                {expenses.map(exp => (
-                  <tr key={exp.id} className="hover:bg-surface-3/50 transition-colors">
-                    <td className="px-4 py-3 text-text-secondary text-xs">{new Date(exp.date).toLocaleDateString()}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold border", CATEGORY_COLORS[exp.category])}>
-                        {CATEGORY_LABELS[exp.category]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-text-primary font-medium">{exp.description}</td>
-                    <td className="px-4 py-3 font-mono font-bold text-danger text-right">{toMoney(exp.amount)}</td>
-                    <td className="px-4 py-3 text-text-secondary text-xs">{exp.addedBy || "Admin"}</td>
-                    <td className="px-4 py-3 text-right space-x-2">
-                      <button className="p-1.5 text-text-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit">
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button 
-                        className="p-1.5 text-text-secondary hover:text-danger hover:bg-danger/10 rounded transition-colors" title="Delete"
-                        onClick={() => handleDeleteExpense(exp.id)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {expenses.length === 0 && (
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-surface-3 text-text-secondary uppercase text-[10px] tracking-wider font-semibold border-b border-surface-4">
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-text-secondary">
-                      <FileText className="w-14 h-14 mx-auto mb-3 opacity-20" />
-                      <p className="font-bold text-text-primary">No expenses found</p>
-                      <p className="text-sm mt-1">Add your first expense using the form above.</p>
-                    </td>
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Category</th>
+                    <th className="px-4 py-3">Description</th>
+                    <th className="px-4 py-3 text-right">Amount</th>
+                    <th className="px-4 py-3">Added By</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
-                )}
-                {expenses.length > 0 && (
-                  <tr className="bg-surface-3 font-bold">
-                    <td colSpan={3} className="px-4 py-3 text-right">Total:</td>
-                    <td className="px-4 py-3 font-mono text-danger text-right">{toMoney(expenses.reduce((s, e) => s + e.amount, 0))}</td>
-                    <td colSpan={2}></td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-surface-4">
+                  {expenses.map((expense) => (
+                    <tr key={expense.id} className="hover:bg-surface-3/50 transition-colors">
+                      <td className="px-4 py-3 text-text-secondary text-xs">
+                        <span className="inline-flex items-center gap-1"><CalendarDays className="w-3 h-3" />{displayDate(expense.expense_date || expense.date)}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold border", CATEGORY_COLORS[expense.category] || CATEGORY_COLORS.MISCELLANEOUS)}>
+                          {categoryLabel(expense.category)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-text-primary font-medium max-w-[360px] truncate">{expense.description}</td>
+                      <td className="px-4 py-3 font-mono font-bold text-danger text-right">{toMoney(Number(expense.amount || 0))}</td>
+                      <td className="px-4 py-3 text-text-secondary text-xs">{expense.addedBy || expense.created_by_id || "Admin"}</td>
+                      <td className="px-4 py-3 text-right space-x-2">
+                        <button className="p-1.5 text-text-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit">
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          className="p-1.5 text-text-secondary hover:text-danger hover:bg-danger/10 rounded transition-colors"
+                          title="Delete"
+                          onClick={() => handleDeleteExpense(expense.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {expenses.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-12 text-center text-text-secondary">
+                        <FileText className="w-14 h-14 mx-auto mb-3 opacity-20" />
+                        <p className="font-bold text-text-primary">No expenses found</p>
+                        <p className="text-sm mt-1">Add an expense above or change the filter.</p>
+                      </td>
+                    </tr>
+                  )}
+                  {expenses.length > 0 && (
+                    <tr className="bg-surface-3 font-bold">
+                      <td colSpan={3} className="px-4 py-3 text-right">Visible Total:</td>
+                      <td className="px-4 py-3 font-mono text-danger text-right">{toMoney(visibleTotal)}</td>
+                      <td colSpan={2} />
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
 
-        {/* SUMMARY BAR */}
-        <div className="card overflow-hidden h-max">
-          <div className="p-4 border-b border-surface-4 bg-surface-2/70">
-            <h3 className="font-bold text-sm">Category Breakdown</h3>
-          </div>
-          <div className="p-5 space-y-4">
-            {Object.entries(CATEGORY_LABELS).map(([k, label]) => {
-              const catAmount = expenses.filter(e => e.category === k).reduce((s, e) => s + e.amount, 0);
-              if (catAmount === 0) return null;
-              const visibleTotal = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-              const percent = visibleTotal > 0 ? Math.round((catAmount / visibleTotal) * 100) : 0;
-              
-              // Get the specific color for the progress bar based on category
-              let bgClass = "bg-gray-500";
-              if (k === "MILK_PURCHASE") bgClass = "bg-blue-500";
-              if (k === "SALARY") bgClass = "bg-purple-500";
-              if (k === "ELECTRICITY") bgClass = "bg-yellow-500";
-              if (k === "FUEL") bgClass = "bg-orange-500";
-              if (k === "RENT") bgClass = "bg-indigo-500";
-
-              return (
-                <div key={k}>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="font-medium text-text-primary">{label}</span>
-                    <span className="font-mono text-text-secondary">{toMoney(catAmount)} ({percent}%)</span>
+        <div className="space-y-4">
+          <div className="card overflow-hidden">
+            <div className="p-4 border-b border-surface-4 bg-surface-2/70">
+              <h3 className="font-bold text-sm">Cost Breakdown</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              {categoryBreakdown.map(({ category, amount, percent }) => (
+                <div key={category}>
+                  <div className="flex justify-between text-xs mb-1 gap-3">
+                    <span className="font-medium text-text-primary truncate">{categoryLabel(category)}</span>
+                    <span className="font-mono text-text-secondary shrink-0">{toMoney(amount)} ({percent}%)</span>
                   </div>
                   <div className="w-full bg-surface-4 rounded-full h-2 overflow-hidden">
-                    <div className={cn("h-full rounded-full", bgClass)} style={{ width: `${percent}%` }} />
+                    <div className={cn("h-full rounded-full", BAR_COLORS[category] || "bg-gray-500")} style={{ width: `${percent}%` }} />
                   </div>
                 </div>
-              );
-            })}
+              ))}
+              {categoryBreakdown.length === 0 && <p className="text-sm text-text-secondary">No expense data for this filter.</p>}
+            </div>
+          </div>
+
+          <div className="card p-5 space-y-3">
+            <h3 className="font-bold text-sm">Owner Notes</h3>
+            <Insight icon={ShoppingBag} text="Shopping bags are tracked separately because they quietly eat margin on small sales." />
+            <Insight icon={Zap} text="Utility bills are split into electricity, WASA, and gas so monthly pressure is visible." />
+            <Insight icon={Flame} text="If one category crosses 35% of visible expense, review supplier price or wastage." />
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function StatCard({ icon: Icon, label, value, hint, tone }: { icon: any; label: string; value: string; hint?: string; tone: "danger" | "warning" | "success" | "primary" | "accent" }) {
+  const toneClasses: Record<string, string> = {
+    danger: "text-danger bg-danger/10",
+    warning: "text-warning bg-warning/10",
+    success: "text-success bg-success/10",
+    primary: "text-primary bg-primary/10",
+    accent: "text-accent bg-accent/10",
+  };
+  return (
+    <div className="card p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", toneClasses[tone])}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">{label}</p>
+      </div>
+      <p className="text-2xl font-bold text-text-primary font-mono truncate">{value}</p>
+      {hint ? <p className="text-xs text-text-secondary mt-1 font-mono">{hint}</p> : null}
+    </div>
+  );
+}
+
+function Insight({ icon: Icon, text }: { icon: any; text: string }) {
+  return (
+    <div className="flex gap-3 text-sm text-text-secondary">
+      <Icon className="w-4 h-4 mt-0.5 text-primary shrink-0" />
+      <p>{text}</p>
     </div>
   );
 }

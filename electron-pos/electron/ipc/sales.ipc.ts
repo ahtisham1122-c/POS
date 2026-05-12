@@ -404,7 +404,11 @@ export function registerSalesIPC() {
         }
 
         const quantity = requirePositiveNumber(item.quantity, `${product.name} quantity`);
-        const unitPrice = resolveSaleUnitPrice(product, dailyRate);
+        const fallbackUnitPrice = resolveSaleUnitPrice(product, dailyRate);
+        const cartUnitPrice = Number(item.sellingPrice ?? item.unitPrice ?? item.price ?? 0);
+        // Save the exact price the cashier saw in the cart. Daily-rate/product
+        // lookup is only a fallback so receipts/history/accounting cannot drift.
+        const unitPrice = roundMoney(cartUnitPrice > 0 ? cartUnitPrice : fallbackUnitPrice);
         if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
           throw new Error(`${product.name} does not have a valid selling price`);
         }

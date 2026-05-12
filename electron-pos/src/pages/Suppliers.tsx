@@ -119,6 +119,7 @@ export default function Suppliers() {
   const [reportStart, setReportStart] = useState(() => new Date().toISOString().slice(0, 8) + "01");
   const [reportEnd, setReportEnd] = useState(() => new Date().toISOString().slice(0, 8) + "10");
   const [statement, setStatement] = useState<any>(null);
+  const [statementPrintMode, setStatementPrintMode] = useState<"SUMMARY" | "DETAIL">("DETAIL");
 
   const [supplierForm, setSupplierForm] = useState({
     name: "",
@@ -295,6 +296,11 @@ export default function Suppliers() {
     setStatement(null);
     const result = await window.electronAPI?.suppliers?.getCycleStatement({ supplierId: selectedSupplierId, startDate: reportStart, endDate: reportEnd });
     setStatement(result);
+  }
+
+  function printStatement(mode: "SUMMARY" | "DETAIL") {
+    setStatementPrintMode(mode);
+    setTimeout(() => window.print(), 80);
   }
 
   async function exportGlobalCycleReport(format: "excel" | "pdf") {
@@ -493,28 +499,31 @@ export default function Suppliers() {
                          <button onClick={() => exportGlobalCycleReport("excel")} className="btn-secondary h-9 px-3 text-xs flex items-center gap-1">
                            <Download className="w-3 h-3"/> All Farms (Excel)
                          </button>
-                         <button onClick={() => window.print()} className="btn-primary h-9 px-3 text-xs flex items-center gap-1" disabled={!statement}>
-                           <Printer className="w-3 h-3"/> Print Statement
+                         <button onClick={() => printStatement("SUMMARY")} className="btn-secondary h-9 px-3 text-xs flex items-center gap-1" disabled={!statement}>
+                           <Printer className="w-3 h-3"/> Summary Slip
+                         </button>
+                         <button onClick={() => printStatement("DETAIL")} className="btn-primary h-9 px-3 text-xs flex items-center gap-1" disabled={!statement}>
+                           <Printer className="w-3 h-3"/> Detailed
                          </button>
                       </div>
                     </div>
 
                     {statement ? (
-                      <div className="card flex-1 overflow-y-auto p-8 bg-white text-black print-target">
-                        <div className="text-center border-b-2 border-black pb-4 mb-4">
-                          <h1 className="text-2xl font-black">GUJJAR MILK SHOP</h1>
-                          <p className="text-sm">Supplier Milk Statement</p>
-                          <p className="text-sm mt-1">{statement.startDate} to {statement.endDate}</p>
+                      <div className="card flex-1 overflow-y-auto p-4 bg-white text-black print-target mx-auto w-full max-w-[380px] text-[11px] leading-tight">
+                        <div className="text-center border-b-2 border-black pb-2 mb-3">
+                          <h1 className="text-lg font-black tracking-wide">GUJJAR MILK SHOP</h1>
+                          <p className="text-xs font-bold">{statementPrintMode === "SUMMARY" ? "Supplier Summary Slip" : "Supplier Milk Statement"}</p>
+                          <p className="text-[11px] mt-1">{statement.startDate} to {statement.endDate}</p>
                         </div>
 
                         {/* Supplier identity block — owner asked for the supplier
                             name to appear prominently on every printed statement
                             so there's no confusion when stacking multiple farms'
                             sheets at month-end reconciliation. */}
-                        <div className="border border-black rounded-md px-4 py-3 mb-5 flex justify-between items-start gap-4">
+                        <div className="border border-black px-3 py-2 mb-3 flex justify-between items-start gap-3">
                           <div>
                             <p className="text-[10px] uppercase tracking-wider text-gray-600">Supplier</p>
-                            <p className="text-lg font-black leading-tight">
+                            <p className="text-base font-black leading-tight">
                               {statement.supplier?.name || "Unnamed Supplier"}
                             </p>
                             <p className="text-xs text-gray-700 mt-0.5">
@@ -533,64 +542,76 @@ export default function Suppliers() {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-4 gap-2 text-center mb-6">
+                        <div className="grid grid-cols-2 gap-2 text-center mb-3">
                           <StatementBox label="Opening Balance" value={toMoney(statement.openingBalance)} />
                           <StatementBox label="Milk Amount" value={toMoney(statement.collectionAmount)} />
                           <StatementBox label="Paid" value={toMoney(statement.paidAmount)} />
                           <StatementBox label="Closing Balance" value={toMoney(statement.closingBalance)} strong />
+                          <StatementBox label="Total Milk" value={`${Number(statement.totalQuantity || 0).toFixed(2)} kg`} />
+                          <StatementBox label="Avg Rate" value={toMoney(Number(statement.collectionAmount || 0) / Math.max(1, Number(statement.totalQuantity || 0)))} />
                         </div>
 
-                        <h3 className="font-bold text-sm border-b border-black pb-1 mb-2">Milk Collections</h3>
-                        <table className="w-full text-xs border-collapse mb-6">
-                          <thead>
-                            <tr className="border-b border-black">
-                              <th className="text-left py-1">Date</th>
-                              <th className="text-left py-1">Shift</th>
-                              <th className="text-left py-1">Type</th>
-                              <th className="text-right py-1">Qty (kg)</th>
-                              <th className="text-right py-1">Rate</th>
-                              <th className="text-right py-1">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {statement.collections.map((row: any) => (
-                              <tr key={row.id} className="border-b border-gray-300">
-                                <td className="py-1">{row.collection_date}</td>
-                                <td className="py-1">{row.shift}</td>
-                                <td className="py-1">{row.milk_type || "MIXED"}</td>
-                                <td className="py-1 text-right">{Number(row.quantity).toFixed(2)}</td>
-                                <td className="py-1 text-right">{toMoney(row.rate)}</td>
-                                <td className="py-1 text-right font-bold">{toMoney(row.total_amount)}</td>
-                              </tr>
-                            ))}
-                            {statement.collections.length === 0 && (
-                              <tr><td colSpan={6} className="py-4 text-center">No collections in this period.</td></tr>
-                            )}
-                          </tbody>
-                        </table>
+                        <div className="border-t border-black pt-2 text-[11px] mb-3">
+                          <div className="flex justify-between"><span>Morning milk</span><b>{Number(statement.morningQuantity || 0).toFixed(2)} kg</b></div>
+                          <div className="flex justify-between"><span>Evening milk</span><b>{Number(statement.eveningQuantity || 0).toFixed(2)} kg</b></div>
+                          <div className="flex justify-between"><span>Cow / Buffalo</span><b>{Number(statement.cowQuantity || 0).toFixed(2)} / {Number(statement.buffaloQuantity || 0).toFixed(2)} kg</b></div>
+                        </div>
 
-                        <h3 className="font-bold text-sm border-b border-black pb-1 mb-2">Payments</h3>
-                        <table className="w-full text-xs border-collapse">
-                          <thead>
-                            <tr className="border-b border-black">
-                              <th className="text-left py-1">Date</th>
-                              <th className="text-left py-1">Notes</th>
-                              <th className="text-right py-1">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {statement.payments.map((row: any) => (
-                              <tr key={row.id} className="border-b border-gray-300">
-                                <td className="py-1">{String(row.payment_date).slice(0, 10)}</td>
-                                <td className="py-1">{row.notes || "-"}</td>
-                                <td className="py-1 text-right font-bold">{toMoney(row.amount)}</td>
-                              </tr>
-                            ))}
-                            {statement.payments.length === 0 && (
-                              <tr><td colSpan={3} className="py-4 text-center">No payments in this period.</td></tr>
-                            )}
-                          </tbody>
-                        </table>
+                        {statementPrintMode === "DETAIL" && (
+                          <>
+                            <h3 className="font-bold text-xs border-b border-black pb-1 mb-2">Milk Collections</h3>
+                            <table className="w-full text-[10px] border-collapse mb-4">
+                              <thead>
+                                <tr className="border-b border-black">
+                                  <th className="text-left py-1">Date</th>
+                                  <th className="text-left py-1">Shift</th>
+                                  <th className="text-left py-1">Type</th>
+                                  <th className="text-right py-1">Qty</th>
+                                  <th className="text-right py-1">Rate</th>
+                                  <th className="text-right py-1">Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {statement.collections.map((row: any) => (
+                                  <tr key={row.id} className="border-b border-gray-300">
+                                    <td className="py-1">{String(row.collection_date).slice(5)}</td>
+                                    <td className="py-1">{String(row.shift || "").slice(0, 1)}</td>
+                                    <td className="py-1">{String(row.milk_type || "MIXED").slice(0, 3)}</td>
+                                    <td className="py-1 text-right">{Number(row.quantity).toFixed(2)}</td>
+                                    <td className="py-1 text-right">{Number(row.rate || 0).toFixed(0)}</td>
+                                    <td className="py-1 text-right font-bold">{toMoney(row.total_amount)}</td>
+                                  </tr>
+                                ))}
+                                {statement.collections.length === 0 && (
+                                  <tr><td colSpan={6} className="py-4 text-center">No collections in this period.</td></tr>
+                                )}
+                              </tbody>
+                            </table>
+
+                            <h3 className="font-bold text-xs border-b border-black pb-1 mb-2">Payments</h3>
+                            <table className="w-full text-[10px] border-collapse">
+                              <thead>
+                                <tr className="border-b border-black">
+                                  <th className="text-left py-1">Date</th>
+                                  <th className="text-left py-1">Notes</th>
+                                  <th className="text-right py-1">Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {statement.payments.map((row: any) => (
+                                  <tr key={row.id} className="border-b border-gray-300">
+                                    <td className="py-1">{String(row.payment_date).slice(5, 10)}</td>
+                                    <td className="py-1">{row.notes || "-"}</td>
+                                    <td className="py-1 text-right font-bold">{toMoney(row.amount)}</td>
+                                  </tr>
+                                ))}
+                                {statement.payments.length === 0 && (
+                                  <tr><td colSpan={3} className="py-4 text-center">No payments in this period.</td></tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </>
+                        )}
                       </div>
                     ) : (
                       <div className="flex-1 flex items-center justify-center text-text-secondary">
@@ -844,9 +865,9 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
 
 function StatementBox({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
-    <div className="border border-black p-2 bg-gray-50/50">
-      <p className="text-[10px] uppercase text-gray-600">{label}</p>
-      <p className={cn("font-bold text-black", strong && "text-base")}>{value}</p>
+    <div className="border border-black p-1.5 bg-white">
+      <p className="text-[9px] uppercase text-gray-600 leading-none">{label}</p>
+      <p className={cn("font-bold text-black font-mono text-[11px]", strong && "text-sm")}>{value}</p>
     </div>
   );
 }

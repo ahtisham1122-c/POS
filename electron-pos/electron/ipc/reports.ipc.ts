@@ -690,12 +690,50 @@ export function registerReportsIPC() {
     const revenue = Number(todayKpis?.revenue || 0);
     const milkKg = Number(todayMilkQty?.qty || 0);
     const yogurtKg = Number(todayYogurtQty?.qty || 0);
+    const todayRefunds = db.prepare(`
+      SELECT COALESCE(SUM(refund_amount), 0) AS refunds, COUNT(*) AS refundCount
+      FROM returns r
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+    `).get(...scopeParams(scope)) as any;
+    const todayExpenses = db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) AS expenses
+      FROM expenses e
+      WHERE ${shiftTableScope('e', 'expense_date', scope)}
+    `).get(...scopeParams(scope)) as any;
+    const todayProfit = db.prepare(`
+      SELECT
+        COALESCE(SUM(si.line_total), 0) AS itemRevenue,
+        COALESCE(SUM(si.quantity * si.cost_price), 0) AS itemCost,
+        COALESCE(SUM(si.line_total - (si.quantity * si.cost_price)), 0) AS grossProfit
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+    `).get(...saleParams) as any;
+    const tenderRows = db.prepare(`
+      SELECT sp.method, COALESCE(SUM(sp.amount), 0) AS amount, COUNT(DISTINCT sp.sale_id) AS bills
+      FROM split_payments sp
+      JOIN sales s ON s.id = sp.sale_id
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      GROUP BY sp.method
+      ORDER BY amount DESC
+    `).all(...saleParams) as any[];
 
     // Avoid division-by-zero on a fresh shift (no sales yet).
     const safeBills = bills > 0 ? bills : 1;
+    const refunds = Number(todayRefunds?.refunds || 0);
+    const expensesToday = Number(todayExpenses?.expenses || 0);
+    const grossProfit = Number(todayProfit?.grossProfit || 0);
+    const netSales = Number((revenue - refunds).toFixed(2));
     const today_kpis = {
       bills,
       revenue,
+      refunds,
+      refundCount: Number(todayRefunds?.refundCount || 0),
+      netSales,
+      expenses: expensesToday,
+      estimatedGrossProfit: Number(grossProfit.toFixed(2)),
+      estimatedNetProfit: Number((grossProfit - expensesToday - refunds).toFixed(2)),
+      marginPct: revenue > 0 ? Number(((grossProfit / revenue) * 100).toFixed(1)) : 0,
       avgBill: Number((revenue / safeBills).toFixed(2)),
       avgMilkKgPerBill: Number((milkKg / safeBills).toFixed(3)),
       avgYogurtKgPerBill: Number((yogurtKg / safeBills).toFixed(3)),
@@ -703,6 +741,13 @@ export function registerReportsIPC() {
       yogurtKg: Number(yogurtKg.toFixed(3)),
       combinedKg: Number((milkKg + yogurtKg).toFixed(3))
     };
+    const tenderTotal = tenderRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    const tenderMix = tenderRows.map((row) => ({
+      method: row.method,
+      amount: Number(row.amount || 0),
+      bills: Number(row.bills || 0),
+      pct: tenderTotal > 0 ? Number(((Number(row.amount || 0) / tenderTotal) * 100).toFixed(1)) : 0
+    }));
 
     // ---- Hourly breakdown (today) ----
     // sale_date is stored as UTC ISO (`new Date().toISOString()`), so without
@@ -726,6 +771,9 @@ export function registerReportsIPC() {
       bills: Number(hourlyMap.get(h)?.bills || 0),
       revenue: Number(hourlyMap.get(h)?.revenue || 0)
     }));
+    const activeHours = hourly.filter((row) => row.bills > 0);
+    const busiestHour = activeHours.reduce((best, row) => !best || row.bills > best.bills ? row : best, null as any);
+    const quietestHour = activeHours.reduce((best, row) => !best || row.bills < best.bills ? row : best, null as any);
 
     // ---- 30-day trend (window ends on the picked `today`) ----
     // Two changes vs the old query:
@@ -794,13 +842,95 @@ export function registerReportsIPC() {
         yogurtKg: Number(row?.yogurtKg || 0)
       });
     }
+    const bestDay = dailyTrend.reduce((best, row) => !best || row.revenue > best.revenue ? row : best, null as any);
+
+    const topProducts = db.prepare(`
+      SELECT
+        si.product_id as productId,
+        si.product_name as productName,
+        si.unit,
+        COALESCE(p.category, 'OTHER') as category,
+        COALESCE(SUM(si.quantity), 0) as quantity,
+        COALESCE(SUM(si.line_total), 0) as revenue,
+        COALESCE(SUM(si.quantity * si.cost_price), 0) as cost,
+        COALESCE(SUM(si.line_total - (si.quantity * si.cost_price)), 0) as grossProfit,
+        COUNT(DISTINCT s.id) as bills
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      GROUP BY si.product_id, si.product_name, si.unit, p.category
+      ORDER BY revenue DESC
+      LIMIT 10
+    `).all(trendStartIso, trendEndIso) as any[];
+
+    const categoryMix = db.prepare(`
+      SELECT
+        COALESCE(p.category, 'OTHER') as category,
+        COALESCE(SUM(si.line_total), 0) as revenue,
+        COALESCE(SUM(si.quantity), 0) as quantity,
+        COUNT(DISTINCT s.id) as bills
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      GROUP BY COALESCE(p.category, 'OTHER')
+      ORDER BY revenue DESC
+    `).all(trendStartIso, trendEndIso) as any[];
+
+    const expenseBreakdown = db.prepare(`
+      SELECT category, COALESCE(SUM(amount), 0) as amount, COUNT(*) as count
+      FROM expenses
+      WHERE substr(expense_date, 1, 10) >= ? AND substr(expense_date, 1, 10) < ?
+      GROUP BY category
+      ORDER BY amount DESC
+      LIMIT 8
+    `).all(trendStartIso, trendEndIso) as any[];
+
+    const customerRiskRow = db.prepare(`
+      SELECT
+        COUNT(*) as customersWithDues,
+        COALESCE(SUM(current_balance), 0) as totalDues,
+        COALESCE(SUM(CASE WHEN credit_limit > 0 AND current_balance > credit_limit THEN 1 ELSE 0 END), 0) as overLimitCount
+      FROM customers
+      WHERE is_active = 1 AND current_balance > 0
+    `).get() as any;
+    const topDues = db.prepare(`
+      SELECT id, code, name, phone, credit_limit, current_balance
+      FROM customers
+      WHERE is_active = 1 AND current_balance > 0
+      ORDER BY current_balance DESC
+      LIMIT 8
+    `).all() as any[];
+
+    const stockRisk = db.prepare(`
+      SELECT id, code, name, unit, stock, low_stock_threshold, selling_price, cost_price
+      FROM products
+      WHERE is_active = 1 AND stock <= low_stock_threshold
+      ORDER BY (stock - low_stock_threshold) ASC, name ASC
+      LIMIT 8
+    `).all() as any[];
 
     // ---- This week vs last week, this month vs last month ----
     const periodSummary = (since: string, until: string) => {
-      const row = db.prepare(`
+      const totals = db.prepare(`
         SELECT
           COUNT(s.id) AS bills,
-          COALESCE(SUM(s.grand_total), 0) AS revenue,
+          COALESCE(SUM(s.grand_total), 0) AS revenue
+        FROM sales s
+        LEFT JOIN shifts sh ON sh.id = s.shift_id
+        WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+          AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+          AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      `).get(since, until) as any;
+      const row = db.prepare(`
+        SELECT
           COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%milk%' THEN si.quantity ELSE 0 END), 0) AS milkKg,
           COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%yog%'  THEN si.quantity ELSE 0 END), 0) AS yogurtKg
         FROM sales s
@@ -810,14 +940,15 @@ export function registerReportsIPC() {
           AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
           AND s.status IN (${ACCOUNTING_SALE_STATUSES})
       `).get(since, until) as any;
-      const b = Number(row?.bills || 0);
+      const b = Number(totals?.bills || 0);
       const safeB = b > 0 ? b : 1;
+      const totalRevenue = Number(totals?.revenue || 0);
       return {
         bills: b,
-        revenue: Number(row?.revenue || 0),
+        revenue: totalRevenue,
         milkKg: Number(row?.milkKg || 0),
         yogurtKg: Number(row?.yogurtKg || 0),
-        avgBill: Number(((row?.revenue || 0) / safeB).toFixed(2)),
+        avgBill: Number((totalRevenue / safeB).toFixed(2)),
         avgMilkKgPerBill: Number(((row?.milkKg || 0) / safeB).toFixed(3)),
         avgYogurtKgPerBill: Number(((row?.yogurtKg || 0) / safeB).toFixed(3))
       };
@@ -844,12 +975,20 @@ export function registerReportsIPC() {
       thisMonth: periodSummary(ymd(startOfThisMonth), ymd(tomorrow)),
       lastMonth: periodSummary(ymd(startOfLastMonth), ymd(endOfLastMonth))
     };
+    const insights = [
+      busiestHour ? `Peak hour is ${String(busiestHour.hour).padStart(2, '0')}:00 with ${busiestHour.bills} bills.` : 'No peak hour yet because there are no sales in this period.',
+      bestDay ? `Best day in the selected window was ${bestDay.date} with Rs. ${Math.round(bestDay.revenue).toLocaleString('en-PK')} sales.` : 'No best day yet.',
+      Number(customerRiskRow?.totalDues || 0) > 0 ? `Khata dues are Rs. ${Math.round(Number(customerRiskRow.totalDues)).toLocaleString('en-PK')} across ${customerRiskRow.customersWithDues} customers.` : 'No active customer dues right now.',
+      stockRisk.length > 0 ? `${stockRisk.length} product(s) are at or below low-stock level.` : 'No low-stock risk found.'
+    ];
 
     return {
       reportDate: today,
       daysBack,
       today: today_kpis,
       hourly,
+      busiestHour,
+      quietestHour,
       dailyTrend: dailyTrend.map((row) => ({
         date: row.date,
         bills: Number(row.bills || 0),
@@ -859,6 +998,35 @@ export function registerReportsIPC() {
         combinedKg: Number((Number(row.milkKg || 0) + Number(row.yogurtKg || 0)).toFixed(3))
       })),
       compare,
+      tenderMix,
+      topProducts: topProducts.map((row) => ({
+        ...row,
+        quantity: Number(row.quantity || 0),
+        revenue: Number(row.revenue || 0),
+        cost: Number(row.cost || 0),
+        grossProfit: Number(row.grossProfit || 0),
+        marginPct: Number(row.revenue || 0) > 0 ? Number(((Number(row.grossProfit || 0) / Number(row.revenue || 0)) * 100).toFixed(1)) : 0,
+        bills: Number(row.bills || 0)
+      })),
+      categoryMix: categoryMix.map((row) => ({
+        category: row.category,
+        revenue: Number(row.revenue || 0),
+        quantity: Number(row.quantity || 0),
+        bills: Number(row.bills || 0)
+      })),
+      expenseBreakdown: expenseBreakdown.map((row) => ({
+        category: row.category,
+        amount: Number(row.amount || 0),
+        count: Number(row.count || 0)
+      })),
+      customerRisk: {
+        customersWithDues: Number(customerRiskRow?.customersWithDues || 0),
+        totalDues: Number(customerRiskRow?.totalDues || 0),
+        overLimitCount: Number(customerRiskRow?.overLimitCount || 0),
+        topDues
+      },
+      stockRisk,
+      insights,
       generatedAt: new Date().toISOString()
     };
   });

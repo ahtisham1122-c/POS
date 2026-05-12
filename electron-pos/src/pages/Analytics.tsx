@@ -9,13 +9,25 @@ import {
   Milk,
   CircleDollarSign,
   Clock,
-  Calendar
+  Calendar,
+  CreditCard,
+  Package,
+  AlertTriangle,
+  Wallet,
+  BarChart3
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
 type TodayKpis = {
   bills: number;
   revenue: number;
+  refunds?: number;
+  refundCount?: number;
+  netSales?: number;
+  expenses?: number;
+  estimatedGrossProfit?: number;
+  estimatedNetProfit?: number;
+  marginPct?: number;
   avgBill: number;
   avgMilkKgPerBill: number;
   avgYogurtKgPerBill: number;
@@ -57,6 +69,15 @@ type Analytics = {
     thisMonth: PeriodSummary;
     lastMonth: PeriodSummary;
   };
+  busiestHour?: HourPoint | null;
+  quietestHour?: HourPoint | null;
+  tenderMix?: Array<{ method: string; amount: number; bills: number; pct: number }>;
+  topProducts?: Array<{ productName: string; unit: string; category: string; quantity: number; revenue: number; grossProfit: number; marginPct: number; bills: number }>;
+  categoryMix?: Array<{ category: string; revenue: number; quantity: number; bills: number }>;
+  expenseBreakdown?: Array<{ category: string; amount: number; count: number }>;
+  customerRisk?: { customersWithDues: number; totalDues: number; overLimitCount: number; topDues: any[] };
+  stockRisk?: any[];
+  insights?: string[];
   generatedAt: string;
 };
 
@@ -154,7 +175,21 @@ export default function Analytics() {
     );
   }
 
-  const { today, hourly, dailyTrend, compare } = data;
+  const {
+    today,
+    hourly,
+    dailyTrend,
+    compare,
+    tenderMix = [],
+    topProducts = [],
+    categoryMix = [],
+    expenseBreakdown = [],
+    customerRisk,
+    stockRisk = [],
+    insights = [],
+    busiestHour,
+    quietestHour
+  } = data;
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto animate-slide-up">
@@ -265,6 +300,39 @@ export default function Analytics() {
         </div>
       </section>
 
+      {/* ---------- OWNER COMMAND CENTER ---------- */}
+      <section>
+        <h2 className="text-sm font-bold uppercase tracking-widest text-text-secondary mb-3">
+          Owner Command Center
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <KpiCard
+            icon={<Wallet className="w-5 h-5" />}
+            label="Net Sales"
+            value={rs(today.netSales ?? today.revenue)}
+            tone="success"
+          />
+          <KpiCard
+            icon={<TrendingUp className="w-5 h-5" />}
+            label="Est. Gross Profit"
+            value={rs(today.estimatedGrossProfit || 0)}
+            tone="primary"
+          />
+          <KpiCard
+            icon={<TrendingDown className="w-5 h-5" />}
+            label="Refunds"
+            value={rs(today.refunds || 0)}
+            tone="warning"
+          />
+          <KpiCard
+            icon={<BarChart3 className="w-5 h-5" />}
+            label="Est. Margin"
+            value={`${Number(today.marginPct || 0).toFixed(1)}%`}
+            tone="info"
+          />
+        </div>
+      </section>
+
       {/* ---------- HOURLY BREAKDOWN ---------- */}
       <section className="card overflow-hidden">
         <div className="p-5 border-b border-surface-4 bg-surface-2/70">
@@ -309,6 +377,63 @@ export default function Analytics() {
                 {h.hour % 3 === 0 ? formatHour(h.hour, true) : ""}
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="grid xl:grid-cols-3 gap-4">
+        <div className="card p-5 xl:col-span-1">
+          <h2 className="text-lg font-bold text-text-primary flex items-center gap-2 mb-4">
+            <CreditCard className="w-5 h-5 text-info" /> Payment Mix
+          </h2>
+          <div className="space-y-3">
+            {tenderMix.length === 0 ? (
+              <p className="text-sm text-text-secondary">No payments yet.</p>
+            ) : tenderMix.map((row) => (
+              <MetricBar
+                key={row.method}
+                label={row.method}
+                value={rs(row.amount)}
+                pct={row.pct}
+                sub={`${row.bills} bill${row.bills === 1 ? "" : "s"}`}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="card p-5 xl:col-span-2">
+          <h2 className="text-lg font-bold text-text-primary flex items-center gap-2 mb-4">
+            <Package className="w-5 h-5 text-success" /> Product Winners
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-text-secondary border-b border-surface-4">
+                  <th className="py-2 font-semibold">Product</th>
+                  <th className="py-2 text-right font-semibold">Qty</th>
+                  <th className="py-2 text-right font-semibold">Revenue</th>
+                  <th className="py-2 text-right font-semibold">Est. Profit</th>
+                  <th className="py-2 text-right font-semibold">Margin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topProducts.slice(0, 8).map((row) => (
+                  <tr key={`${row.productName}-${row.unit}`} className="border-b border-surface-4 last:border-0">
+                    <td className="py-2">
+                      <div className="font-semibold text-text-primary">{row.productName}</div>
+                      <div className="text-xs text-text-secondary">{row.category}</div>
+                    </td>
+                    <td className="py-2 text-right font-mono">{Number(row.quantity || 0).toFixed(2)} {row.unit}</td>
+                    <td className="py-2 text-right font-mono">{rs(row.revenue)}</td>
+                    <td className="py-2 text-right font-mono text-success">{rs(row.grossProfit)}</td>
+                    <td className="py-2 text-right font-mono">{Number(row.marginPct || 0).toFixed(1)}%</td>
+                  </tr>
+                ))}
+                {topProducts.length === 0 && (
+                  <tr><td colSpan={5} className="py-6 text-center text-text-secondary">No product sales yet.</td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -397,6 +522,79 @@ export default function Analytics() {
           current={compare.thisMonth}
           previous={compare.lastMonth}
         />
+      </section>
+
+      <section className="grid lg:grid-cols-3 gap-4">
+        <InsightPanel title="Business Insights" icon={<BarChart3 className="w-5 h-5 text-primary" />}>
+          {insights.map((item, index) => (
+            <li key={index} className="flex gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
+              <span>{item}</span>
+            </li>
+          ))}
+          {busiestHour && (
+            <li className="flex gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-success shrink-0" />
+              <span>Best staffing time: {formatHour(busiestHour.hour)}.</span>
+            </li>
+          )}
+          {quietestHour && (
+            <li className="flex gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-warning shrink-0" />
+              <span>Slowest active hour: {formatHour(quietestHour.hour)}.</span>
+            </li>
+          )}
+        </InsightPanel>
+
+        <InsightPanel title="Khata Risk" icon={<Users className="w-5 h-5 text-warning" />}>
+          <li>Total dues: <strong>{rs(customerRisk?.totalDues || 0)}</strong></li>
+          <li>Customers owing: <strong>{customerRisk?.customersWithDues || 0}</strong></li>
+          <li>Over limit: <strong>{customerRisk?.overLimitCount || 0}</strong></li>
+          {(customerRisk?.topDues || []).slice(0, 4).map((c: any) => (
+            <li key={c.id} className="flex justify-between gap-3">
+              <span className="truncate">{c.name}</span>
+              <strong>{rs(c.current_balance)}</strong>
+            </li>
+          ))}
+        </InsightPanel>
+
+        <InsightPanel title="Risk Monitor" icon={<AlertTriangle className="w-5 h-5 text-danger" />}>
+          <li>Low-stock items: <strong>{stockRisk.length}</strong></li>
+          {stockRisk.slice(0, 5).map((p: any) => (
+            <li key={p.id} className="flex justify-between gap-3">
+              <span className="truncate">{p.name}</span>
+              <strong>{Number(p.stock || 0).toFixed(2)} {p.unit}</strong>
+            </li>
+          ))}
+          {expenseBreakdown.length > 0 && (
+            <li className="pt-2 border-t border-surface-4">
+              Biggest expense: <strong>{expenseBreakdown[0].category}</strong> {rs(expenseBreakdown[0].amount)}
+            </li>
+          )}
+        </InsightPanel>
+      </section>
+
+      <section className="card p-5">
+        <h2 className="text-lg font-bold text-text-primary mb-4">Category Mix</h2>
+        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
+          {categoryMix.map((row) => {
+            const total = categoryMix.reduce((sum, item) => sum + Number(item.revenue || 0), 0);
+            const pct = total > 0 ? (Number(row.revenue || 0) / total) * 100 : 0;
+            return (
+              <div key={row.category} className="rounded-lg border border-surface-4 bg-surface-2/40 p-4">
+                <div className="flex justify-between gap-3">
+                  <span className="font-bold text-text-primary">{row.category}</span>
+                  <span className="font-mono text-success">{pct.toFixed(1)}%</span>
+                </div>
+                <div className="mt-2 text-2xl font-bold">{rs(row.revenue)}</div>
+                <div className="mt-1 text-xs text-text-secondary">{Number(row.quantity || 0).toFixed(2)} units/kg across {row.bills} bills</div>
+              </div>
+            );
+          })}
+          {categoryMix.length === 0 && (
+            <p className="text-sm text-text-secondary">No category sales yet.</p>
+          )}
+        </div>
       </section>
     </div>
   );
@@ -502,6 +700,58 @@ function CompareCard({
           delta={yogurtDelta}
         />
       </div>
+    </div>
+  );
+}
+
+function MetricBar({
+  label,
+  value,
+  pct,
+  sub
+}: {
+  label: string;
+  value: string;
+  pct: number;
+  sub?: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <div>
+          <div className="font-bold text-text-primary">{label}</div>
+          {sub && <div className="text-xs text-text-secondary">{sub}</div>}
+        </div>
+        <div className="text-right">
+          <div className="font-mono font-bold">{value}</div>
+          <div className="text-xs text-text-secondary">{Number(pct || 0).toFixed(1)}%</div>
+        </div>
+      </div>
+      <div className="mt-2 h-2 rounded-full bg-surface-3 overflow-hidden">
+        <div className="h-full rounded-full bg-info" style={{ width: `${Math.max(2, Math.min(100, pct || 0))}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function InsightPanel({
+  title,
+  icon,
+  children
+}: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="card p-5">
+      <h2 className="text-lg font-bold text-text-primary flex items-center gap-2 mb-4">
+        {icon}
+        {title}
+      </h2>
+      <ul className="space-y-2 text-sm text-text-secondary">
+        {children}
+      </ul>
     </div>
   );
 }

@@ -7,11 +7,29 @@ import { getCurrentUser, requireCurrentUser, requireManagerApproval } from './au
 import { logAudit } from '../audit/auditLog';
 import { getActiveBusinessDate, getOpenShift } from '../database/businessDay';
 
+function normalizeDateOnly(value: unknown) {
+  const raw = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) return raw.slice(0, 10);
+  return null;
+}
+
 export function registerExpensesIPC() {
   ipcMain.handle('expenses:getAll', (_event, filters?: any) => {
-    const date = filters?.date?.trim();
+    const date = String(filters?.date || '').trim();
+    const startDate = normalizeDateOnly(filters?.startDate);
+    const endDate = normalizeDateOnly(filters?.endDate);
+    if (startDate && endDate) {
+      return db.prepare(`
+        SELECT *
+        FROM expenses
+        WHERE substr(expense_date, 1, 10) >= ?
+        AND substr(expense_date, 1, 10) <= ?
+        ORDER BY expense_date DESC
+      `).all(startDate, endDate);
+    }
     if (date) {
-      return db.prepare('SELECT * FROM expenses WHERE expense_date LIKE ? ORDER BY expense_date DESC').all(`${date}%`);
+      return db.prepare('SELECT * FROM expenses WHERE substr(expense_date, 1, ?) = ? ORDER BY expense_date DESC').all(date.length, date);
     }
     return db.prepare('SELECT * FROM expenses ORDER BY expense_date DESC').all();
   });
@@ -22,7 +40,7 @@ export function registerExpensesIPC() {
       const now = new Date().toISOString();
       const code = `EXP-${Date.now()}`;
       const expenseId = crypto.randomUUID();
-      const expenseDate = data.date ? `${data.date}T00:00:00.000Z` : now;
+      const expenseDate = normalizeDateOnly(data.date) || getActiveBusinessDate(new Date(now));
       const amount = Number(data.amount || 0);
       const createdById = data.userId || getCurrentUser()?.id || 'system';
       const shift = getOpenShift();
@@ -69,12 +87,14 @@ export function registerExpensesIPC() {
       const now = new Date().toISOString();
       const oldAmount = Number(oldExpense.amount || 0);
       const nextAmount = Number(data.amount ?? oldExpense.amount);
+      const nextDate = normalizeDateOnly(data.date) || normalizeDateOnly(oldExpense.expense_date) || getActiveBusinessDate(new Date(now));
       if (nextAmount <= 0) return { success: false, error: 'Expense amount must be greater than zero' };
       db.prepare(`
         UPDATE expenses
-        SET category = ?, description = ?, amount = ?, updated_at = ?, synced = 0
+        SET expense_date = ?, category = ?, description = ?, amount = ?, updated_at = ?, synced = 0
         WHERE id = ?
       `).run(
+        nextDate,
         data.category ?? oldExpense.category,
         data.description ?? oldExpense.description,
         nextAmount,
@@ -83,6 +103,7 @@ export function registerExpensesIPC() {
       );
       createOutboxEntry('expenses', 'UPDATE', id, {
         id,
+        expense_date: nextDate,
         category: data.category ?? oldExpense.category,
         description: data.description ?? oldExpense.description,
         amount: nextAmount,
