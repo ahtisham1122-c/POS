@@ -185,6 +185,7 @@ export interface ElectronAPI {
     getOrCreateSession: (riderId: string) => Promise<any>;
     addPickup: (data: any) => Promise<any>;
     addReturn: (data: any) => Promise<any>;
+    updateEntry: (entryId: string, data: any) => Promise<any>;
     completeSession: (sessionId: string, notes?: string) => Promise<any>;
     getSession: (sessionId: string) => Promise<any>;
     getPickupSlip: (entryId: string) => Promise<any>;

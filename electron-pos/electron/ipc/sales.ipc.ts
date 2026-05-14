@@ -46,6 +46,10 @@ function normalizeBackdate(value: unknown) {
   return date;
 }
 
+function roundRupee(value: number) {
+  return Math.round(Number(value || 0));
+}
+
 function nextTokenNumberForRegister(cashRegisterId: string) {
   const row = db.prepare(`
     SELECT COALESCE(MAX(token_number), 0) as max_token
@@ -413,8 +417,14 @@ export function registerSalesIPC() {
           throw new Error(`${product.name} does not have a valid selling price`);
         }
 
-        const grossLineTotal = roundMoney(quantity * unitPrice);
-        const itemDiscount = calculateItemDiscount(grossLineTotal, item.discountType || 'NONE', item.discountValue || 0);
+        const cartLineTotal = Number(item.lineTotal ?? item.total ?? 0);
+        const calculatedLineTotal = roundMoney(quantity * unitPrice);
+        const grossLineTotal = roundRupee(cartLineTotal > 0 ? cartLineTotal : calculatedLineTotal);
+        const rawItemDiscount = calculateItemDiscount(grossLineTotal, item.discountType || 'NONE', item.discountValue || 0);
+        const itemDiscount = {
+          ...rawItemDiscount,
+          discountAmount: roundRupee(rawItemDiscount.discountAmount),
+        };
 
         return {
           productId: product.id,
@@ -427,31 +437,40 @@ export function registerSalesIPC() {
           discountType: itemDiscount.discountType,
           discountValue: itemDiscount.discountValue,
           discountAmount: itemDiscount.discountAmount,
-          lineTotal: roundMoney(grossLineTotal - itemDiscount.discountAmount)
+          lineTotal: roundRupee(grossLineTotal - itemDiscount.discountAmount)
         };
       });
 
-      const subtotal = roundMoney(normalizedItems.reduce((sum: number, item: any) => sum + item.lineTotal, 0));
-      const taxableSubtotal = roundMoney(normalizedItems.reduce((sum: number, item: any) => sum + (item.taxExempt ? 0 : item.lineTotal), 0));
-      const discount = calculateDiscount(subtotal, data.discountType || 'NONE', data.discountValue);
-      const totalItemDiscount = roundMoney(normalizedItems.reduce((sum: number, item: any) => sum + item.discountAmount, 0));
-      const totalDiscountGiven = roundMoney(discount.discountAmount + totalItemDiscount);
+      const subtotal = roundRupee(normalizedItems.reduce((sum: number, item: any) => sum + item.lineTotal, 0));
+      const taxableSubtotal = roundRupee(normalizedItems.reduce((sum: number, item: any) => sum + (item.taxExempt ? 0 : item.lineTotal), 0));
+      const rawDiscount = calculateDiscount(subtotal, data.discountType || 'NONE', data.discountValue);
+      const discount = {
+        ...rawDiscount,
+        discountAmount: roundRupee(rawDiscount.discountAmount),
+      };
+      const totalItemDiscount = roundRupee(normalizedItems.reduce((sum: number, item: any) => sum + item.discountAmount, 0));
+      const totalDiscountGiven = roundRupee(discount.discountAmount + totalItemDiscount);
       const discountApprovalLimit = Number(settingsMap.discountApprovalLimit || 100);
       let discountApprover: any = null;
       if (totalDiscountGiven > discountApprovalLimit) {
         discountApprover = requireManagerApproval(data.managerPin, `discount above Rs. ${discountApprovalLimit}`);
       }
-      const tax = calculateTax({
+      const rawTax = calculateTax({
         subtotal,
         taxableSubtotal,
         discountAmount: discount.discountAmount,
         taxEnabled,
         taxRate
       });
-      const grandTotal = roundMoney(subtotal - discount.discountAmount + tax.taxAmount);
-      const requestedCashPaid = requireNonNegativeNumber(data.cashPaid, 'Cash paid');
-      const requestedOnlinePaid = requireNonNegativeNumber(data.onlinePaid, 'Online paid');
-      const requestedCashTendered = requireNonNegativeNumber(data.cashTendered, 'Cash tendered');
+      const tax = {
+        ...rawTax,
+        taxableAmount: roundRupee(rawTax.taxableAmount),
+        taxAmount: roundRupee(rawTax.taxAmount),
+      };
+      const grandTotal = roundRupee(subtotal - discount.discountAmount + tax.taxAmount);
+      const requestedCashPaid = roundRupee(requireNonNegativeNumber(data.cashPaid, 'Cash paid'));
+      const requestedOnlinePaid = roundRupee(requireNonNegativeNumber(data.onlinePaid, 'Online paid'));
+      const requestedCashTendered = roundRupee(requireNonNegativeNumber(data.cashTendered, 'Cash tendered'));
       const cashPaid = paymentType === 'CASH'
         ? grandTotal
         : paymentType === 'SPLIT'
@@ -462,14 +481,14 @@ export function registerSalesIPC() {
         : paymentType === 'SPLIT'
           ? requestedOnlinePaid
           : 0;
-      const amountPaid = paymentType === 'CREDIT' ? 0 : roundMoney(cashPaid + onlinePaid);
+      const amountPaid = paymentType === 'CREDIT' ? 0 : roundRupee(cashPaid + onlinePaid);
       const balanceDue = paymentType === 'CREDIT' ? grandTotal : 0;
       const cashTendered = paymentType === 'CASH'
-        ? (requestedCashTendered === 0 || Math.abs(requestedCashTendered - grandTotal) < 0.01 ? grandTotal : roundMoney(requestedCashTendered))
+        ? (requestedCashTendered === 0 || Math.abs(requestedCashTendered - grandTotal) < 0.01 ? grandTotal : requestedCashTendered)
         : paymentType === 'SPLIT'
           ? cashPaid
           : 0;
-      const changeReturned = paymentType === 'CASH' ? roundMoney(cashTendered - grandTotal) : 0;
+      const changeReturned = paymentType === 'CASH' ? roundRupee(cashTendered - grandTotal) : 0;
 
       if (paymentType === 'CASH' && cashTendered < grandTotal) {
         throw new Error('Cash tendered cannot be less than the bill total');

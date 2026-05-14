@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Bike, Plus, ArrowUpFromLine, ArrowDownToLine, CheckCircle2,
-  AlertTriangle, X, Milk, MapPin, RefreshCw, History, ChevronRight, Printer, FileText
+  AlertTriangle, X, Milk, MapPin, RefreshCw, History, ChevronRight, Printer, FileText, Pencil
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -58,6 +58,10 @@ export default function Deliveries() {
   const [submitting, setSubmitting] = useState(false);
   const [pickupSlip, setPickupSlip] = useState<any>(null);
   const [monthlyStatement, setMonthlyStatement] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [editingEntry, setEditingEntry] = useState<any>(null);
+  const [editEntryQty, setEditEntryQty] = useState("");
+  const [editEntryNotes, setEditEntryNotes] = useState("");
 
   // Rider management
   const [showAddRider, setShowAddRider] = useState(false);
@@ -90,6 +94,9 @@ export default function Deliveries() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => { if (tab === "history") loadHistory(); }, [tab, loadHistory]);
+  useEffect(() => {
+    window.electronAPI?.auth?.getMe?.().then(setCurrentUser).catch(() => setCurrentUser(null));
+  }, []);
 
   // ── Open a rider's session ───────────────────────────────────────────────
 
@@ -174,6 +181,35 @@ export default function Deliveries() {
     }
   }
 
+  function openEntryEdit(entry: any) {
+    setEditingEntry(entry);
+    setEditEntryQty(String(Number(entry.quantity || 0)));
+    setEditEntryNotes(entry.notes || "");
+  }
+
+  async function saveEntryEdit() {
+    if (!editingEntry) return;
+    const quantity = Number(editEntryQty);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return flash("error", "Enter a valid quantity");
+    }
+
+    setSubmitting(true);
+    const res = await window.electronAPI?.deliveries?.updateEntry?.(editingEntry.id, {
+      quantity,
+      notes: editEntryNotes,
+    });
+    setSubmitting(false);
+
+    if (res?.success) {
+      flash("success", "Delivery entry corrected");
+      setEditingEntry(null);
+      await refreshSession();
+    } else {
+      flash("error", res?.error || "Entry correction failed");
+    }
+  }
+
   // ── Add Rider ────────────────────────────────────────────────────────────
 
   async function handleAddRider() {
@@ -203,6 +239,7 @@ export default function Deliveries() {
 
   // Find selected rider name
   const selectedRider = riders.find(r => r.id === selectedRiderId);
+  const isAdmin = currentUser?.role === "ADMIN";
 
   return (
     <div className="flex flex-col h-full bg-surface-1 overflow-hidden">
@@ -452,6 +489,15 @@ export default function Deliveries() {
                                   Slip
                                 </button>
                               )}
+                              {isAdmin && activeSession.status === "OPEN" && (
+                                <button
+                                  onClick={() => openEntryEdit(entry)}
+                                  className="ml-2 mt-1 text-xs text-info hover:underline"
+                                  title="Admin correction"
+                                >
+                                  <Pencil className="w-3 h-3 inline mr-1" /> Edit
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -654,6 +700,52 @@ export default function Deliveries() {
       )}
 
       {/* ── Toast ────────────────────────────────────────────────────────────── */}
+      {editingEntry && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface-2 rounded-xl shadow-xl w-full max-w-md border border-surface-4">
+            <div className="flex items-center justify-between p-5 border-b border-surface-4">
+              <div>
+                <h2 className="text-lg font-bold text-text-primary">Edit Delivery Entry</h2>
+                <p className="text-xs text-text-secondary mt-1">
+                  Admin correction for an unfinished delivery. Milk stock will adjust by the difference.
+                </p>
+              </div>
+              <button onClick={() => setEditingEntry(null)} className="text-text-secondary hover:text-text-primary"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="rounded-lg border border-surface-4 bg-surface-3 p-3 text-sm">
+                <span className="font-semibold">{editingEntry.entry_type === "PICKUP" ? "Pickup" : "Return"}</span>
+                <span className="text-text-secondary ml-2">Old: {toKg(editingEntry.quantity)}</span>
+              </div>
+              <div>
+                <label className="label">Correct quantity (kg)</label>
+                <input
+                  className="input text-lg font-mono"
+                  inputMode="decimal"
+                  value={editEntryQty}
+                  onChange={e => setEditEntryQty(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label">Notes</label>
+                <input
+                  className="input"
+                  value={editEntryNotes}
+                  onChange={e => setEditEntryNotes(e.target.value)}
+                  placeholder="Correction reason"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 p-5 border-t border-surface-4">
+              <button onClick={() => setEditingEntry(null)} className="btn btn-ghost" disabled={submitting}>Cancel</button>
+              <button onClick={saveEntryEdit} className="btn btn-primary" disabled={submitting}>
+                {submitting ? "Saving..." : "Save Correction"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pickupSlip && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-surface-2 rounded-xl shadow-xl w-full max-w-sm border border-surface-4 overflow-hidden">

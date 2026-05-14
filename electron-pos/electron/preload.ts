@@ -193,6 +193,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getOrCreateSession: (riderId: string) => ipcRenderer.invoke('deliveries:getOrCreateSession', riderId),
     addPickup: (data: any) => ipcRenderer.invoke('deliveries:addPickup', data),
     addReturn: (data: any) => ipcRenderer.invoke('deliveries:addReturn', data),
+    updateEntry: (entryId: string, data: any) => ipcRenderer.invoke('deliveries:updateEntry', entryId, data),
     completeSession: (sessionId: string, notes?: string) => ipcRenderer.invoke('deliveries:completeSession', sessionId, notes),
     getSession: (sessionId: string) => ipcRenderer.invoke('deliveries:getSession', sessionId),
     getPickupSlip: (entryId: string) => ipcRenderer.invoke('deliveries:getPickupSlip', entryId),

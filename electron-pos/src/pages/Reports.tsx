@@ -1,12 +1,128 @@
 import { useState, useEffect } from "react";
-import { AlertTriangle, Calendar as CalendarIcon, Download, TrendingUp, TrendingDown, DollarSign, Package, Users, XCircle } from "lucide-react";
+import { AlertTriangle, Calendar as CalendarIcon, Download, TrendingUp, TrendingDown, DollarSign, Package, Users, XCircle, Printer } from "lucide-react";
 import { cn } from "../lib/utils";
 import { format } from "date-fns";
 
 type ReportTab = "DAILY" | "SALES" | "PRODUCTS" | "DUES" | "PNL";
 
 function toMoney(value: number) {
-  return `Rs. ${Number(value || 0).toLocaleString("en-PK", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  return `Rs. ${Math.round(Number(value || 0)).toLocaleString("en-PK", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+function ReportPrintView({
+  activeTab,
+  dateStr,
+  dailyData,
+  salesHistory,
+  productPerformance,
+  duesData,
+  profitLossData,
+  plStartDate,
+  plEndDate,
+}: {
+  activeTab: ReportTab;
+  dateStr: string;
+  dailyData: any;
+  salesHistory: any[];
+  productPerformance: any[];
+  duesData: any[];
+  profitLossData: any;
+  plStartDate: string;
+  plEndDate: string;
+}) {
+  const titleMap: Record<ReportTab, string> = {
+    DAILY: "Daily Summary",
+    SALES: "Sales History",
+    PRODUCTS: "Product Performance",
+    DUES: "Customer Dues",
+    PNL: "Profit & Loss",
+  };
+
+  return (
+    <div className="print-target thermal-report">
+      <div className="thermal-report-inner">
+        <div className="thermal-center thermal-title">GUJJAR MILK SHOP</div>
+        <div className="thermal-center">{titleMap[activeTab]}</div>
+        <div className="thermal-center thermal-muted">
+          {activeTab === "PNL" ? `${plStartDate} to ${plEndDate}` : dateStr}
+        </div>
+        <div className="thermal-rule" />
+
+        {activeTab === "DAILY" && dailyData && (
+          <>
+            <div className="thermal-row"><span>Total Sales</span><strong>{toMoney(dailyData.totalSales)}</strong></div>
+            <div className="thermal-row"><span>Cash Collected</span><strong>{toMoney(dailyData.cashSales)}</strong></div>
+            <div className="thermal-row"><span>Credit Sales</span><strong>{toMoney(dailyData.creditSales)}</strong></div>
+            <div className="thermal-row"><span>Refunds</span><strong>{toMoney(dailyData.refunds)}</strong></div>
+            <div className="thermal-row"><span>Expenses</span><strong>{toMoney(dailyData.expenses)}</strong></div>
+            <div className="thermal-row"><span>Total Bills</span><strong>{dailyData.bills || 0}</strong></div>
+            <div className="thermal-row"><span>Milk Sold</span><strong>{Number(dailyData.milkSold || 0).toFixed(2)} kg</strong></div>
+            <div className="thermal-row"><span>Yogurt Sold</span><strong>{Number(dailyData.yogurtSold || 0).toFixed(2)} kg</strong></div>
+            <div className="thermal-rule" />
+            <div className="thermal-row thermal-total"><span>Net Cash</span><strong>{toMoney(Number(dailyData.cashSales || 0) - Number(dailyData.expenses || 0))}</strong></div>
+          </>
+        )}
+
+        {activeTab === "SALES" && (
+          <>
+            <div className="thermal-row thermal-head"><span>Bill</span><span>Total</span></div>
+            {salesHistory.slice(0, 60).map((sale) => (
+              <div key={sale.id} className="thermal-sale-row">
+                <div>
+                  <strong>{sale.bill_number}</strong> {sale.token_number ? `#${sale.token_number}` : ""}
+                  <div className="thermal-muted">{format(new Date(sale.sale_date), "hh:mm a")} {sale.payment_type}</div>
+                </div>
+                <strong>{toMoney(sale.grand_total)}</strong>
+              </div>
+            ))}
+            <div className="thermal-rule" />
+            <div className="thermal-row thermal-total"><span>Rows</span><strong>{salesHistory.length}</strong></div>
+          </>
+        )}
+
+        {activeTab === "PRODUCTS" && (
+          <>
+            {productPerformance.slice(0, 60).map((p, index) => (
+              <div key={p.productId || index} className="thermal-sale-row">
+                <div><strong>{p.productName}</strong><div className="thermal-muted">Qty {Number(p.totalQty || 0).toFixed(2)}</div></div>
+                <strong>{toMoney(p.totalSales)}</strong>
+              </div>
+            ))}
+          </>
+        )}
+
+        {activeTab === "DUES" && (
+          <>
+            {duesData.slice(0, 60).map((d) => (
+              <div key={d.id} className="thermal-sale-row">
+                <div><strong>{d.name}</strong><div className="thermal-muted">{d.phone || "-"}</div></div>
+                <strong>{toMoney(d.current_balance)}</strong>
+              </div>
+            ))}
+            <div className="thermal-rule" />
+            <div className="thermal-row thermal-total"><span>Total Dues</span><strong>{toMoney(duesData.reduce((sum, d) => sum + Number(d.current_balance || 0), 0))}</strong></div>
+          </>
+        )}
+
+        {activeTab === "PNL" && profitLossData && (
+          <>
+            <div className="thermal-row"><span>Gross Revenue</span><strong>{toMoney(profitLossData.grossRevenue ?? profitLossData.revenue)}</strong></div>
+            <div className="thermal-row"><span>Refunds</span><strong>- {toMoney(profitLossData.refunds)}</strong></div>
+            <div className="thermal-row"><span>Net Revenue</span><strong>{toMoney(profitLossData.revenue)}</strong></div>
+            <div className="thermal-row"><span>COGS</span><strong>- {toMoney(profitLossData.cogs)}</strong></div>
+            <div className="thermal-row"><span>Expenses</span><strong>- {toMoney(profitLossData.expenses)}</strong></div>
+            <div className="thermal-rule" />
+            <div className="thermal-row thermal-total"><span>Net Profit</span><strong>{toMoney(profitLossData.netProfit)}</strong></div>
+          </>
+        )}
+
+        {!dailyData && activeTab === "DAILY" && <div className="thermal-center">No data found.</div>}
+        {!profitLossData && activeTab === "PNL" && <div className="thermal-center">No data found.</div>}
+        <div className="thermal-rule" />
+        <div className="thermal-center thermal-muted">Printed {format(new Date(), "dd MMM yyyy hh:mm a")}</div>
+      </div>
+    </div>
+  );
 }
 
 export default function Reports() {
@@ -125,6 +241,10 @@ export default function Reports() {
     }
   };
 
+  const printCurrentReport = () => {
+    window.setTimeout(() => window.print(), 80);
+  };
+
   const handleReprint = async (saleId: string) => {
     try {
       const receipt = await window.electronAPI?.sales?.getReceipt(saleId);
@@ -192,6 +312,9 @@ export default function Reports() {
           <h1 className="text-2xl font-bold text-text-primary">Reports & Analytics</h1>
           <p className="text-text-secondary mt-1">Detailed insights into shop performance.</p>
         </div>
+        <button onClick={printCurrentReport} className="btn-primary flex items-center gap-2 w-fit">
+          <Printer className="w-4 h-4" /> Print Report
+        </button>
       </div>
 
       <div className="card overflow-hidden">
@@ -541,6 +664,18 @@ export default function Reports() {
           )}
 
       </div>
+
+      <ReportPrintView
+        activeTab={activeTab}
+        dateStr={dateStr}
+        dailyData={dailyData}
+        salesHistory={salesHistory}
+        productPerformance={productPerformance}
+        duesData={duesData}
+        profitLossData={profitLossData}
+        plStartDate={plStartDate}
+        plEndDate={plEndDate}
+      />
 
       {voidSale && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">

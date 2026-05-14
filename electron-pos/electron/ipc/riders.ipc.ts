@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import db from '../database/db';
 import * as crypto from 'crypto';
-import { getCurrentUser } from './auth.ipc';
+import { getCurrentUser, requireCurrentUser } from './auth.ipc';
 import { handleStockMutation } from './inventory.ipc';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -257,6 +257,79 @@ export function registerRidersIPC() {
   });
 
   // ── Complete Session ────────────────────────────────────────────────────────
+
+  ipcMain.handle('deliveries:updateEntry', (_event, entryId: string, data: { quantity: number; notes?: string }) => {
+    try {
+      const user = requireCurrentUser(['ADMIN']);
+      const nextQty = Number(data.quantity);
+      if (!Number.isFinite(nextQty) || nextQty <= 0) {
+        return { success: false, error: 'Quantity must be greater than zero' };
+      }
+
+      const entry = db.prepare(`
+        SELECT de.*, ds.status, ds.session_date, r.name as rider_name
+        FROM delivery_entries de
+        JOIN delivery_sessions ds ON ds.id = de.session_id
+        LEFT JOIN riders r ON r.id = de.rider_id
+        WHERE de.id = ?
+      `).get(entryId) as any;
+      if (!entry) return { success: false, error: 'Delivery entry not found' };
+      if (entry.status === 'COMPLETED') {
+        return { success: false, error: 'Completed delivery sessions cannot be edited' };
+      }
+
+      const pickupExcluding = db.prepare(`
+        SELECT COALESCE(SUM(quantity), 0) as total
+        FROM delivery_entries
+        WHERE session_id = ? AND entry_type = 'PICKUP' AND id <> ?
+      `).get(entry.session_id, entryId) as any;
+      const returnExcluding = db.prepare(`
+        SELECT COALESCE(SUM(quantity), 0) as total
+        FROM delivery_entries
+        WHERE session_id = ? AND entry_type = 'RETURN' AND id <> ?
+      `).get(entry.session_id, entryId) as any;
+
+      const nextPickup = Number(pickupExcluding?.total || 0) + (entry.entry_type === 'PICKUP' ? nextQty : 0);
+      const nextReturn = Number(returnExcluding?.total || 0) + (entry.entry_type === 'RETURN' ? nextQty : 0);
+      if (nextReturn > nextPickup) {
+        return { success: false, error: `Return (${nextReturn} kg) cannot exceed pickup (${nextPickup} kg)` };
+      }
+
+      const oldQty = Number(entry.quantity || 0);
+      const delta = Number((nextQty - oldQty).toFixed(3));
+      const milkProduct = getMilkProduct();
+      if (!milkProduct) return { success: false, error: 'Milk product not found in inventory' };
+
+      if (Math.abs(delta) > 0.0001) {
+        const stockDiff = entry.entry_type === 'PICKUP' ? -delta : delta;
+        const stockResult = handleStockMutation(
+          milkProduct.id,
+          stockDiff,
+          stockDiff < 0 ? 'DELIVERY_OUT' : 'DELIVERY_RETURN',
+          {
+            userId: user.id,
+            referenceId: entry.session_id,
+            notes: `Delivery correction - ${entry.entry_type} ${oldQty}kg to ${nextQty}kg - Rider: ${entry.rider_name || entry.rider_id}`,
+          }
+        ) as any;
+        if (!stockResult?.success) {
+          return { success: false, error: stockResult?.error || 'Failed to adjust milk stock' };
+        }
+      }
+
+      db.prepare(`
+        UPDATE delivery_entries
+        SET quantity = ?, notes = ?
+        WHERE id = ?
+      `).run(nextQty, data.notes || null, entryId);
+
+      const totals = refreshSessionTotals(entry.session_id);
+      const milkStock = db.prepare('SELECT stock FROM products WHERE id = ?').get(milkProduct.id) as any;
+      return { success: true, totals, milkStockRemaining: milkStock?.stock || 0 };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
 
   ipcMain.handle('deliveries:completeSession', (_event, sessionId: string, notes?: string) => {
     try {
