@@ -85,6 +85,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (id: string, data: any) => ipcRenderer.invoke('expenses:update', id, data),
     remove: (id: string, options?: { managerPin?: string; reason?: string }) => ipcRenderer.invoke('expenses:remove', id, options),
     getSummary: () => ipcRenderer.invoke('expenses:getSummary'),
+    getWastageDefaults: () => ipcRenderer.invoke('expenses:getWastageDefaults'),
+    addWastage: (data: any) => ipcRenderer.invoke('expenses:addWastage', data),
   },
   reports: {
     getDailySummary: (date: string) => ipcRenderer.invoke('reports:getDailySummary', date),

@@ -14,7 +14,10 @@ import {
   Package,
   AlertTriangle,
   Wallet,
-  BarChart3
+  BarChart3,
+  Target,
+  Sparkles,
+  LineChart
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -68,6 +71,27 @@ type Analytics = {
     lastWeek: PeriodSummary;
     thisMonth: PeriodSummary;
     lastMonth: PeriodSummary;
+  };
+  yogurtPlan?: {
+    targetDate: string;
+    recommendedKg: number;
+    confidence: "LOW" | "MEDIUM" | "HIGH";
+    recent7AvgKg: number;
+    recentActiveAvgKg: number;
+    sameWeekdayAvgKg: number;
+    todayYogurtKg: number;
+    safetyBufferPct: number;
+    basisDays: number;
+    sameWeekdaySamples: number;
+  };
+  customerBehavior?: {
+    totalBills: number;
+    walkInBills: number;
+    knownBills: number;
+    knownCustomers: number;
+    walkInRevenue: number;
+    knownRevenue: number;
+    repeatCustomers: Array<{ id: string; name: string; phone?: string; visits: number; revenue: number; lastVisit: string }>;
   };
   busiestHour?: HourPoint | null;
   quietestHour?: HourPoint | null;
@@ -188,7 +212,9 @@ export default function Analytics() {
     stockRisk = [],
     insights = [],
     busiestHour,
-    quietestHour
+    quietestHour,
+    yogurtPlan,
+    customerBehavior
   } = data;
 
   return (
@@ -333,6 +359,40 @@ export default function Analytics() {
         </div>
       </section>
 
+      <section className="grid xl:grid-cols-3 gap-4">
+        <YogurtPlanCard plan={yogurtPlan} />
+        <CustomerBehaviorCard behavior={customerBehavior} />
+        <div className="card p-5 overflow-hidden">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+                <LineChart className="w-5 h-5 text-success" /> Revenue Pulse
+              </h2>
+              <p className="text-xs text-text-secondary mt-1">Last {daysBack} days, anchored to selected date.</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-text-secondary">Best Day</p>
+              <p className="font-mono font-bold text-success">{rs(Math.max(0, ...dailyTrend.map((d) => d.revenue)))}</p>
+            </div>
+          </div>
+          <MiniSparkline points={dailyTrend.map((d) => d.revenue)} />
+          <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+            <div className="rounded-lg bg-surface-2/60 border border-surface-4 p-2">
+              <p className="text-text-secondary">Milk</p>
+              <p className="font-mono font-bold text-info">{kg(dailyTrend.reduce((s, d) => s + d.milkKg, 0))}</p>
+            </div>
+            <div className="rounded-lg bg-surface-2/60 border border-surface-4 p-2">
+              <p className="text-text-secondary">Yogurt</p>
+              <p className="font-mono font-bold text-warning">{kg(dailyTrend.reduce((s, d) => s + d.yogurtKg, 0))}</p>
+            </div>
+            <div className="rounded-lg bg-surface-2/60 border border-surface-4 p-2">
+              <p className="text-text-secondary">Bills</p>
+              <p className="font-mono font-bold">{dailyTrend.reduce((s, d) => s + d.bills, 0)}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ---------- HOURLY BREAKDOWN ---------- */}
       <section className="card overflow-hidden">
         <div className="p-5 border-b border-surface-4 bg-surface-2/70">
@@ -450,9 +510,15 @@ export default function Analytics() {
           </p>
         </div>
         <div className="p-5">
+          <StackedVolumeChart dailyTrend={dailyTrend} maxDayCombined={maxDayCombined} />
+          <div className="mt-4 flex items-center gap-5 text-xs text-text-secondary">
+            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm bg-info" /> Milk kg</span>
+            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm bg-warning" /> Yogurt kg</span>
+            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm bg-surface-4" /> No volume</span>
+          </div>
           {/* Y-axis peak indicator + chart canvas. Days with zero combinedKg
               still render a 1-px bar so the chart shows the full series. */}
-          <div className="relative h-44 ml-12">
+          <div className="hidden relative h-44 ml-12">
             <div className="absolute -left-12 top-0 text-[10px] font-mono text-text-secondary">
               {kg(maxDayCombined)}
             </div>
@@ -492,7 +558,7 @@ export default function Analytics() {
           </div>
           {/* X-axis: print a date label every Nth bar so labels don't overlap */}
           {dailyTrend.length > 0 && (
-            <div className="ml-12 flex gap-[2px] mt-2">
+            <div className="hidden ml-12 gap-[2px] mt-2">
               {dailyTrend.map((d, idx) => {
                 const stride = Math.max(1, Math.ceil(dailyTrend.length / 8));
                 const showLabel = idx === 0 || idx === dailyTrend.length - 1 || idx % stride === 0;
@@ -596,6 +662,148 @@ export default function Analytics() {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function YogurtPlanCard({ plan }: { plan?: Analytics["yogurtPlan"] }) {
+  const confidenceTone = plan?.confidence === "HIGH" ? "text-success" : plan?.confidence === "MEDIUM" ? "text-warning" : "text-danger";
+  return (
+    <div className="card p-5 overflow-hidden relative">
+      <div className="absolute right-4 top-4 opacity-10">
+        <Target className="w-24 h-24" />
+      </div>
+      <div className="relative">
+        <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-warning" /> Tomorrow Yogurt Plan
+        </h2>
+        <p className="text-xs text-text-secondary mt-1">
+          Yogurt takes one day, so prepare from history before demand arrives.
+        </p>
+        <div className="mt-5">
+          <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">
+            {plan?.targetDate ? format(new Date(`${plan.targetDate}T00:00:00`), "EEEE, dd MMM") : "Next day"}
+          </p>
+          <p className="text-4xl font-black text-warning mt-1">{kg(plan?.recommendedKg || 0)}</p>
+          <p className={cn("text-xs font-bold mt-1", confidenceTone)}>
+            {plan?.confidence || "LOW"} confidence · {plan?.basisDays || 0} days checked
+          </p>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+          <MiniStat label="7-day avg" value={kg(plan?.recent7AvgKg || 0)} />
+          <MiniStat label="Same day" value={kg(plan?.sameWeekdayAvgKg || 0)} />
+          <MiniStat label="Buffer" value={`${plan?.safetyBufferPct || 0}%`} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CustomerBehaviorCard({ behavior }: { behavior?: Analytics["customerBehavior"] }) {
+  const totalBills = Math.max(1, Number(behavior?.totalBills || 0));
+  const walkInPct = (Number(behavior?.walkInBills || 0) / totalBills) * 100;
+  const knownPct = (Number(behavior?.knownBills || 0) / totalBills) * 100;
+  return (
+    <div className="card p-5">
+      <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+        <Users className="w-5 h-5 text-primary" /> Customer Behaviour
+      </h2>
+      <p className="text-xs text-text-secondary mt-1">Walk-in vs known customer pattern from the selected history window.</p>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <MiniStat label="Walk-in bills" value={`${Math.round(walkInPct)}%`} sub={`${behavior?.walkInBills || 0} bills`} />
+        <MiniStat label="Known bills" value={`${Math.round(knownPct)}%`} sub={`${behavior?.knownCustomers || 0} customers`} />
+      </div>
+      <div className="mt-4 h-2 rounded-full bg-surface-3 overflow-hidden flex">
+        <div className="h-full bg-primary" style={{ width: `${knownPct}%` }} />
+        <div className="h-full bg-info" style={{ width: `${walkInPct}%` }} />
+      </div>
+      <div className="mt-4 space-y-2">
+        {(behavior?.repeatCustomers || []).slice(0, 3).map((customer) => (
+          <div key={customer.id} className="flex justify-between gap-3 text-xs">
+            <span className="truncate text-text-secondary">{customer.name}</span>
+            <strong>{customer.visits} visits · {rs(customer.revenue)}</strong>
+          </div>
+        ))}
+        {(behavior?.repeatCustomers || []).length === 0 && (
+          <p className="text-xs text-text-secondary">No repeat khata/customer pattern yet.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StackedVolumeChart({ dailyTrend, maxDayCombined }: { dailyTrend: DayPoint[]; maxDayCombined: number }) {
+  if (dailyTrend.length === 0) {
+    return <div className="text-text-secondary text-sm w-full text-center py-10">Not enough sales data yet.</div>;
+  }
+
+  return (
+    <div>
+      <div className="relative h-52 ml-12">
+        <div className="absolute -left-12 top-0 text-[10px] font-mono text-text-secondary">{kg(maxDayCombined)}</div>
+        <div className="absolute -left-12 bottom-0 text-[10px] font-mono text-text-secondary">0 kg</div>
+        <div className="absolute left-0 right-0 top-1/2 border-t border-dashed border-surface-4" />
+        <div className="flex items-end gap-[3px] h-full">
+          {dailyTrend.map((day) => {
+            const combined = Number(day.combinedKg || 0);
+            const totalHeight = combined > 0 ? Math.max(4, (combined / maxDayCombined) * 100) : 1;
+            const milkPct = combined > 0 ? (Number(day.milkKg || 0) / combined) * 100 : 0;
+            const yogurtPct = combined > 0 ? (Number(day.yogurtKg || 0) / combined) * 100 : 0;
+            return (
+              <div
+                key={day.date}
+                className="flex-1 min-w-0 flex flex-col items-center justify-end group"
+                title={`${formatChartDate(day.date)}\n${day.bills} bills, ${rs(day.revenue)}\nMilk: ${kg(day.milkKg)} · Yogurt: ${kg(day.yogurtKg)}`}
+              >
+                <div className="w-full rounded-t-md overflow-hidden bg-surface-3 ring-1 ring-transparent group-hover:ring-white/20 transition-all" style={{ height: `${totalHeight}%` }}>
+                  {combined > 0 ? (
+                    <>
+                      <div className="w-full bg-warning" style={{ height: `${yogurtPct}%` }} />
+                      <div className="w-full bg-info" style={{ height: `${milkPct}%` }} />
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="ml-12 flex gap-[3px] mt-2">
+        {dailyTrend.map((day, idx) => {
+          const stride = Math.max(1, Math.ceil(dailyTrend.length / 8));
+          const showLabel = idx === 0 || idx === dailyTrend.length - 1 || idx % stride === 0;
+          return <div key={day.date} className="flex-1 text-[9px] text-text-secondary font-mono text-center min-w-0 truncate">{showLabel ? formatChartDateShort(day.date) : ""}</div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MiniSparkline({ points }: { points: number[] }) {
+  const max = Math.max(1, ...points);
+  const width = 360;
+  const height = 96;
+  const step = points.length > 1 ? width / (points.length - 1) : width;
+  const path = points.map((point, index) => {
+    const x = index * step;
+    const y = height - (Number(point || 0) / max) * (height - 10) - 5;
+    return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(" ");
+  const area = `${path} L ${width} ${height} L 0 ${height} Z`;
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-28">
+      <path d={area} className="fill-success/10" />
+      <path d={path} className="fill-none stroke-success" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function MiniStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-lg border border-surface-4 bg-surface-2/60 p-2">
+      <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">{label}</p>
+      <p className="font-mono font-bold text-text-primary">{value}</p>
+      {sub ? <p className="text-[10px] text-text-secondary">{sub}</p> : null}
     </div>
   );
 }

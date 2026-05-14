@@ -5,6 +5,8 @@ import {
   Edit2,
   FileText,
   Flame,
+  Lock,
+  Milk,
   Plus,
   Receipt,
   ShoppingBag,
@@ -30,6 +32,7 @@ type ExpenseCategory =
   | "RENT"
   | "MAINTENANCE"
   | "CLEANING"
+  | "WASTAGE"
   | "MISCELLANEOUS"
   | "OTHER";
 
@@ -42,6 +45,15 @@ type Expense = {
   amount: number;
   addedBy?: string;
   created_by_id?: string;
+};
+
+type WastageProduct = {
+  id: string;
+  code: "MILK" | "YOGT";
+  name: string;
+  stock: number;
+  cost_price: number;
+  averageCost: number;
 };
 
 const CATEGORY_LABELS: Record<ExpenseCategory, string> = {
@@ -59,6 +71,7 @@ const CATEGORY_LABELS: Record<ExpenseCategory, string> = {
   RENT: "Rent",
   MAINTENANCE: "Maintenance",
   CLEANING: "Cleaning",
+  WASTAGE: "Wastage",
   MISCELLANEOUS: "Miscellaneous",
   OTHER: "Other",
 };
@@ -78,6 +91,7 @@ const CATEGORY_COLORS: Record<ExpenseCategory, string> = {
   RENT: "bg-indigo-500/15 text-indigo-400 border-indigo-500/30",
   MAINTENANCE: "bg-slate-500/15 text-slate-300 border-slate-500/30",
   CLEANING: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+  WASTAGE: "bg-rose-500/15 text-rose-400 border-rose-500/30",
   MISCELLANEOUS: "bg-gray-500/15 text-gray-300 border-gray-500/30",
   OTHER: "bg-gray-500/15 text-gray-300 border-gray-500/30",
 };
@@ -97,6 +111,7 @@ const BAR_COLORS: Record<ExpenseCategory, string> = {
   RENT: "bg-indigo-500",
   MAINTENANCE: "bg-slate-500",
   CLEANING: "bg-cyan-500",
+  WASTAGE: "bg-rose-500",
   MISCELLANEOUS: "bg-gray-500",
   OTHER: "bg-gray-500",
 };
@@ -131,14 +146,18 @@ function categoryLabel(category: ExpenseCategory) {
 
 export default function Expenses() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [monthExpenses, setMonthExpenses] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [summary, setSummary] = useState({ totalToday: 0, totalMonth: 0, profitToday: 0 });
+  const [summary, setSummary] = useState({ totalToday: 0, totalMonth: 0, profitToday: 0, operatingMonth: 0, expectedSalary: 0 });
   const [filter, setFilter] = useState<"TODAY" | "WEEK" | "MONTH" | "ALL">("TODAY");
+  const [user, setUser] = useState<any>(null);
 
   const [newDate, setNewDate] = useState(localDate());
   const [newCategory, setNewCategory] = useState<ExpenseCategory>("SHOPPING_BAG");
   const [newDesc, setNewDesc] = useState("");
   const [newAmount, setNewAmount] = useState("");
+  const [wastageProducts, setWastageProducts] = useState<WastageProduct[]>([]);
+  const [wastageForm, setWastageForm] = useState({ date: localDate(), productCode: "MILK" as "MILK" | "YOGT", quantity: "", sellAmount: "", notes: "" });
 
   const visibleTotal = useMemo(
     () => expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0),
@@ -147,20 +166,27 @@ export default function Expenses() {
 
   const categoryBreakdown = useMemo(() => {
     const totals = new Map<ExpenseCategory, number>();
-    expenses.forEach((expense) => {
+    monthExpenses.forEach((expense) => {
       totals.set(expense.category, (totals.get(expense.category) || 0) + Number(expense.amount || 0));
     });
+    const monthlyTotal = monthExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
     return Array.from(totals.entries())
       .map(([category, amount]) => ({
         category,
         amount,
-        percent: visibleTotal > 0 ? Math.round((amount / visibleTotal) * 100) : 0,
+        percent: monthlyTotal > 0 ? Math.round((amount / monthlyTotal) * 100) : 0,
       }))
       .sort((a, b) => b.amount - a.amount);
-  }, [expenses, visibleTotal]);
+  }, [monthExpenses]);
 
   const largestCategory = categoryBreakdown[0];
-  const dailyAverage = summary.totalMonth / Math.max(1, new Date().getDate());
+  const dailyAverage = summary.operatingMonth / Math.max(1, new Date().getDate());
+  const isAdmin = user?.role === "ADMIN";
+  const selectedWastageProduct = wastageProducts.find((product) => product.code === wastageForm.productCode);
+  const wastageQuantity = Number(wastageForm.quantity || 0);
+  const wastageRecovery = Number(wastageForm.sellAmount || 0);
+  const wastageGross = Math.max(0, wastageQuantity * Number(selectedWastageProduct?.averageCost || 0));
+  const wastageNet = Math.max(0, wastageGross - Math.max(0, wastageRecovery));
 
   const loadData = async () => {
     try {
@@ -176,11 +202,14 @@ export default function Expenses() {
               ? { date: monthStr }
               : {};
 
-      const [all, stats, monthExpenses, todayExpenses] = await Promise.all([
+      const [all, stats, monthRows, todayExpenses, currentUser, payroll, wastageDefaults] = await Promise.all([
         window.electronAPI?.expenses?.getAll(listFilter),
         window.electronAPI?.reports?.getDashboardStats(),
         window.electronAPI?.expenses?.getAll({ date: monthStr }),
         window.electronAPI?.expenses?.getAll({ date: today }),
+        window.electronAPI?.auth?.getMe(),
+        window.electronAPI?.employees?.getPayrollSummary?.(monthStr),
+        window.electronAPI?.expenses?.getWastageDefaults?.(),
       ]);
 
       const normalized = (all || []).map((expense: any) => ({
@@ -188,14 +217,34 @@ export default function Expenses() {
         category: expense.category || "MISCELLANEOUS",
         amount: Number(expense.amount || 0),
       }));
-      const monthTotal = (monthExpenses || []).reduce((sum: number, expense: any) => sum + Number(expense.amount || 0), 0);
+      const normalizedMonth = (monthRows || []).map((expense: any) => ({
+        ...expense,
+        category: expense.category || "MISCELLANEOUS",
+        amount: Number(expense.amount || 0),
+      }));
+      const monthTotal = normalizedMonth.reduce((sum: number, expense: any) => sum + Number(expense.amount || 0), 0);
       const todayTotal = (todayExpenses || []).reduce((sum: number, expense: any) => sum + Number(expense.amount || 0), 0);
+      const postedSalary = Number(payroll?.data?.postedSalaryExpenses || 0);
+      const expectedSalary = Number(payroll?.data?.expectedGrossSalary || 0);
+      const nonSalaryMonth = normalizedMonth
+        .filter((expense: any) => expense.category !== "SALARY")
+        .reduce((sum: number, expense: any) => sum + Number(expense.amount || 0), 0);
 
       setExpenses(normalized);
+      setMonthExpenses(normalizedMonth);
+      setUser(currentUser);
+      setWastageProducts((wastageDefaults || []).map((product: any) => ({
+        ...product,
+        stock: Number(product.stock || 0),
+        cost_price: Number(product.cost_price || 0),
+        averageCost: Number(product.averageCost || product.cost_price || 0),
+      })));
       setSummary({
         totalToday: todayTotal,
         totalMonth: monthTotal,
         profitToday: Number(stats?.kpis?.revenue || 0) - todayTotal,
+        operatingMonth: nonSalaryMonth + Math.max(postedSalary, expectedSalary),
+        expectedSalary,
       });
     } catch (err) {
       console.error(err);
@@ -242,6 +291,31 @@ export default function Expenses() {
     else alert(res?.error || "Could not delete expense");
   };
 
+  const handleChangeCategory = async (expense: Expense, category: ExpenseCategory) => {
+    if (!isAdmin) return;
+    const res = await window.electronAPI?.expenses?.update(expense.id, { category });
+    if (res?.success) loadData();
+    else alert(res?.error || "Could not change category");
+  };
+
+  const handleAddWastage = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const res = await window.electronAPI?.expenses?.addWastage({
+      date: wastageForm.date,
+      productCode: wastageForm.productCode,
+      quantity: Number(wastageForm.quantity),
+      sellAmount: Number(wastageForm.sellAmount || 0),
+      notes: wastageForm.notes,
+    });
+    if (res?.success) {
+      setWastageForm((current) => ({ ...current, quantity: "", sellAmount: "", notes: "" }));
+      alert(`Wastage saved. Net loss: ${toMoney(res.netLoss || 0)}`);
+      loadData();
+    } else {
+      alert(res?.error || "Could not save wastage");
+    }
+  };
+
   const exportExpenses = async (format: "excel" | "pdf") => {
     const today = localDate();
     const startDate = filter === "MONTH" ? `${today.slice(0, 7)}-01` : filter === "ALL" ? "2000-01-01" : filter === "WEEK" ? startOfWeek() : today;
@@ -266,7 +340,7 @@ export default function Expenses() {
         <StatCard icon={TrendingDown} label="Today Expense" value={toMoney(summary.totalToday)} tone="danger" />
         <StatCard icon={Receipt} label="This Month" value={toMoney(summary.totalMonth)} tone="warning" />
         <StatCard icon={Wallet} label="After Expense Today" value={toMoney(summary.profitToday)} tone={summary.profitToday >= 0 ? "success" : "danger"} />
-        <StatCard icon={BarChart3} label="Daily Avg This Month" value={toMoney(dailyAverage)} tone="primary" />
+        <StatCard icon={BarChart3} label="Daily Avg This Month" value={toMoney(dailyAverage)} hint={`Includes salary ${toMoney(summary.expectedSalary)}`} tone="primary" />
         <StatCard icon={ShoppingBag} label="Biggest Cost" value={largestCategory ? categoryLabel(largestCategory.category) : "No data"} hint={largestCategory ? toMoney(largestCategory.amount) : ""} tone="accent" />
       </div>
 
@@ -300,6 +374,47 @@ export default function Expenses() {
           <button type="submit" className="btn-primary h-[42px] px-5 flex items-center justify-center gap-2 whitespace-nowrap">
             <Plus className="w-4 h-4" /> Save
           </button>
+        </div>
+      </form>
+
+      <form onSubmit={handleAddWastage} className="card overflow-hidden">
+        <div className="p-4 border-b border-surface-4 bg-surface-2/70 flex items-center justify-between gap-3">
+          <h2 className="font-bold text-sm flex items-center gap-2">
+            <Milk className="w-4 h-4 text-rose-400" /> Milk / Yogurt Wastage
+          </h2>
+          <p className="text-xs text-text-secondary">Net wastage = purchase cost - any recovery sale.</p>
+        </div>
+        <div className="p-4 grid grid-cols-1 md:grid-cols-[140px_160px_130px_150px_1fr_auto] gap-3 items-end">
+          <div>
+            <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Date</label>
+            <input type="date" value={wastageForm.date} onChange={(e) => setWastageForm((f) => ({ ...f, date: e.target.value }))} className="input py-2.5" required />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Product</label>
+            <select value={wastageForm.productCode} onChange={(e) => setWastageForm((f) => ({ ...f, productCode: e.target.value as "MILK" | "YOGT" }))} className="input py-2.5">
+              <option value="MILK">Milk</option>
+              <option value="YOGT">Yogurt</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Qty (kg)</label>
+            <input type="number" min="0.001" step="0.001" value={wastageForm.quantity} onChange={(e) => setWastageForm((f) => ({ ...f, quantity: e.target.value }))} className="input py-2.5 font-mono" required />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Sold Recovery</label>
+            <input type="number" min="0" step="0.01" value={wastageForm.sellAmount} onChange={(e) => setWastageForm((f) => ({ ...f, sellAmount: e.target.value }))} placeholder="0" className="input py-2.5 font-mono" />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Reason / Notes</label>
+            <input value={wastageForm.notes} onChange={(e) => setWastageForm((f) => ({ ...f, notes: e.target.value }))} placeholder="e.g., sour milk, broken pack, low-price sale" className="input py-2.5" />
+          </div>
+          <button type="submit" className="btn-primary h-[42px] px-5 whitespace-nowrap">Save Wastage</button>
+        </div>
+        <div className="px-4 pb-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          <div className="rounded-lg border border-surface-4 p-3"><span className="text-text-secondary">Stock</span><p className="font-mono font-bold">{Number(selectedWastageProduct?.stock || 0).toFixed(2)} kg</p></div>
+          <div className="rounded-lg border border-surface-4 p-3"><span className="text-text-secondary">Avg Cost</span><p className="font-mono font-bold">{toMoney(Number(selectedWastageProduct?.averageCost || 0))}/kg</p></div>
+          <div className="rounded-lg border border-surface-4 p-3"><span className="text-text-secondary">Gross Loss</span><p className="font-mono font-bold text-danger">{toMoney(wastageGross)}</p></div>
+          <div className="rounded-lg border border-surface-4 p-3"><span className="text-text-secondary">Net Expense</span><p className="font-mono font-bold text-rose-400">{toMoney(wastageNet)}</p></div>
         </div>
       </form>
 
@@ -342,9 +457,19 @@ export default function Expenses() {
                         <span className="inline-flex items-center gap-1"><CalendarDays className="w-3 h-3" />{displayDate(expense.expense_date || expense.date)}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold border", CATEGORY_COLORS[expense.category] || CATEGORY_COLORS.MISCELLANEOUS)}>
-                          {categoryLabel(expense.category)}
-                        </span>
+                        {isAdmin ? (
+                          <select
+                            value={expense.category}
+                            onChange={(event) => handleChangeCategory(expense, event.target.value as ExpenseCategory)}
+                            className="input py-1 text-xs min-w-[150px]"
+                          >
+                            {Object.entries(CATEGORY_LABELS).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
+                          </select>
+                        ) : (
+                          <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold border inline-flex items-center gap-1", CATEGORY_COLORS[expense.category] || CATEGORY_COLORS.MISCELLANEOUS)}>
+                            <Lock className="w-3 h-3" /> {categoryLabel(expense.category)}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-text-primary font-medium max-w-[360px] truncate">{expense.description}</td>
                       <td className="px-4 py-3 font-mono font-bold text-danger text-right">{toMoney(Number(expense.amount || 0))}</td>
@@ -402,7 +527,7 @@ export default function Expenses() {
                   </div>
                 </div>
               ))}
-              {categoryBreakdown.length === 0 && <p className="text-sm text-text-secondary">No expense data for this filter.</p>}
+              {categoryBreakdown.length === 0 && <p className="text-sm text-text-secondary">No expense data this month.</p>}
             </div>
           </div>
 

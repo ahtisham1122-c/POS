@@ -565,5 +565,6 @@ enum ExpenseCategory {
   RENT
   MAINTENANCE
   CLEANING
+  WASTAGE
   MISCELLANEOUS
 }

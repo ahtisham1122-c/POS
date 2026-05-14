@@ -676,14 +676,16 @@ export function registerReportsIPC() {
     const todayMilkQty = db.prepare(`
       SELECT COALESCE(SUM(si.quantity), 0) AS qty
       FROM sale_items si JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
       WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
-        AND LOWER(si.product_name) LIKE '%milk%'
+        AND (UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%')
     `).get(...saleParams) as any;
     const todayYogurtQty = db.prepare(`
       SELECT COALESCE(SUM(si.quantity), 0) AS qty
       FROM sale_items si JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
       WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
-        AND LOWER(si.product_name) LIKE '%yog%'
+        AND (UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%')
     `).get(...saleParams) as any;
 
     const bills = Number(todayKpis?.bills || 0);
@@ -795,11 +797,12 @@ export function registerReportsIPC() {
         COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) AS date,
         COUNT(DISTINCT s.id) AS bills,
         COALESCE(SUM(DISTINCT s.grand_total), 0) AS revenue,
-        COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%milk%' THEN si.quantity ELSE 0 END), 0) AS milkKg,
-        COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%yog%'  THEN si.quantity ELSE 0 END), 0) AS yogurtKg
+        COALESCE(SUM(CASE WHEN UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%' THEN si.quantity ELSE 0 END), 0) AS milkKg,
+        COALESCE(SUM(CASE WHEN UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%' THEN si.quantity ELSE 0 END), 0) AS yogurtKg
       FROM sales s
       LEFT JOIN shifts sh ON sh.id = s.shift_id
       LEFT JOIN sale_items si ON si.sale_id = s.id
+      LEFT JOIN products p ON p.id = si.product_id
       WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
         AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
         AND s.status IN (${ACCOUNTING_SALE_STATUSES})
@@ -843,6 +846,72 @@ export function registerReportsIPC() {
       });
     }
     const bestDay = dailyTrend.reduce((best, row) => !best || row.revenue > best.revenue ? row : best, null as any);
+    const avg = (numbers: number[]) => numbers.length ? numbers.reduce((sum, n) => sum + n, 0) / numbers.length : 0;
+    const tomorrowForPlan = new Date(`${today}T00:00:00`);
+    tomorrowForPlan.setDate(tomorrowForPlan.getDate() + 1);
+    const tomorrowIso = formatLocalDate(tomorrowForPlan);
+    const tomorrowDow = tomorrowForPlan.getDay();
+    const historyForPlan = dailyTrend.filter((row) => row.date <= today);
+    const recent7 = historyForPlan.slice(-7);
+    const recent14 = historyForPlan.slice(-14);
+    const sameWeekday = historyForPlan
+      .filter((row) => new Date(`${row.date}T00:00:00`).getDay() === tomorrowDow)
+      .slice(-8);
+    const recent7Avg = avg(recent7.map((row) => Number(row.yogurtKg || 0)));
+    const recentActiveAvg = avg(recent14.filter((row) => Number(row.yogurtKg || 0) > 0).map((row) => Number(row.yogurtKg || 0)));
+    const sameWeekdayAvg = avg(sameWeekday.map((row) => Number(row.yogurtKg || 0)));
+    const todayYogurtForPlan = Number(historyForPlan[historyForPlan.length - 1]?.yogurtKg || 0);
+    const planBase = (
+      (sameWeekdayAvg || recent7Avg) * 0.55 +
+      (recentActiveAvg || recent7Avg) * 0.30 +
+      todayYogurtForPlan * 0.15
+    );
+    const recommendedYogurtKg = Number((Math.ceil(Math.max(0, planBase * 1.12) * 2) / 2).toFixed(1));
+    const yogurtPlan = {
+      targetDate: tomorrowIso,
+      recommendedKg: recommendedYogurtKg,
+      confidence: sameWeekday.length >= 4 && recent14.length >= 14 ? 'HIGH' : historyForPlan.length >= 10 ? 'MEDIUM' : 'LOW',
+      recent7AvgKg: Number(recent7Avg.toFixed(2)),
+      recentActiveAvgKg: Number(recentActiveAvg.toFixed(2)),
+      sameWeekdayAvgKg: Number(sameWeekdayAvg.toFixed(2)),
+      todayYogurtKg: Number(todayYogurtForPlan.toFixed(2)),
+      safetyBufferPct: 12,
+      basisDays: historyForPlan.length,
+      sameWeekdaySamples: sameWeekday.length
+    };
+
+    const customerBehaviorRow = db.prepare(`
+      SELECT
+        COUNT(s.id) as totalBills,
+        COALESCE(SUM(CASE WHEN s.customer_id IS NULL THEN 1 ELSE 0 END), 0) as walkInBills,
+        COALESCE(SUM(CASE WHEN s.customer_id IS NOT NULL THEN 1 ELSE 0 END), 0) as knownBills,
+        COUNT(DISTINCT s.customer_id) as knownCustomers,
+        COALESCE(SUM(CASE WHEN s.customer_id IS NULL THEN s.grand_total ELSE 0 END), 0) as walkInRevenue,
+        COALESCE(SUM(CASE WHEN s.customer_id IS NOT NULL THEN s.grand_total ELSE 0 END), 0) as knownRevenue
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+    `).get(trendStartIso, trendEndIso) as any;
+
+    const repeatCustomers = db.prepare(`
+      SELECT
+        c.id, c.name, c.phone,
+        COUNT(s.id) as visits,
+        COALESCE(SUM(s.grand_total), 0) as revenue,
+        MAX(COALESCE(sh.shift_date, substr(s.sale_date, 1, 10))) as lastVisit
+      FROM sales s
+      JOIN customers c ON c.id = s.customer_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      GROUP BY c.id, c.name, c.phone
+      HAVING COUNT(s.id) >= 2
+      ORDER BY visits DESC, revenue DESC
+      LIMIT 6
+    `).all(trendStartIso, trendEndIso) as any[];
 
     const topProducts = db.prepare(`
       SELECT
@@ -931,10 +1000,11 @@ export function registerReportsIPC() {
       `).get(since, until) as any;
       const row = db.prepare(`
         SELECT
-          COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%milk%' THEN si.quantity ELSE 0 END), 0) AS milkKg,
-          COALESCE(SUM(CASE WHEN LOWER(si.product_name) LIKE '%yog%'  THEN si.quantity ELSE 0 END), 0) AS yogurtKg
+          COALESCE(SUM(CASE WHEN UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%' THEN si.quantity ELSE 0 END), 0) AS milkKg,
+          COALESCE(SUM(CASE WHEN UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%' THEN si.quantity ELSE 0 END), 0) AS yogurtKg
         FROM sales s
         LEFT JOIN sale_items si ON si.sale_id = s.id
+        LEFT JOIN products p ON p.id = si.product_id
         LEFT JOIN shifts sh ON sh.id = s.shift_id
         WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
           AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
@@ -998,6 +1068,20 @@ export function registerReportsIPC() {
         combinedKg: Number((Number(row.milkKg || 0) + Number(row.yogurtKg || 0)).toFixed(3))
       })),
       compare,
+      yogurtPlan,
+      customerBehavior: {
+        totalBills: Number(customerBehaviorRow?.totalBills || 0),
+        walkInBills: Number(customerBehaviorRow?.walkInBills || 0),
+        knownBills: Number(customerBehaviorRow?.knownBills || 0),
+        knownCustomers: Number(customerBehaviorRow?.knownCustomers || 0),
+        walkInRevenue: Number(customerBehaviorRow?.walkInRevenue || 0),
+        knownRevenue: Number(customerBehaviorRow?.knownRevenue || 0),
+        repeatCustomers: repeatCustomers.map((row) => ({
+          ...row,
+          visits: Number(row.visits || 0),
+          revenue: Number(row.revenue || 0)
+        }))
+      },
       tenderMix,
       topProducts: topProducts.map((row) => ({
         ...row,

@@ -115,6 +115,7 @@ export class SyncService {
         'RENT',
         'MAINTENANCE',
         'CLEANING',
+        'WASTAGE',
         'MISCELLANEOUS'
       ]);
       data.category = allowed.has(category) ? category : 'MISCELLANEOUS';

@@ -83,6 +83,8 @@ export interface ElectronAPI {
     update: (id: string, data: any) => Promise<any>;
     remove: (id: string, options?: { managerPin?: string; reason?: string }) => Promise<any>;
     getSummary: () => Promise<any>;
+    getWastageDefaults: () => Promise<any[]>;
+    addWastage: (data: any) => Promise<any>;
   };
   reports: {
     getDailySummary: (date: string) => Promise<any>;
