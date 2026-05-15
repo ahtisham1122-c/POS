@@ -139,6 +139,17 @@ export default function Suppliers() {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Admin-only payment correction state. We keep the current user in renderer
+  // so the buttons only show for ADMINs; the IPC handler enforces the same
+  // check server-side, so this is just a UI gate.
+  const [currentUser, setCurrentUser] = useState<{ id?: string; role?: string } | null>(null);
+  const [paymentEdit, setPaymentEdit] = useState<{ payment: any; mode: "EDIT" | "DELETE" } | null>(null);
+  const [editPaymentAmount, setEditPaymentAmount] = useState("");
+  const [editPaymentNotes, setEditPaymentNotes] = useState("");
+  const [editAdminPassword, setEditAdminPassword] = useState("");
+  const [editPaymentSubmitting, setEditPaymentSubmitting] = useState(false);
+  const [editPaymentMessage, setEditPaymentMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   const selectedSupplier = useMemo(
     () => suppliers.find((supplier) => supplier.id === selectedSupplierId),
     [suppliers, selectedSupplierId]
@@ -162,7 +173,87 @@ export default function Suppliers() {
 
   useEffect(() => {
     loadData();
+    (async () => {
+      try {
+        const me = await window.electronAPI?.auth?.getMe();
+        setCurrentUser(me || null);
+      } catch {
+        setCurrentUser(null);
+      }
+    })();
   }, [collectionDate]);
+
+  function openPaymentEdit(payment: any) {
+    setPaymentEdit({ payment, mode: "EDIT" });
+    setEditPaymentAmount(String(payment.amount || ""));
+    setEditPaymentNotes(payment.notes || "");
+    setEditAdminPassword("");
+    setEditPaymentMessage(null);
+  }
+
+  function openPaymentDelete(payment: any) {
+    setPaymentEdit({ payment, mode: "DELETE" });
+    setEditPaymentAmount("");
+    setEditPaymentNotes("");
+    setEditAdminPassword("");
+    setEditPaymentMessage(null);
+  }
+
+  function closePaymentEdit() {
+    setPaymentEdit(null);
+    setEditPaymentAmount("");
+    setEditPaymentNotes("");
+    setEditAdminPassword("");
+    setEditPaymentMessage(null);
+  }
+
+  async function submitPaymentEdit() {
+    if (!paymentEdit) return;
+    // Admin must re-confirm by entering their password — this matches the
+    // 2-step flow we use elsewhere (e.g. the manager PIN modal in Settings).
+    if (!editAdminPassword) {
+      setEditPaymentMessage({ type: "error", text: "Enter your admin password to confirm." });
+      return;
+    }
+    // Verify the admin password via verifyManagerPin (which accepts the
+    // admin's own password). This pre-flight keeps the user from getting
+    // far with the wrong password.
+    const verify = await window.electronAPI?.auth?.verifyManagerPin({ pin: editAdminPassword, action: "supplier payment correction" });
+    if (!verify?.success) {
+      setEditPaymentMessage({ type: "error", text: verify?.error || "Wrong admin password." });
+      return;
+    }
+    setEditPaymentSubmitting(true);
+    try {
+      let result: { success: boolean; error?: string } | undefined;
+      if (paymentEdit.mode === "EDIT") {
+        const newAmount = Number(editPaymentAmount || 0);
+        if (newAmount <= 0) {
+          setEditPaymentMessage({ type: "error", text: "Amount must be greater than zero." });
+          return;
+        }
+        result = await window.electronAPI?.suppliers?.updatePayment(paymentEdit.payment.id, {
+          amount: newAmount,
+          notes: editPaymentNotes
+        });
+      } else {
+        result = await window.electronAPI?.suppliers?.deletePayment(paymentEdit.payment.id, {
+          reason: editPaymentNotes || "wrong entry"
+        });
+      }
+      if (!result?.success) {
+        setEditPaymentMessage({ type: "error", text: result?.error || "Action failed." });
+        return;
+      }
+      closePaymentEdit();
+      await loadData();
+      if (selectedSupplierId && activeTab === "REPORT") {
+        await loadStatement();
+      }
+    } finally {
+      setEditPaymentSubmitting(false);
+    }
+  }
 
   useEffect(() => {
     applyReportMode(reportMode);
@@ -595,6 +686,7 @@ export default function Suppliers() {
                                   <th className="text-left py-1">Date</th>
                                   <th className="text-left py-1">Notes</th>
                                   <th className="text-right py-1">Amount</th>
+                                  {currentUser?.role === "ADMIN" && <th className="text-right py-1 no-print">Actions</th>}
                                 </tr>
                               </thead>
                               <tbody>
@@ -603,10 +695,26 @@ export default function Suppliers() {
                                     <td className="py-1">{String(row.payment_date).slice(5, 10)}</td>
                                     <td className="py-1">{row.notes || "-"}</td>
                                     <td className="py-1 text-right font-bold">{toMoney(row.amount)}</td>
+                                    {currentUser?.role === "ADMIN" && (
+                                      <td className="py-1 text-right no-print">
+                                        <div className="flex justify-end gap-1">
+                                          <button
+                                            onClick={() => openPaymentEdit(row)}
+                                            className="text-[10px] font-bold px-2 py-0.5 rounded border border-info/40 text-info hover:bg-info/10"
+                                            title="Edit this payment"
+                                          >Edit</button>
+                                          <button
+                                            onClick={() => openPaymentDelete(row)}
+                                            className="text-[10px] font-bold px-2 py-0.5 rounded border border-danger/40 text-danger hover:bg-danger/10"
+                                            title="Void this payment"
+                                          >Void</button>
+                                        </div>
+                                      </td>
+                                    )}
                                   </tr>
                                 ))}
                                 {statement.payments.length === 0 && (
-                                  <tr><td colSpan={3} className="py-4 text-center">No payments in this period.</td></tr>
+                                  <tr><td colSpan={currentUser?.role === "ADMIN" ? 4 : 3} className="py-4 text-center">No payments in this period.</td></tr>
                                 )}
                               </tbody>
                             </table>
@@ -730,6 +838,70 @@ export default function Suppliers() {
               <button onClick={() => setIsPaymentModalOpen(false)} className="btn-secondary flex-1">Cancel</button>
               <button onClick={paySupplier} disabled={!paymentAmount || Number(paymentAmount) <= 0} className="w-1/2 rounded-lg bg-warning hover:bg-warning/90 text-black font-bold transition-colors disabled:opacity-50">
                 Confirm Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {paymentEdit && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+          <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-md overflow-hidden border border-surface-4 animate-slide-up">
+            <div className="p-5 border-b border-surface-4 flex justify-between items-center">
+              <h3 className="font-bold text-lg">
+                {paymentEdit.mode === "EDIT" ? "Correct Payment" : "Void Payment"}
+              </h3>
+              <button onClick={closePaymentEdit} className="text-text-secondary hover:text-text-primary"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="rounded-lg border border-surface-4 bg-surface-3/40 p-3 text-sm">
+                <p className="text-text-secondary text-xs">Original</p>
+                <p className="font-mono font-bold">{toMoney(paymentEdit.payment.amount)}</p>
+                <p className="text-xs text-text-secondary mt-1">{String(paymentEdit.payment.payment_date).slice(0, 10)} · {paymentEdit.payment.notes || "no note"}</p>
+              </div>
+              {paymentEdit.mode === "EDIT" ? (
+                <>
+                  <div>
+                    <label className="text-xs text-text-secondary font-bold mb-1 block">Corrected Amount</label>
+                    <input className="input text-xl font-mono" type="number" autoFocus value={editPaymentAmount} onChange={(e) => setEditPaymentAmount(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-text-secondary font-bold mb-1 block">Notes</label>
+                    <input className="input" value={editPaymentNotes} onChange={(e) => setEditPaymentNotes(e.target.value)} placeholder="e.g. wrong amount entered" />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-text-secondary">
+                    The full {toMoney(paymentEdit.payment.amount)} will be reversed. Supplier balance and cash register will be adjusted, and a REVERSAL row is recorded in the ledger.
+                  </div>
+                  <div>
+                    <label className="text-xs text-text-secondary font-bold mb-1 block">Reason</label>
+                    <input className="input" value={editPaymentNotes} onChange={(e) => setEditPaymentNotes(e.target.value)} placeholder="e.g. duplicate entry" autoFocus />
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="text-xs text-text-secondary font-bold mb-1 block">Your admin password</label>
+                <input type="password" className="input" value={editAdminPassword} onChange={(e) => setEditAdminPassword(e.target.value)} placeholder="Required" />
+              </div>
+              {editPaymentMessage && (
+                <div className={cn("text-sm rounded-md p-2", editPaymentMessage.type === "error" ? "bg-danger/10 text-danger" : "bg-success/10 text-success")}>
+                  {editPaymentMessage.text}
+                </div>
+              )}
+            </div>
+            <div className="p-4 bg-surface-3 border-t border-surface-4 flex justify-end gap-3">
+              <button onClick={closePaymentEdit} className="btn-secondary" disabled={editPaymentSubmitting}>Cancel</button>
+              <button
+                onClick={submitPaymentEdit}
+                disabled={editPaymentSubmitting}
+                className={cn(
+                  "px-6 rounded-md font-bold h-10 text-white disabled:opacity-50",
+                  paymentEdit.mode === "DELETE" ? "bg-danger hover:bg-danger/90" : "bg-primary hover:bg-primary-light"
+                )}
+              >
+                {editPaymentSubmitting ? "Working…" : paymentEdit.mode === "DELETE" ? "Void Payment" : "Save Correction"}
               </button>
             </div>
           </div>

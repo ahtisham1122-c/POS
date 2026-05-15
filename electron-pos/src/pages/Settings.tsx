@@ -47,6 +47,17 @@ export default function Settings() {
     confirmPin: "",
     role: "CASHIER" as "ADMIN" | "MANAGER" | "CASHIER"
   });
+  const [currentUser, setCurrentUser] = useState<{ id?: string; role?: string; name?: string } | null>(null);
+  const [userActionTarget, setUserActionTarget] = useState<any | null>(null);
+  // "PASSWORD" | "ROLE" | "DELETE" — drives a single modal dialog the admin
+  // confirms with their own password before any destructive change.
+  const [userActionType, setUserActionType] = useState<null | "PASSWORD" | "ROLE" | "DELETE">(null);
+  const [userActionPassword, setUserActionPassword] = useState("");
+  const [userActionNewPin, setUserActionNewPin] = useState("");
+  const [userActionConfirmPin, setUserActionConfirmPin] = useState("");
+  const [userActionNewRole, setUserActionNewRole] = useState<"ADMIN" | "MANAGER" | "CASHIER">("CASHIER");
+  const [userActionMessage, setUserActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [userActionSubmitting, setUserActionSubmitting] = useState(false);
   const [auditIntegrity, setAuditIntegrity] = useState<{ valid: boolean; checked: number; error?: string } | null>(null);
   const [shopConfig, setShopConfig] = useState({
     shop_name: "Gujjar Milk Shop",
@@ -240,7 +251,79 @@ export default function Settings() {
     loadRateHistory();
     loadBackupList();
     loadCfd();
+    loadCurrentUser();
   }, []);
+
+  const loadCurrentUser = async () => {
+    try {
+      const me = await window.electronAPI?.auth?.getMe();
+      setCurrentUser(me || null);
+    } catch {
+      setCurrentUser(null);
+    }
+  };
+
+  const openUserAction = (target: any, action: "PASSWORD" | "ROLE" | "DELETE") => {
+    setUserActionTarget(target);
+    setUserActionType(action);
+    setUserActionPassword("");
+    setUserActionNewPin("");
+    setUserActionConfirmPin("");
+    setUserActionNewRole((target?.role || "CASHIER") as any);
+    setUserActionMessage(null);
+  };
+
+  const closeUserAction = () => {
+    setUserActionType(null);
+    setUserActionTarget(null);
+    setUserActionPassword("");
+    setUserActionNewPin("");
+    setUserActionConfirmPin("");
+    setUserActionMessage(null);
+  };
+
+  const submitUserAction = async () => {
+    if (!userActionTarget || !userActionType) return;
+    setUserActionMessage(null);
+    if (!userActionPassword) {
+      setUserActionMessage({ type: "error", text: "Enter your admin password to confirm." });
+      return;
+    }
+    setUserActionSubmitting(true);
+    try {
+      let result: { success: boolean; error?: string } | undefined;
+      if (userActionType === "PASSWORD") {
+        if (userActionNewPin !== userActionConfirmPin) {
+          setUserActionMessage({ type: "error", text: "New PIN and confirmation do not match." });
+          return;
+        }
+        result = await window.electronAPI?.auth?.resetUserPassword({
+          userId: userActionTarget.id,
+          currentPassword: userActionPassword,
+          newPin: userActionNewPin
+        });
+      } else if (userActionType === "ROLE") {
+        result = await window.electronAPI?.auth?.updateUserRole({
+          userId: userActionTarget.id,
+          newRole: userActionNewRole,
+          currentPassword: userActionPassword
+        });
+      } else if (userActionType === "DELETE") {
+        result = await window.electronAPI?.auth?.deleteUser({
+          userId: userActionTarget.id,
+          currentPassword: userActionPassword
+        });
+      }
+      if (!result?.success) {
+        setUserActionMessage({ type: "error", text: result?.error || "Action failed." });
+        return;
+      }
+      await loadUsers();
+      closeUserAction();
+    } finally {
+      setUserActionSubmitting(false);
+    }
+  };
 
   const loadRateHistory = async () => {
     try {
@@ -1078,38 +1161,136 @@ export default function Settings() {
                       <th className="px-4 py-3">User</th>
                       <th className="px-4 py-3">Role</th>
                       <th className="px-4 py-3">Status</th>
+                      {currentUser?.role === "ADMIN" && <th className="px-4 py-3 text-right">Actions</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-4">
-                    {users.map(u => (
-                      <tr key={u.id} className="hover:bg-surface-3/50">
-                        <td className="px-4 py-3 flex items-center gap-3">
-                          <div className={cn("w-8 h-8 rounded-full flex items-center justify-center font-bold", u.role === "ADMIN" ? "bg-primary/20 text-primary" : "bg-blue-500/20 text-blue-400")}>
-                            {u.name.charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="font-semibold text-text-primary">{u.name}</p>
-                            <p className="text-xs text-text-secondary">@{u.username}</p>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={cn(
-                            "badge",
-                            u.role === "ADMIN" ? "bg-red-500/15 text-red-400" : "bg-green-500/15 text-green-400"
-                          )}>
-                            {u.role}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="badge badge-success">Active</span>
-                        </td>
-                      </tr>
-                    ))}
+                    {users.map(u => {
+                      const isSelf = currentUser?.id === u.id;
+                      return (
+                        <tr key={u.id} className="hover:bg-surface-3/50">
+                          <td className="px-4 py-3 flex items-center gap-3">
+                            <div className={cn("w-8 h-8 rounded-full flex items-center justify-center font-bold", u.role === "ADMIN" ? "bg-primary/20 text-primary" : "bg-blue-500/20 text-blue-400")}>
+                              {u.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="font-semibold text-text-primary">{u.name} {isSelf && <span className="text-[10px] text-text-secondary">(you)</span>}</p>
+                              <p className="text-xs text-text-secondary">@{u.username}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={cn(
+                              "badge",
+                              u.role === "ADMIN" ? "bg-red-500/15 text-red-400" : "bg-green-500/15 text-green-400"
+                            )}>
+                              {u.role}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="badge badge-success">Active</span>
+                          </td>
+                          {currentUser?.role === "ADMIN" && (
+                            <td className="px-4 py-3">
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={() => openUserAction(u, "PASSWORD")}
+                                  className="text-xs font-bold px-2 py-1 rounded-md border border-info/30 text-info hover:bg-info/10"
+                                >
+                                  Reset PIN
+                                </button>
+                                <button
+                                  onClick={() => openUserAction(u, "ROLE")}
+                                  disabled={isSelf}
+                                  className="text-xs font-bold px-2 py-1 rounded-md border border-warning/30 text-warning hover:bg-warning/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={isSelf ? "You cannot change your own role" : "Change role"}
+                                >
+                                  Change Role
+                                </button>
+                                <button
+                                  onClick={() => openUserAction(u, "DELETE")}
+                                  disabled={isSelf}
+                                  className="text-xs font-bold px-2 py-1 rounded-md border border-danger/30 text-danger hover:bg-danger/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={isSelf ? "You cannot delete your own account" : "Delete user"}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                     {users.length === 0 && (
-                      <tr><td colSpan={3} className="p-8 text-center text-text-secondary">No users found.</td></tr>
+                      <tr><td colSpan={currentUser?.role === "ADMIN" ? 4 : 3} className="p-8 text-center text-text-secondary">No users found.</td></tr>
                     )}
                   </tbody>
               </table>
+
+              {userActionType && userActionTarget && (
+                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-surface-2 rounded-xl shadow-float w-full max-w-md overflow-hidden border border-surface-4 animate-slide-up">
+                    <div className="p-5 border-b border-surface-4">
+                      <h3 className="font-bold text-lg">
+                        {userActionType === "PASSWORD" && `Reset PIN — ${userActionTarget.name}`}
+                        {userActionType === "ROLE" && `Change Role — ${userActionTarget.name}`}
+                        {userActionType === "DELETE" && `Delete user — ${userActionTarget.name}`}
+                      </h3>
+                      <p className="text-xs text-text-secondary mt-1">Admin password is required to confirm.</p>
+                    </div>
+                    <div className="p-5 space-y-3">
+                      {userActionType === "PASSWORD" && (
+                        <>
+                          <div>
+                            <label className="label">New PIN</label>
+                            <input type="password" inputMode="numeric" className="input" value={userActionNewPin} onChange={(e) => setUserActionNewPin(e.target.value)} placeholder="4-8 digits" />
+                          </div>
+                          <div>
+                            <label className="label">Confirm PIN</label>
+                            <input type="password" inputMode="numeric" className="input" value={userActionConfirmPin} onChange={(e) => setUserActionConfirmPin(e.target.value)} placeholder="Repeat" />
+                          </div>
+                        </>
+                      )}
+                      {userActionType === "ROLE" && (
+                        <div>
+                          <label className="label">New Role</label>
+                          <select className="input" value={userActionNewRole} onChange={(e) => setUserActionNewRole(e.target.value as any)}>
+                            <option value="CASHIER">Cashier - POS only</option>
+                            <option value="MANAGER">Manager - reports and approvals</option>
+                            <option value="ADMIN">Admin - full access</option>
+                          </select>
+                        </div>
+                      )}
+                      {userActionType === "DELETE" && (
+                        <div className="rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-text-secondary">
+                          This deactivates the user. They will not be able to log in. History (sales, ledger, audit) is preserved.
+                        </div>
+                      )}
+                      <div>
+                        <label className="label">Your admin password</label>
+                        <input type="password" className="input" value={userActionPassword} onChange={(e) => setUserActionPassword(e.target.value)} placeholder="Required" autoFocus />
+                      </div>
+                      {userActionMessage && (
+                        <div className={cn("text-sm rounded-md p-2", userActionMessage.type === "error" ? "bg-danger/10 text-danger" : "bg-success/10 text-success")}>
+                          {userActionMessage.text}
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-4 bg-surface-3 border-t border-surface-4 flex justify-end gap-3">
+                      <button onClick={closeUserAction} className="btn-secondary" disabled={userActionSubmitting}>Cancel</button>
+                      <button
+                        onClick={submitUserAction}
+                        disabled={userActionSubmitting}
+                        className={cn(
+                          "px-6 rounded-md font-bold h-10 text-white disabled:opacity-50",
+                          userActionType === "DELETE" ? "bg-danger hover:bg-danger/90" : "bg-primary hover:bg-primary-light"
+                        )}
+                      >
+                        {userActionSubmitting ? "Working…" : userActionType === "DELETE" ? "Delete" : "Confirm"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

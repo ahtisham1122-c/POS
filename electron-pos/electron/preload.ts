@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     logout: () => ipcRenderer.invoke('auth:logout'),
     verifyManagerPin: (data: any) => ipcRenderer.invoke('auth:verifyManagerPin', data),
     setManagerPin: (data: any) => ipcRenderer.invoke('auth:setManagerPin', data),
+    resetUserPassword: (data: any) => ipcRenderer.invoke('auth:resetUserPassword', data),
+    updateUserRole: (data: any) => ipcRenderer.invoke('auth:updateUserRole', data),
+    deleteUser: (data: any) => ipcRenderer.invoke('auth:deleteUser', data),
     completeInitialSetup: (data: any) => ipcRenderer.invoke('auth:completeInitialSetup', data),
   },
   audit: {
@@ -42,6 +45,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     collectMilk: (data: any) => ipcRenderer.invoke('suppliers:collectMilk', data),
     updateCollection: (id: string, data: any) => ipcRenderer.invoke('suppliers:updateCollection', id, data),
     collectPayment: (id: string, data: any) => ipcRenderer.invoke('suppliers:collectPayment', id, data),
+    updatePayment: (paymentId: string, data: any) => ipcRenderer.invoke('suppliers:updatePayment', paymentId, data),
+    deletePayment: (paymentId: string, data?: any) => ipcRenderer.invoke('suppliers:deletePayment', paymentId, data),
     getCollections: (filters?: any) => ipcRenderer.invoke('suppliers:getCollections', filters),
     getLedger: (id: string) => ipcRenderer.invoke('suppliers:getLedger', id),
     getCycleReport: (filters: any) => ipcRenderer.invoke('suppliers:getCycleReport', filters),

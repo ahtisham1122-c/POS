@@ -1195,7 +1195,7 @@ export default function POS() {
                 ))}
               </div>
               <div className="flex flex-col gap-2.5">
-                {[7, 8, 9, 10, 11, 12].map(kg => (
+                {[0.75, 8, 9, 10, 11, 12].map(kg => (
                   <button key={kg} onClick={() => addMilk(kg)} className="hp-choice-button flex-1 bg-white/5 hover:bg-white/10 active:bg-success/30 border border-white/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-95 group">
                     <span className="hp-choice-main text-2xl font-black text-white group-active:text-success">{kg} kg</span>
                     <span className="hp-choice-sub text-base font-mono text-accent mt-1">{toMoney(kg * activeRates.milk_rate)}</span>

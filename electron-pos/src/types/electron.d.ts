@@ -7,6 +7,9 @@ export interface ElectronAPI {
     logout: () => Promise<{ success: boolean }>;
     verifyManagerPin: (data: { pin: string; action?: string }) => Promise<{ success: boolean; approver?: any; error?: string }>;
     setManagerPin: (data: { userId?: string; currentPassword: string; newPin: string }) => Promise<{ success: boolean; error?: string }>;
+    resetUserPassword: (data: { userId: string; currentPassword: string; newPin: string }) => Promise<{ success: boolean; error?: string }>;
+    updateUserRole: (data: { userId: string; newRole: 'ADMIN' | 'MANAGER' | 'CASHIER'; currentPassword: string }) => Promise<{ success: boolean; error?: string }>;
+    deleteUser: (data: { userId: string; currentPassword: string }) => Promise<{ success: boolean; error?: string }>;
     completeInitialSetup: (data: { currentPassword: string; newPin: string }) => Promise<{ success: boolean; error?: string }>;
   };
   audit: {
@@ -40,6 +43,8 @@ export interface ElectronAPI {
     collectMilk: (data: any) => Promise<{ success: boolean; collectionId?: string; totalAmount?: number; supplierBalance?: number; error?: string }>;
     updateCollection: (id: string, data: any) => Promise<{ success: boolean; collectionId?: string; totalAmount?: number; supplierBalance?: number; error?: string }>;
     collectPayment: (id: string, data: any) => Promise<{ success: boolean; paymentId?: string; balanceAfter?: number; error?: string }>;
+    updatePayment: (paymentId: string, data: { amount: number; notes?: string }) => Promise<{ success: boolean; balanceAfter?: number; error?: string }>;
+    deletePayment: (paymentId: string, data?: { reason?: string }) => Promise<{ success: boolean; balanceAfter?: number; error?: string }>;
     getCollections: (filters?: any) => Promise<any[]>;
     getLedger: (id: string) => Promise<any[]>;
     getCycleReport: (filters: any) => Promise<any>;

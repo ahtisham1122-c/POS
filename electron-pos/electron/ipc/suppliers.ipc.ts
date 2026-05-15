@@ -2,8 +2,9 @@ import { ipcMain } from 'electron';
 import db from '../database/db';
 import * as crypto from 'crypto';
 import { createOutboxEntry } from '../sync/outboxHelper';
-import { addCashOut } from '../database/cashRegister';
+import { addCashOut, addCashIn } from '../database/cashRegister';
 import { getCurrentUser, requireCurrentUser } from './auth.ipc';
+import { logAudit } from '../audit/auditLog';
 
 type SupplierInput = {
   name: string;
@@ -585,6 +586,160 @@ export function registerSuppliersIPC() {
         addCashOut(amount);
 
         return { success: true, paymentId, balanceAfter };
+      })();
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Admin-only: correct a wrongly-entered supplier payment. Reverses the
+  // original payment's effect on the running balance and applies the new one,
+  // then records a REVERSAL + new PAYMENT pair in the supplier ledger so the
+  // audit trail stays intact.
+  ipcMain.handle('suppliers:updatePayment', (_event, paymentId: string, data: { amount: number; notes?: string }) => {
+    try {
+      const actor = requireCurrentUser(['ADMIN']);
+      return db.transaction(() => {
+        const payment = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(paymentId) as any;
+        if (!payment) throw new Error('Payment not found');
+        const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(payment.supplier_id) as any;
+        if (!supplier) throw new Error('Supplier not found');
+
+        const newAmount = Number(data?.amount || 0);
+        if (newAmount <= 0) throw new Error('Payment amount must be greater than zero');
+        const oldAmount = Number(payment.amount || 0);
+        const delta = newAmount - oldAmount;
+        const now = new Date().toISOString();
+        const balanceBefore = Number(supplier.current_balance || 0);
+        const balanceAfter = balanceBefore - delta;
+
+        db.prepare('UPDATE supplier_payments SET amount = ?, notes = ?, synced = 0 WHERE id = ?')
+          .run(newAmount, data?.notes ?? payment.notes ?? null, paymentId);
+        createOutboxEntry('supplier_payments', 'UPDATE', paymentId, {
+          id: paymentId,
+          amount: newAmount,
+          notes: data?.notes ?? payment.notes ?? null
+        });
+
+        db.prepare('UPDATE suppliers SET current_balance = ?, updated_at = ?, synced = 0 WHERE id = ?')
+          .run(balanceAfter, now, supplier.id);
+        createOutboxEntry('suppliers', 'UPDATE', supplier.id, {
+          id: supplier.id,
+          current_balance: balanceAfter,
+          updated_at: now
+        });
+
+        // Audit trail in the ledger — never edit the original PAYMENT row,
+        // always append a CORRECTION row so totals over old periods stay
+        // reproducible.
+        const ledgerId = crypto.randomUUID();
+        const description = `Admin corrected payment ${paymentId.slice(0, 8)}: Rs. ${oldAmount} → Rs. ${newAmount}`;
+        db.prepare(`
+          INSERT INTO supplier_ledger_entries (
+            id, supplier_id, payment_id, entry_type, amount, balance_after,
+            description, entry_date, created_at, synced
+          ) VALUES (?, ?, ?, 'CORRECTION', ?, ?, ?, ?, ?, 0)
+        `).run(ledgerId, supplier.id, paymentId, delta, balanceAfter, description, now, now);
+        createOutboxEntry('supplier_ledger_entries', 'INSERT', ledgerId, {
+          id: ledgerId,
+          supplier_id: supplier.id,
+          payment_id: paymentId,
+          entry_type: 'CORRECTION',
+          amount: delta,
+          balance_after: balanceAfter,
+          description,
+          entry_date: now,
+          created_at: now
+        });
+
+        // Cash-register adjustment: if we paid more, that's more cash out; if
+        // less, return the difference back as cash in.
+        if (delta > 0) addCashOut(delta);
+        else if (delta < 0) addCashIn(Math.abs(delta));
+
+        logAudit({
+          actionType: 'SUPPLIER_PAYMENT_CORRECTED',
+          entityType: 'supplier_payments',
+          entityId: paymentId,
+          before: { amount: oldAmount, notes: payment.notes },
+          after: { amount: newAmount, notes: data?.notes ?? payment.notes, supplier: supplier.name },
+          actor
+        });
+
+        return { success: true, balanceAfter };
+      })();
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('suppliers:deletePayment', (_event, paymentId: string, opts?: { reason?: string }) => {
+    try {
+      const actor = requireCurrentUser(['ADMIN']);
+      return db.transaction(() => {
+        const payment = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(paymentId) as any;
+        if (!payment) throw new Error('Payment not found');
+        const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(payment.supplier_id) as any;
+        if (!supplier) throw new Error('Supplier not found');
+
+        const amount = Number(payment.amount || 0);
+        const now = new Date().toISOString();
+        const balanceBefore = Number(supplier.current_balance || 0);
+        const balanceAfter = balanceBefore + amount;
+
+        // Soft-delete: keep the row for sync/history, mark voided. Schema
+        // doesn't have a 'voided' column on supplier_payments, so we zero
+        // the amount and prefix the notes — same approach used for voided
+        // sales elsewhere in this codebase.
+        const voidNote = `[VOIDED by ${actor.name}${opts?.reason ? `: ${opts.reason}` : ''}] ` + (payment.notes || '');
+        db.prepare('UPDATE supplier_payments SET amount = 0, notes = ?, synced = 0 WHERE id = ?')
+          .run(voidNote, paymentId);
+        createOutboxEntry('supplier_payments', 'UPDATE', paymentId, {
+          id: paymentId,
+          amount: 0,
+          notes: voidNote
+        });
+
+        db.prepare('UPDATE suppliers SET current_balance = ?, updated_at = ?, synced = 0 WHERE id = ?')
+          .run(balanceAfter, now, supplier.id);
+        createOutboxEntry('suppliers', 'UPDATE', supplier.id, {
+          id: supplier.id,
+          current_balance: balanceAfter,
+          updated_at: now
+        });
+
+        const ledgerId = crypto.randomUUID();
+        const description = `Admin voided payment ${paymentId.slice(0, 8)}: Rs. ${amount} reversed${opts?.reason ? ` (${opts.reason})` : ''}`;
+        db.prepare(`
+          INSERT INTO supplier_ledger_entries (
+            id, supplier_id, payment_id, entry_type, amount, balance_after,
+            description, entry_date, created_at, synced
+          ) VALUES (?, ?, ?, 'REVERSAL', ?, ?, ?, ?, ?, 0)
+        `).run(ledgerId, supplier.id, paymentId, -amount, balanceAfter, description, now, now);
+        createOutboxEntry('supplier_ledger_entries', 'INSERT', ledgerId, {
+          id: ledgerId,
+          supplier_id: supplier.id,
+          payment_id: paymentId,
+          entry_type: 'REVERSAL',
+          amount: -amount,
+          balance_after: balanceAfter,
+          description,
+          entry_date: now,
+          created_at: now
+        });
+
+        addCashIn(amount);
+
+        logAudit({
+          actionType: 'SUPPLIER_PAYMENT_VOIDED',
+          entityType: 'supplier_payments',
+          entityId: paymentId,
+          before: { amount, notes: payment.notes },
+          after: { reason: opts?.reason || null, supplier: supplier.name },
+          actor
+        });
+
+        return { success: true, balanceAfter };
       })();
     } catch (error: any) {
       return { success: false, error: error.message };

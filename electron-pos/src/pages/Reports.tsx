@@ -38,11 +38,31 @@ function ReportPrintView({
     PNL: "Profit & Loss",
   };
 
+  // Thermal paper is narrow (72mm). Truncate long names and cap row lists so
+  // a full A4 worth of bills doesn't waste a meter of paper. The SALES tab
+  // shows top-N by amount + a payment-type subtotal so the owner can still
+  // see "where the money came from" at a glance.
+  const MAX_ROWS = 40;
+  const truncate = (text: string, max: number) =>
+    !text ? "-" : text.length > max ? text.slice(0, max - 1) + "…" : text;
+
+  const salesSubtotalsByType = salesHistory.reduce<Record<string, { count: number; amount: number }>>((acc, sale) => {
+    const type = String(sale.payment_type || "OTHER").toUpperCase();
+    if (!acc[type]) acc[type] = { count: 0, amount: 0 };
+    acc[type].count += 1;
+    acc[type].amount += Number(sale.grand_total || 0);
+    return acc;
+  }, {});
+  const salesGrandTotal = salesHistory.reduce((sum, s) => sum + Number(s.grand_total || 0), 0);
+  const productsTotal = productPerformance.reduce((sum, p) => sum + Number(p.totalSales || 0), 0);
+  const productsQtyTotal = productPerformance.reduce((sum, p) => sum + Number(p.totalQty || 0), 0);
+  const duesTotal = duesData.reduce((sum, d) => sum + Number(d.current_balance || 0), 0);
+
   return (
     <div className="print-target thermal-report">
       <div className="thermal-report-inner">
         <div className="thermal-center thermal-title">GUJJAR MILK SHOP</div>
-        <div className="thermal-center">{titleMap[activeTab]}</div>
+        <div className="thermal-center thermal-subtitle">{titleMap[activeTab]}</div>
         <div className="thermal-center thermal-muted">
           {activeTab === "PNL" ? `${plStartDate} to ${plEndDate}` : dateStr}
         </div>
@@ -50,12 +70,14 @@ function ReportPrintView({
 
         {activeTab === "DAILY" && dailyData && (
           <>
+            <div className="thermal-section-title">Money</div>
             <div className="thermal-row"><span>Total Sales</span><strong>{toMoney(dailyData.totalSales)}</strong></div>
             <div className="thermal-row"><span>Cash Collected</span><strong>{toMoney(dailyData.cashSales)}</strong></div>
             <div className="thermal-row"><span>Credit Sales</span><strong>{toMoney(dailyData.creditSales)}</strong></div>
-            <div className="thermal-row"><span>Refunds</span><strong>{toMoney(dailyData.refunds)}</strong></div>
-            <div className="thermal-row"><span>Expenses</span><strong>{toMoney(dailyData.expenses)}</strong></div>
-            <div className="thermal-row"><span>Total Bills</span><strong>{dailyData.bills || 0}</strong></div>
+            <div className="thermal-row"><span>Refunds</span><strong>- {toMoney(dailyData.refunds)}</strong></div>
+            <div className="thermal-row"><span>Expenses</span><strong>- {toMoney(dailyData.expenses)}</strong></div>
+            <div className="thermal-section-title">Volume</div>
+            <div className="thermal-row"><span>Bills</span><strong>{dailyData.bills || 0}</strong></div>
             <div className="thermal-row"><span>Milk Sold</span><strong>{Number(dailyData.milkSold || 0).toFixed(2)} kg</strong></div>
             <div className="thermal-row"><span>Yogurt Sold</span><strong>{Number(dailyData.yogurtSold || 0).toFixed(2)} kg</strong></div>
             <div className="thermal-rule" />
@@ -65,50 +87,87 @@ function ReportPrintView({
 
         {activeTab === "SALES" && (
           <>
-            <div className="thermal-row thermal-head"><span>Bill</span><span>Total</span></div>
-            {salesHistory.slice(0, 60).map((sale) => (
+            <div className="thermal-section-title">By payment type</div>
+            {Object.entries(salesSubtotalsByType).sort((a, b) => b[1].amount - a[1].amount).map(([type, agg]) => (
+              <div key={type} className="thermal-row">
+                <span>{type} ({agg.count})</span>
+                <strong>{toMoney(agg.amount)}</strong>
+              </div>
+            ))}
+            <div className="thermal-rule" />
+            <div className="thermal-row thermal-head"><span>Bill #</span><span>Total</span></div>
+            {salesHistory.slice(0, MAX_ROWS).map((sale) => (
               <div key={sale.id} className="thermal-sale-row">
                 <div>
-                  <strong>{sale.bill_number}</strong> {sale.token_number ? `#${sale.token_number}` : ""}
-                  <div className="thermal-muted">{format(new Date(sale.sale_date), "hh:mm a")} {sale.payment_type}</div>
+                  <strong>{truncate(String(sale.bill_number || ""), 10)}</strong>
+                  {sale.token_number ? <span> #{sale.token_number}</span> : null}
+                  <div className="thermal-muted">{format(new Date(sale.sale_date), "HH:mm")} · {String(sale.payment_type || "").slice(0, 6)}</div>
                 </div>
                 <strong>{toMoney(sale.grand_total)}</strong>
               </div>
             ))}
+            {salesHistory.length > MAX_ROWS && (
+              <div className="thermal-center thermal-muted">
+                + {salesHistory.length - MAX_ROWS} more bills not shown
+              </div>
+            )}
             <div className="thermal-rule" />
-            <div className="thermal-row thermal-total"><span>Rows</span><strong>{salesHistory.length}</strong></div>
+            <div className="thermal-row thermal-total"><span>Bills ({salesHistory.length})</span><strong>{toMoney(salesGrandTotal)}</strong></div>
           </>
         )}
 
         {activeTab === "PRODUCTS" && (
           <>
-            {productPerformance.slice(0, 60).map((p, index) => (
+            <div className="thermal-row thermal-head"><span>Product</span><span>Sales</span></div>
+            {productPerformance.slice(0, MAX_ROWS).map((p, index) => (
               <div key={p.productId || index} className="thermal-sale-row">
-                <div><strong>{p.productName}</strong><div className="thermal-muted">Qty {Number(p.totalQty || 0).toFixed(2)}</div></div>
+                <div>
+                  <span className="thermal-name">{truncate(String(p.productName || ""), 22)}</span>
+                  <div className="thermal-muted">Qty {Number(p.totalQty || 0).toFixed(2)}</div>
+                </div>
                 <strong>{toMoney(p.totalSales)}</strong>
               </div>
             ))}
+            {productPerformance.length > MAX_ROWS && (
+              <div className="thermal-center thermal-muted">
+                + {productPerformance.length - MAX_ROWS} more products not shown
+              </div>
+            )}
+            <div className="thermal-rule" />
+            <div className="thermal-row thermal-total"><span>Total ({productPerformance.length})</span><strong>{toMoney(productsTotal)}</strong></div>
+            <div className="thermal-row thermal-muted"><span>All Qty</span><strong>{productsQtyTotal.toFixed(2)}</strong></div>
           </>
         )}
 
         {activeTab === "DUES" && (
           <>
-            {duesData.slice(0, 60).map((d) => (
+            <div className="thermal-row thermal-head"><span>Customer</span><span>Balance</span></div>
+            {duesData.slice(0, MAX_ROWS).map((d) => (
               <div key={d.id} className="thermal-sale-row">
-                <div><strong>{d.name}</strong><div className="thermal-muted">{d.phone || "-"}</div></div>
+                <div>
+                  <span className="thermal-name">{truncate(String(d.name || ""), 22)}</span>
+                  <div className="thermal-muted">{truncate(String(d.phone || "-"), 14)}</div>
+                </div>
                 <strong>{toMoney(d.current_balance)}</strong>
               </div>
             ))}
+            {duesData.length > MAX_ROWS && (
+              <div className="thermal-center thermal-muted">
+                + {duesData.length - MAX_ROWS} more customers not shown
+              </div>
+            )}
             <div className="thermal-rule" />
-            <div className="thermal-row thermal-total"><span>Total Dues</span><strong>{toMoney(duesData.reduce((sum, d) => sum + Number(d.current_balance || 0), 0))}</strong></div>
+            <div className="thermal-row thermal-total"><span>Total Dues ({duesData.length})</span><strong>{toMoney(duesTotal)}</strong></div>
           </>
         )}
 
         {activeTab === "PNL" && profitLossData && (
           <>
+            <div className="thermal-section-title">Revenue</div>
             <div className="thermal-row"><span>Gross Revenue</span><strong>{toMoney(profitLossData.grossRevenue ?? profitLossData.revenue)}</strong></div>
             <div className="thermal-row"><span>Refunds</span><strong>- {toMoney(profitLossData.refunds)}</strong></div>
             <div className="thermal-row"><span>Net Revenue</span><strong>{toMoney(profitLossData.revenue)}</strong></div>
+            <div className="thermal-section-title">Costs</div>
             <div className="thermal-row"><span>COGS</span><strong>- {toMoney(profitLossData.cogs)}</strong></div>
             <div className="thermal-row"><span>Expenses</span><strong>- {toMoney(profitLossData.expenses)}</strong></div>
             <div className="thermal-rule" />
@@ -119,7 +178,9 @@ function ReportPrintView({
         {!dailyData && activeTab === "DAILY" && <div className="thermal-center">No data found.</div>}
         {!profitLossData && activeTab === "PNL" && <div className="thermal-center">No data found.</div>}
         <div className="thermal-rule" />
-        <div className="thermal-center thermal-muted">Printed {format(new Date(), "dd MMM yyyy hh:mm a")}</div>
+        <div className="thermal-center thermal-muted">
+          {format(new Date(), "dd MMM yyyy hh:mm a")}
+        </div>
       </div>
     </div>
   );

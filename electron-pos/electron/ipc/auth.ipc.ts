@@ -240,6 +240,144 @@ export function registerAuthIPC() {
     }
   });
 
+  // Admin-only: reset any user's login PIN. Requires the admin's *own*
+  // current password as a second factor so a logged-in admin walking away
+  // from the screen doesn't expose every account.
+  ipcMain.handle('auth:resetUserPassword', async (_event, data: { userId?: string; currentPassword?: string; newPin?: string }) => {
+    try {
+      const actor = requireCurrentUser(['ADMIN']);
+      const targetUserId = String(data?.userId || '');
+      const currentPassword = String(data?.currentPassword || '');
+      const newPin = String(data?.newPin || '').trim();
+      validatePrivatePin(newPin);
+
+      const actorRow = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(actor.id) as any;
+      if (!actorRow || !verifyPasswordOrPin(currentPassword, actorRow.password_hash)) {
+        throw new Error('Your admin password is incorrect.');
+      }
+
+      const target = db.prepare('SELECT id, name, username, role FROM users WHERE id = ? AND is_active = 1').get(targetUserId) as any;
+      if (!target) throw new Error('Target user not found');
+
+      const now = new Date().toISOString();
+      const hash = bcrypt.hashSync(newPin, 12);
+      const managerPinHash = target.role === 'CASHIER' ? null : hash;
+      db.prepare('UPDATE users SET password_hash = ?, manager_pin_hash = ?, updated_at = ?, synced = 0 WHERE id = ?')
+        .run(hash, managerPinHash, now, target.id);
+
+      logAudit({
+        actionType: 'USER_PASSWORD_RESET',
+        entityType: 'users',
+        entityId: target.id,
+        after: { targetUser: target.name, role: target.role },
+        actor
+      });
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('auth:updateUserRole', async (_event, data: { userId?: string; newRole?: string; currentPassword?: string }) => {
+    try {
+      const actor = requireCurrentUser(['ADMIN']);
+      const targetUserId = String(data?.userId || '');
+      const newRole = String(data?.newRole || '').trim().toUpperCase();
+      const currentPassword = String(data?.currentPassword || '');
+
+      if (!['ADMIN', 'MANAGER', 'CASHIER'].includes(newRole)) {
+        throw new Error('Choose a valid role');
+      }
+
+      const actorRow = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(actor.id) as any;
+      if (!actorRow || !verifyPasswordOrPin(currentPassword, actorRow.password_hash)) {
+        throw new Error('Your admin password is incorrect.');
+      }
+
+      const target = db.prepare('SELECT id, name, role FROM users WHERE id = ? AND is_active = 1').get(targetUserId) as any;
+      if (!target) throw new Error('Target user not found');
+      if (target.role === newRole) {
+        return { success: true };
+      }
+
+      // Don't let the actor demote themselves below admin, and don't allow
+      // demoting the last remaining admin — that would lock the shop out of
+      // its own settings.
+      if (target.id === actor.id && newRole !== 'ADMIN') {
+        throw new Error('You cannot change your own admin role.');
+      }
+      if (target.role === 'ADMIN' && newRole !== 'ADMIN') {
+        const adminCount = (db.prepare("SELECT COUNT(*) as n FROM users WHERE role = 'ADMIN' AND is_active = 1").get() as any)?.n || 0;
+        if (adminCount <= 1) throw new Error('At least one admin must remain.');
+      }
+
+      const now = new Date().toISOString();
+      // When promoting a cashier to manager/admin, mirror their login PIN as
+      // their manager-PIN so manager approvals still work. When demoting to
+      // cashier, clear the manager-PIN hash.
+      const actorTargetRow = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(target.id) as any;
+      const managerPinHash = newRole === 'CASHIER' ? null : actorTargetRow?.password_hash || null;
+      db.prepare('UPDATE users SET role = ?, manager_pin_hash = ?, updated_at = ?, synced = 0 WHERE id = ?')
+        .run(newRole, managerPinHash, now, target.id);
+
+      logAudit({
+        actionType: 'USER_ROLE_CHANGED',
+        entityType: 'users',
+        entityId: target.id,
+        before: { role: target.role },
+        after: { role: newRole, targetUser: target.name },
+        actor
+      });
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('auth:deleteUser', async (_event, data: { userId?: string; currentPassword?: string }) => {
+    try {
+      const actor = requireCurrentUser(['ADMIN']);
+      const targetUserId = String(data?.userId || '');
+      const currentPassword = String(data?.currentPassword || '');
+
+      const actorRow = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(actor.id) as any;
+      if (!actorRow || !verifyPasswordOrPin(currentPassword, actorRow.password_hash)) {
+        throw new Error('Your admin password is incorrect.');
+      }
+
+      const target = db.prepare('SELECT id, name, role FROM users WHERE id = ? AND is_active = 1').get(targetUserId) as any;
+      if (!target) throw new Error('Target user not found');
+      if (target.id === actor.id) throw new Error('You cannot delete your own account.');
+      if (target.role === 'ADMIN') {
+        const adminCount = (db.prepare("SELECT COUNT(*) as n FROM users WHERE role = 'ADMIN' AND is_active = 1").get() as any)?.n || 0;
+        if (adminCount <= 1) throw new Error('At least one admin must remain.');
+      }
+
+      const now = new Date().toISOString();
+      db.prepare('UPDATE users SET is_active = 0, updated_at = ?, synced = 0 WHERE id = ?')
+        .run(now, target.id);
+      createOutboxEntry('users', 'UPDATE', target.id, {
+        id: target.id,
+        is_active: 0,
+        updated_at: now
+      });
+
+      logAudit({
+        actionType: 'USER_DELETED',
+        entityType: 'users',
+        entityId: target.id,
+        before: { name: target.name, role: target.role },
+        actor
+      });
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
   ipcMain.handle('auth:completeInitialSetup', async (_event, data: { currentPassword?: string; newPin?: string }) => {
     try {
       if (setupCompleted()) {
