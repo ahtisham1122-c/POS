@@ -846,38 +846,156 @@ export function registerReportsIPC() {
       });
     }
     const bestDay = dailyTrend.reduce((best, row) => !best || row.revenue > best.revenue ? row : best, null as any);
-    const avg = (numbers: number[]) => numbers.length ? numbers.reduce((sum, n) => sum + n, 0) / numbers.length : 0;
+
+    // ---- Yogurt production plan (multi-factor) ----
+    //
+    // Yogurt takes ~24h to set. Owner wants the prediction at *this morning*
+    // so the staff knows how many kg of milk to set aside today to sell as
+    // yogurt tomorrow. The model blends four signals:
+    //
+    //   1. Same-weekday median (last 8 weeks)  → robust seasonal baseline.
+    //   2. EWMA of last 14 active days          → captures very recent shift.
+    //   3. Today-so-far                         → real-time pulse.
+    //   4. Customer-mix factor                  → sticky khata demand bumps.
+    //
+    // Adjusted by a trend factor (recent 7 vs prior 7) and a *dynamic* safety
+    // buffer scaled by historical volatility (coefficient of variation), so a
+    // steady shop gets a tight prediction and a noisy one gets more buffer.
+    const mean = (numbers: number[]) => numbers.length ? numbers.reduce((sum, n) => sum + n, 0) / numbers.length : 0;
+    const median = (numbers: number[]) => {
+      if (!numbers.length) return 0;
+      const sorted = [...numbers].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    };
+    const stddev = (numbers: number[]) => {
+      if (numbers.length < 2) return 0;
+      const m = mean(numbers);
+      return Math.sqrt(mean(numbers.map((n) => (n - m) ** 2)));
+    };
+
     const tomorrowForPlan = new Date(`${today}T00:00:00`);
     tomorrowForPlan.setDate(tomorrowForPlan.getDate() + 1);
     const tomorrowIso = formatLocalDate(tomorrowForPlan);
     const tomorrowDow = tomorrowForPlan.getDay();
     const historyForPlan = dailyTrend.filter((row) => row.date <= today);
     const recent7 = historyForPlan.slice(-7);
-    const recent14 = historyForPlan.slice(-14);
+    const prior7 = historyForPlan.slice(-14, -7);
+    const recent14Active = historyForPlan.slice(-14).filter((row) => Number(row.yogurtKg || 0) > 0);
     const sameWeekday = historyForPlan
       .filter((row) => new Date(`${row.date}T00:00:00`).getDay() === tomorrowDow)
       .slice(-8);
-    const recent7Avg = avg(recent7.map((row) => Number(row.yogurtKg || 0)));
-    const recentActiveAvg = avg(recent14.filter((row) => Number(row.yogurtKg || 0) > 0).map((row) => Number(row.yogurtKg || 0)));
-    const sameWeekdayAvg = avg(sameWeekday.map((row) => Number(row.yogurtKg || 0)));
+    const sameWeekdayKgs = sameWeekday.map((row) => Number(row.yogurtKg || 0)).filter((value) => value > 0);
+
+    // Use median when we have enough same-weekday data (>= 3) — robust to
+    // outlier days (e.g. Eid bump that won't repeat). Fall back to mean.
+    const sameWeekdayMedian = median(sameWeekdayKgs);
+    const sameWeekdayMean = mean(sameWeekdayKgs);
+    const sameWeekdayBaseline = sameWeekdayKgs.length >= 3 ? sameWeekdayMedian : sameWeekdayMean;
+
+    // EWMA over recent active days — alpha 0.35 puts ~64% of weight on the
+    // last 5 days, so a sudden demand shift gets reflected within a week.
+    const ewmaAlpha = 0.35;
+    let ewma = recent14Active.length ? Number(recent14Active[0].yogurtKg || 0) : 0;
+    for (let i = 1; i < recent14Active.length; i++) {
+      ewma = ewmaAlpha * Number(recent14Active[i].yogurtKg || 0) + (1 - ewmaAlpha) * ewma;
+    }
+    const recent7Avg = mean(recent7.map((row) => Number(row.yogurtKg || 0)));
+    const prior7Avg = mean(prior7.map((row) => Number(row.yogurtKg || 0)));
+    const recentActiveAvg = mean(recent14Active.map((row) => Number(row.yogurtKg || 0)));
     const todayYogurtForPlan = Number(historyForPlan[historyForPlan.length - 1]?.yogurtKg || 0);
-    const planBase = (
-      (sameWeekdayAvg || recent7Avg) * 0.55 +
-      (recentActiveAvg || recent7Avg) * 0.30 +
-      todayYogurtForPlan * 0.15
-    );
-    const recommendedYogurtKg = Number((Math.ceil(Math.max(0, planBase * 1.12) * 2) / 2).toFixed(1));
+
+    // Week-over-week trend factor, clamped so a single freak day can't double
+    // the order. >1 = demand rising, <1 = falling.
+    let trendFactor = 1;
+    if (prior7Avg > 0 && recent7Avg > 0) {
+      trendFactor = Math.max(0.85, Math.min(1.20, recent7Avg / prior7Avg));
+    }
+    const weekTrendPct = (trendFactor - 1) * 100;
+    const weekTrend: 'rising' | 'falling' | 'steady' =
+      weekTrendPct > 3 ? 'rising' : weekTrendPct < -3 ? 'falling' : 'steady';
+
+    // Customer-mix factor — known/khata customers buy on routine, so a high
+    // known-share means demand is sticky and we can lean slightly higher
+    // without overproducing. Computed inline against the trend window.
+    const planMixRow = db.prepare(`
+      SELECT
+        COUNT(s.id) as totalBills,
+        COALESCE(SUM(CASE WHEN s.customer_id IS NOT NULL THEN 1 ELSE 0 END), 0) as knownBills
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+    `).get(trendStartIso, trendEndIso) as { totalBills: number; knownBills: number } | undefined;
+    const knownShare = planMixRow && Number(planMixRow.totalBills) > 0
+      ? Number(planMixRow.knownBills) / Number(planMixRow.totalBills)
+      : 0;
+    const mixFactor = knownShare >= 0.35 ? 1.03 : knownShare >= 0.20 ? 1.015 : 1.00;
+
+    // Blend the three baseline signals. Weight the seasonal (same-weekday)
+    // signal highest when we have enough samples; otherwise lean on EWMA.
+    const haveStrongSeasonal = sameWeekdayKgs.length >= 4;
+    const wSeasonal = haveStrongSeasonal ? 0.50 : 0.30;
+    const wEwma = haveStrongSeasonal ? 0.30 : 0.50;
+    const wToday = 0.20;
+    const seasonalSignal = sameWeekdayBaseline || ewma || recent7Avg;
+    const ewmaSignal = ewma || recentActiveAvg || recent7Avg;
+    const blended = (seasonalSignal * wSeasonal) + (ewmaSignal * wEwma) + (todayYogurtForPlan * wToday);
+    const adjusted = blended * trendFactor * mixFactor;
+
+    // Dynamic safety buffer: more volatility → bigger buffer.
+    // CV = stddev / mean; ranges roughly 0 (steady) to 0.6+ (chaotic).
+    const cv = sameWeekdayMean > 0 ? stddev(sameWeekdayKgs) / sameWeekdayMean : 0;
+    const safetyBufferPct = Math.max(8, Math.min(22, Math.round(8 + cv * 25)));
+    const recommendedRaw = adjusted * (1 + safetyBufferPct / 100);
+    const recommendedYogurtKg = Number((Math.ceil(Math.max(0, recommendedRaw) * 2) / 2).toFixed(1));
+
+    // Expected range — ±1 stddev around the adjusted (pre-buffer) estimate.
+    const rangeSpread = sameWeekdayKgs.length >= 2 ? stddev(sameWeekdayKgs) : adjusted * 0.15;
+    const expectedRangeKg = {
+      low: Number(Math.max(0, adjusted - rangeSpread).toFixed(1)),
+      high: Number((adjusted + rangeSpread).toFixed(1))
+    };
+
+    const volatilityPct = Number((cv * 100).toFixed(1));
+    const confidence: 'HIGH' | 'MEDIUM' | 'LOW' =
+      sameWeekdayKgs.length >= 4 && historyForPlan.length >= 14 && cv < 0.30
+        ? 'HIGH'
+        : historyForPlan.length >= 10
+          ? 'MEDIUM'
+          : 'LOW';
+
     const yogurtPlan = {
       targetDate: tomorrowIso,
       recommendedKg: recommendedYogurtKg,
-      confidence: sameWeekday.length >= 4 && recent14.length >= 14 ? 'HIGH' : historyForPlan.length >= 10 ? 'MEDIUM' : 'LOW',
+      confidence,
       recent7AvgKg: Number(recent7Avg.toFixed(2)),
       recentActiveAvgKg: Number(recentActiveAvg.toFixed(2)),
-      sameWeekdayAvgKg: Number(sameWeekdayAvg.toFixed(2)),
+      sameWeekdayAvgKg: Number(sameWeekdayMean.toFixed(2)),
+      sameWeekdayMedianKg: Number(sameWeekdayMedian.toFixed(2)),
+      ewmaKg: Number(ewma.toFixed(2)),
       todayYogurtKg: Number(todayYogurtForPlan.toFixed(2)),
-      safetyBufferPct: 12,
+      safetyBufferPct,
       basisDays: historyForPlan.length,
-      sameWeekdaySamples: sameWeekday.length
+      sameWeekdaySamples: sameWeekdayKgs.length,
+      weekTrend,
+      weekTrendPct: Number(weekTrendPct.toFixed(1)),
+      volatilityPct,
+      knownSharePct: Number((knownShare * 100).toFixed(1)),
+      expectedRangeKg,
+      // Series for the same-weekday sparkline in the UI.
+      sameWeekdayHistory: sameWeekday.map((row) => ({
+        date: row.date,
+        yogurtKg: Number(Number(row.yogurtKg || 0).toFixed(2))
+      })),
+      factors: {
+        seasonalKg: Number(seasonalSignal.toFixed(2)),
+        ewmaKg: Number(ewmaSignal.toFixed(2)),
+        todayKg: Number(todayYogurtForPlan.toFixed(2)),
+        trendFactor: Number(trendFactor.toFixed(3)),
+        mixFactor: Number(mixFactor.toFixed(3))
+      }
     };
 
     const customerBehaviorRow = db.prepare(`

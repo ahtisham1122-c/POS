@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import {
   RefreshCw,
@@ -20,10 +20,17 @@ import {
   LineChart
 } from "lucide-react";
 import {
+  Area,
+  AreaChart,
   Bar,
+  BarChart,
+  Cell,
   CartesianGrid,
   ComposedChart,
   Line,
+  Pie,
+  PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip as ReTooltip,
   XAxis,
@@ -97,10 +104,25 @@ type Analytics = {
     recent7AvgKg: number;
     recentActiveAvgKg: number;
     sameWeekdayAvgKg: number;
+    sameWeekdayMedianKg?: number;
+    ewmaKg?: number;
     todayYogurtKg: number;
     safetyBufferPct: number;
     basisDays: number;
     sameWeekdaySamples: number;
+    weekTrend?: "rising" | "falling" | "steady";
+    weekTrendPct?: number;
+    volatilityPct?: number;
+    knownSharePct?: number;
+    expectedRangeKg?: { low: number; high: number };
+    sameWeekdayHistory?: Array<{ date: string; yogurtKg: number }>;
+    factors?: {
+      seasonalKg: number;
+      ewmaKg: number;
+      todayKg: number;
+      trendFactor: number;
+      mixFactor: number;
+    };
   };
   customerBehavior?: {
     totalBills: number;
@@ -188,11 +210,6 @@ export default function Analytics() {
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickedDate, daysBack]);
-
-  const maxHourBills = useMemo(
-    () => Math.max(1, ...(data?.hourly?.map((h) => h.bills) || [0])),
-    [data]
-  );
 
   if (isLoading && !data) {
     return (
@@ -386,7 +403,7 @@ export default function Analytics() {
               <p className="font-mono font-bold text-success">{rs(Math.max(0, ...dailyTrend.map((d) => d.revenue)))}</p>
             </div>
           </div>
-          <MiniSparkline points={dailyTrend.map((d) => d.revenue)} />
+          <RevenuePulseChart dailyTrend={dailyTrend} />
           <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
             <div className="rounded-lg bg-surface-2/60 border border-surface-4 p-2">
               <p className="text-text-secondary">Milk</p>
@@ -416,39 +433,7 @@ export default function Analytics() {
           </p>
         </div>
         <div className="p-5">
-          <div className="flex items-end gap-1 h-40">
-            {hourly.map((h) => {
-              const heightPct = (h.bills / maxHourBills) * 100;
-              return (
-                <div
-                  key={h.hour}
-                  className="flex-1 flex flex-col items-center justify-end min-w-0"
-                  title={`${formatHour(h.hour)} — ${h.bills} bills, ${rs(h.revenue)}`}
-                >
-                  <div className="text-[10px] text-text-secondary font-mono mb-1">
-                    {h.bills > 0 ? h.bills : ""}
-                  </div>
-                  <div
-                    className={cn(
-                      "w-full rounded-t-md transition-all",
-                      h.bills > 0 ? "bg-info" : "bg-surface-3"
-                    )}
-                    style={{ height: `${Math.max(heightPct, h.bills > 0 ? 4 : 1)}%` }}
-                  />
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex gap-1 mt-1">
-            {hourly.map((h) => (
-              <div
-                key={h.hour}
-                className="flex-1 text-[9px] text-text-secondary font-mono text-center"
-              >
-                {h.hour % 3 === 0 ? formatHour(h.hour, true) : ""}
-              </div>
-            ))}
-          </div>
+          <HourlyCustomersChart hourly={hourly} />
         </div>
       </section>
 
@@ -457,19 +442,27 @@ export default function Analytics() {
           <h2 className="text-lg font-bold text-text-primary flex items-center gap-2 mb-4">
             <CreditCard className="w-5 h-5 text-info" /> Payment Mix
           </h2>
-          <div className="space-y-3">
-            {tenderMix.length === 0 ? (
-              <p className="text-sm text-text-secondary">No payments yet.</p>
-            ) : tenderMix.map((row) => (
-              <MetricBar
-                key={row.method}
-                label={row.method}
-                value={rs(row.amount)}
-                pct={row.pct}
-                sub={`${row.bills} bill${row.bills === 1 ? "" : "s"}`}
+          {tenderMix.length === 0 ? (
+            <p className="text-sm text-text-secondary">No payments yet.</p>
+          ) : (
+            <>
+              <DonutChart
+                data={tenderMix.map((row) => ({ name: row.method, value: Number(row.amount || 0) }))}
+                total={tenderMix.reduce((sum, row) => sum + Number(row.amount || 0), 0)}
+                centerLabel="Total"
+                centerValue={rs(tenderMix.reduce((sum, row) => sum + Number(row.amount || 0), 0))}
               />
-            ))}
-          </div>
+              <div className="mt-4">
+                <DonutLegend
+                  rows={tenderMix.map((row) => ({
+                    name: row.method,
+                    value: rs(row.amount),
+                    sub: `${row.bills} bill${row.bills === 1 ? "" : "s"} · ${Number(row.pct || 0).toFixed(1)}%`
+                  }))}
+                />
+              </div>
+            </>
+          )}
         </div>
 
         <div className="card p-5 xl:col-span-2">
@@ -596,58 +589,150 @@ export default function Analytics() {
 
       <section className="card p-5">
         <h2 className="text-lg font-bold text-text-primary mb-4">Category Mix</h2>
-        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
-          {categoryMix.map((row) => {
-            const total = categoryMix.reduce((sum, item) => sum + Number(item.revenue || 0), 0);
-            const pct = total > 0 ? (Number(row.revenue || 0) / total) * 100 : 0;
-            return (
-              <div key={row.category} className="rounded-lg border border-surface-4 bg-surface-2/40 p-4">
-                <div className="flex justify-between gap-3">
-                  <span className="font-bold text-text-primary">{row.category}</span>
-                  <span className="font-mono text-success">{pct.toFixed(1)}%</span>
-                </div>
-                <div className="mt-2 text-2xl font-bold">{rs(row.revenue)}</div>
-                <div className="mt-1 text-xs text-text-secondary">{Number(row.quantity || 0).toFixed(2)} units/kg across {row.bills} bills</div>
+        {categoryMix.length === 0 ? (
+          <p className="text-sm text-text-secondary">No category sales yet.</p>
+        ) : (
+          <div className="grid lg:grid-cols-3 gap-5">
+            <div className="lg:col-span-1">
+              <DonutChart
+                data={categoryMix.map((row) => ({ name: row.category, value: Number(row.revenue || 0) }))}
+                total={categoryMix.reduce((sum, item) => sum + Number(item.revenue || 0), 0)}
+                centerLabel="Revenue"
+                centerValue={rs(categoryMix.reduce((sum, item) => sum + Number(item.revenue || 0), 0))}
+              />
+              <div className="mt-4">
+                <DonutLegend
+                  rows={categoryMix.map((row) => {
+                    const total = categoryMix.reduce((sum, item) => sum + Number(item.revenue || 0), 0);
+                    const pct = total > 0 ? (Number(row.revenue || 0) / total) * 100 : 0;
+                    return { name: row.category, value: rs(row.revenue), sub: `${pct.toFixed(1)}%` };
+                  })}
+                />
               </div>
-            );
-          })}
-          {categoryMix.length === 0 && (
-            <p className="text-sm text-text-secondary">No category sales yet.</p>
-          )}
-        </div>
+            </div>
+            <div className="lg:col-span-2 grid sm:grid-cols-2 gap-3 content-start">
+              {categoryMix.map((row) => {
+                const total = categoryMix.reduce((sum, item) => sum + Number(item.revenue || 0), 0);
+                const pct = total > 0 ? (Number(row.revenue || 0) / total) * 100 : 0;
+                return (
+                  <div key={row.category} className="rounded-lg border border-surface-4 bg-surface-2/40 p-4">
+                    <div className="flex justify-between gap-3">
+                      <span className="font-bold text-text-primary">{row.category}</span>
+                      <span className="font-mono text-success">{pct.toFixed(1)}%</span>
+                    </div>
+                    <div className="mt-2 text-2xl font-bold">{rs(row.revenue)}</div>
+                    <div className="mt-1 text-xs text-text-secondary">{Number(row.quantity || 0).toFixed(2)} units/kg across {row.bills} bills</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );
 }
 
 function YogurtPlanCard({ plan }: { plan?: Analytics["yogurtPlan"] }) {
-  const confidenceTone = plan?.confidence === "HIGH" ? "text-success" : plan?.confidence === "MEDIUM" ? "text-warning" : "text-danger";
+  const confidenceTone =
+    plan?.confidence === "HIGH" ? "text-success"
+    : plan?.confidence === "MEDIUM" ? "text-warning"
+    : "text-danger";
+  const trend = plan?.weekTrend ?? "steady";
+  const trendPct = plan?.weekTrendPct ?? 0;
+  const trendTone = trend === "rising" ? "text-success" : trend === "falling" ? "text-danger" : "text-text-secondary";
+  const TrendIcon = trend === "rising" ? TrendingUp : trend === "falling" ? TrendingDown : BarChart3;
+  const range = plan?.expectedRangeKg;
+  const history = plan?.sameWeekdayHistory ?? [];
   return (
     <div className="card p-5 overflow-hidden relative">
       <div className="absolute right-4 top-4 opacity-10">
         <Target className="w-24 h-24" />
       </div>
       <div className="relative">
-        <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-warning" /> Tomorrow Yogurt Plan
-        </h2>
-        <p className="text-xs text-text-secondary mt-1">
-          Yogurt takes one day, so prepare from history before demand arrives.
-        </p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-warning" /> Tomorrow Yogurt Plan
+            </h2>
+            <p className="text-xs text-text-secondary mt-1">
+              Set today's milk aside for tomorrow. Recommendation blends weekday
+              history, recent trend, today-so-far, and customer mix.
+            </p>
+          </div>
+          <span className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 px-2 py-0.5 rounded-full border", trendTone, "border-current/30")}>
+            <TrendIcon className="w-3 h-3" />
+            {trend === "steady" ? "Steady" : `${trendPct > 0 ? "+" : ""}${trendPct.toFixed(1)}% w/w`}
+          </span>
+        </div>
+
         <div className="mt-5">
           <p className="text-xs font-bold uppercase tracking-wider text-text-secondary">
             {plan?.targetDate ? format(new Date(`${plan.targetDate}T00:00:00`), "EEEE, dd MMM") : "Next day"}
           </p>
           <p className="text-4xl font-black text-warning mt-1">{kg(plan?.recommendedKg || 0)}</p>
           <p className={cn("text-xs font-bold mt-1", confidenceTone)}>
-            {plan?.confidence || "LOW"} confidence · {plan?.basisDays || 0} days checked
+            {plan?.confidence || "LOW"} confidence · {plan?.sameWeekdaySamples || 0} same-weekday samples · {plan?.basisDays || 0} days checked
           </p>
+          {range && (
+            <p className="text-[11px] text-text-secondary mt-1 font-mono">
+              Likely range: {kg(range.low)} — {kg(range.high)}
+              {plan?.volatilityPct ? <> · vol {plan.volatilityPct.toFixed(0)}%</> : null}
+            </p>
+          )}
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-          <MiniStat label="7-day avg" value={kg(plan?.recent7AvgKg || 0)} />
-          <MiniStat label="Same day" value={kg(plan?.sameWeekdayAvgKg || 0)} />
-          <MiniStat label="Buffer" value={`${plan?.safetyBufferPct || 0}%`} />
+
+        {history.length > 1 && (
+          <div className="mt-4">
+            <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold mb-1">
+              Same weekday history
+            </p>
+            <div className="h-14">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={history} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="yogurtPlanFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={CHART_COLORS.yogurt} stopOpacity={0.55} />
+                      <stop offset="100%" stopColor={CHART_COLORS.yogurt} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <ReTooltip
+                    content={({ active, payload }: any) => {
+                      if (!active || !payload || !payload.length) return null;
+                      const row = payload[0].payload as { date: string; yogurtKg: number };
+                      return (
+                        <div className="rounded border border-surface-4 bg-surface-1/95 px-2 py-1 text-[11px] font-mono">
+                          <div className="text-text-primary font-bold">{formatChartDateShort(row.date)}</div>
+                          <div style={{ color: CHART_COLORS.yogurt }}>{kg(row.yogurtKg)}</div>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="yogurtKg"
+                    stroke={CHART_COLORS.yogurt}
+                    strokeWidth={2}
+                    fill="url(#yogurtPlanFill)"
+                    isAnimationActive={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs">
+          <MiniStat label="Same-day" value={kg(plan?.sameWeekdayMedianKg ?? plan?.sameWeekdayAvgKg ?? 0)} sub="median" />
+          <MiniStat label="EWMA" value={kg(plan?.ewmaKg ?? 0)} sub="recent" />
+          <MiniStat label="Today" value={kg(plan?.todayYogurtKg ?? 0)} sub="so far" />
+          <MiniStat label="Buffer" value={`${plan?.safetyBufferPct ?? 0}%`} sub="safety" />
         </div>
+        {plan?.knownSharePct != null && (
+          <p className="mt-3 text-[11px] text-text-secondary">
+            Khata share {plan.knownSharePct.toFixed(0)}% · trend ×{plan.factors?.trendFactor.toFixed(2) ?? "1.00"} · mix ×{plan.factors?.mixFactor.toFixed(2) ?? "1.00"}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -817,22 +902,224 @@ function DailyVolumeTooltip({ active, payload }: any) {
   );
 }
 
-function MiniSparkline({ points }: { points: number[] }) {
-  const max = Math.max(1, ...points);
-  const width = 360;
-  const height = 96;
-  const step = points.length > 1 ? width / (points.length - 1) : width;
-  const path = points.map((point, index) => {
-    const x = index * step;
-    const y = height - (Number(point || 0) / max) * (height - 10) - 5;
-    return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-  }).join(" ");
-  const area = `${path} L ${width} ${height} L 0 ${height} Z`;
+function RevenuePulseChart({ dailyTrend }: { dailyTrend: DayPoint[] }) {
+  if (dailyTrend.length === 0) {
+    return <div className="h-28 flex items-center justify-center text-xs text-text-secondary">No sales yet.</div>;
+  }
+  const data = dailyTrend.map((d) => ({
+    date: d.date,
+    label: formatChartDateShort(d.date),
+    revenue: Number(d.revenue || 0),
+    bills: Number(d.bills || 0)
+  }));
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-28">
-      <path d={area} className="fill-success/10" />
-      <path d={path} className="fill-none stroke-success" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <div className="w-full h-28">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+          <defs>
+            <linearGradient id="pulseFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={CHART_COLORS.revenue} stopOpacity={0.55} />
+              <stop offset="100%" stopColor={CHART_COLORS.revenue} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <ReTooltip
+            cursor={{ stroke: CHART_COLORS.revenue, strokeWidth: 1, strokeOpacity: 0.4 }}
+            content={<PulseTooltip />}
+          />
+          <Area
+            type="monotone"
+            dataKey="revenue"
+            stroke={CHART_COLORS.revenue}
+            strokeWidth={2.5}
+            fill="url(#pulseFill)"
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function PulseTooltip({ active, payload }: any) {
+  if (!active || !payload || payload.length === 0) return null;
+  const row = payload[0].payload as { date: string; revenue: number; bills: number };
+  return (
+    <div className="rounded-lg border border-surface-4 bg-surface-1/95 shadow-float px-3 py-2 text-xs font-mono">
+      <div className="font-bold text-text-primary mb-1">{formatChartDate(row.date)}</div>
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-text-secondary">Revenue</span>
+        <span style={{ color: CHART_COLORS.revenue }}>{rs(row.revenue)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-text-secondary">Bills</span>
+        <span className="text-text-primary">{row.bills}</span>
+      </div>
+    </div>
+  );
+}
+
+const HOURLY_FILL = CHART_COLORS.milk;
+
+function HourlyCustomersChart({ hourly }: { hourly: HourPoint[] }) {
+  const data = hourly.map((h) => ({
+    hour: h.hour,
+    label: formatHour(h.hour, true),
+    bills: Number(h.bills || 0),
+    revenue: Number(h.revenue || 0)
+  }));
+  const activeHours = data.filter((row) => row.bills > 0);
+  const avgBills = activeHours.length
+    ? activeHours.reduce((sum, row) => sum + row.bills, 0) / activeHours.length
+    : 0;
+  return (
+    <div className="w-full h-56">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+          <CartesianGrid stroke={CHART_COLORS.grid} strokeDasharray="3 3" vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={{ fill: CHART_COLORS.axis, fontSize: 10, fontFamily: "Consolas, monospace" }}
+            axisLine={{ stroke: CHART_COLORS.grid }}
+            tickLine={false}
+            interval={2}
+          />
+          <YAxis
+            tick={{ fill: CHART_COLORS.axis, fontSize: 10, fontFamily: "Consolas, monospace" }}
+            axisLine={false}
+            tickLine={false}
+            width={32}
+            allowDecimals={false}
+          />
+          {avgBills > 0 && (
+            <ReferenceLine
+              y={avgBills}
+              stroke={CHART_COLORS.revenue}
+              strokeDasharray="4 4"
+              strokeOpacity={0.6}
+              label={{
+                value: `avg ${avgBills.toFixed(0)}`,
+                position: "right",
+                fill: CHART_COLORS.revenue,
+                fontSize: 10,
+                fontFamily: "Consolas, monospace"
+              }}
+            />
+          )}
+          <ReTooltip cursor={{ fill: "rgba(56,139,253,0.08)" }} content={<HourlyTooltip />} />
+          <Bar dataKey="bills" fill={HOURLY_FILL} radius={[4, 4, 0, 0]} maxBarSize={20} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function HourlyTooltip({ active, payload }: any) {
+  if (!active || !payload || payload.length === 0) return null;
+  const row = payload[0].payload as { hour: number; bills: number; revenue: number };
+  return (
+    <div className="rounded-lg border border-surface-4 bg-surface-1/95 shadow-float px-3 py-2 text-xs font-mono">
+      <div className="font-bold text-text-primary mb-1">{formatHour(row.hour)}</div>
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-text-secondary">Bills</span>
+        <span className="text-text-primary">{row.bills}</span>
+      </div>
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-text-secondary">Revenue</span>
+        <span style={{ color: CHART_COLORS.revenue }}>{rs(row.revenue)}</span>
+      </div>
+    </div>
+  );
+}
+
+const DONUT_PALETTE = [
+  "#388bfd", "#d29922", "#2ea043", "#a371f7", "#f85149",
+  "#3fb950", "#d4a017", "#1f6feb", "#bf3989", "#8b949e"
+];
+
+function DonutChart({
+  data,
+  total,
+  centerLabel,
+  centerValue
+}: {
+  data: Array<{ name: string; value: number }>;
+  total: number;
+  centerLabel: string;
+  centerValue: string;
+}) {
+  if (!data.length || total <= 0) {
+    return (
+      <div className="w-full h-48 flex items-center justify-center text-sm text-text-secondary">
+        No data yet.
+      </div>
+    );
+  }
+  return (
+    <div className="relative w-full h-48">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <ReTooltip
+            content={({ active, payload }: any) => {
+              if (!active || !payload || !payload.length) return null;
+              const entry = payload[0];
+              const pct = total > 0 ? (entry.value / total) * 100 : 0;
+              return (
+                <div className="rounded-lg border border-surface-4 bg-surface-1/95 shadow-float px-3 py-2 text-xs font-mono">
+                  <div className="font-bold text-text-primary mb-1">{entry.name}</div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-text-secondary">Amount</span>
+                    <span className="text-text-primary">{rs(entry.value)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-text-secondary">Share</span>
+                    <span style={{ color: CHART_COLORS.revenue }}>{pct.toFixed(1)}%</span>
+                  </div>
+                </div>
+              );
+            }}
+          />
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="name"
+            cx="50%"
+            cy="50%"
+            innerRadius={48}
+            outerRadius={72}
+            paddingAngle={2}
+            stroke="#0d1117"
+            strokeWidth={2}
+            isAnimationActive={false}
+          >
+            {data.map((_, idx) => (
+              <Cell key={idx} fill={DONUT_PALETTE[idx % DONUT_PALETTE.length]} />
+            ))}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+        <span className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">{centerLabel}</span>
+        <span className="text-base font-mono font-bold text-text-primary">{centerValue}</span>
+      </div>
+    </div>
+  );
+}
+
+function DonutLegend({ rows }: { rows: Array<{ name: string; value: string; sub?: string }> }) {
+  return (
+    <div className="space-y-2 text-sm">
+      {rows.map((row, idx) => (
+        <div key={row.name + idx} className="flex items-center gap-2">
+          <span
+            className="w-3 h-3 rounded-sm shrink-0"
+            style={{ background: DONUT_PALETTE[idx % DONUT_PALETTE.length] }}
+          />
+          <span className="flex-1 truncate text-text-primary">{row.name}</span>
+          <span className="font-mono text-text-secondary">{row.value}</span>
+          {row.sub && <span className="font-mono text-[10px] text-text-secondary">{row.sub}</span>}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -945,36 +1232,6 @@ function CompareCard({
           previous={kg(previous.yogurtKg)}
           delta={yogurtDelta}
         />
-      </div>
-    </div>
-  );
-}
-
-function MetricBar({
-  label,
-  value,
-  pct,
-  sub
-}: {
-  label: string;
-  value: string;
-  pct: number;
-  sub?: string;
-}) {
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3 text-sm">
-        <div>
-          <div className="font-bold text-text-primary">{label}</div>
-          {sub && <div className="text-xs text-text-secondary">{sub}</div>}
-        </div>
-        <div className="text-right">
-          <div className="font-mono font-bold">{value}</div>
-          <div className="text-xs text-text-secondary">{Number(pct || 0).toFixed(1)}%</div>
-        </div>
-      </div>
-      <div className="mt-2 h-2 rounded-full bg-surface-3 overflow-hidden">
-        <div className="h-full rounded-full bg-info" style={{ width: `${Math.max(2, Math.min(100, pct || 0))}%` }} />
       </div>
     </div>
   );
