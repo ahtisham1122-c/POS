@@ -39,9 +39,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     addWastage: (id: string, data: any) => ipcRenderer.invoke('inventory:addWastage', id, data),
   },
   suppliers: {
-    getAll: () => ipcRenderer.invoke('suppliers:getAll'),
+    getAll: (showInactive?: boolean) => ipcRenderer.invoke('suppliers:getAll', showInactive),
     create: (data: any) => ipcRenderer.invoke('suppliers:create', data),
     update: (id: string, data: any) => ipcRenderer.invoke('suppliers:update', id, data),
+    deactivate: (id: string, options?: any) => ipcRenderer.invoke('suppliers:deactivate', id, options),
     collectMilk: (data: any) => ipcRenderer.invoke('suppliers:collectMilk', data),
     updateCollection: (id: string, data: any) => ipcRenderer.invoke('suppliers:updateCollection', id, data),
     collectPayment: (id: string, data: any) => ipcRenderer.invoke('suppliers:collectPayment', id, data),

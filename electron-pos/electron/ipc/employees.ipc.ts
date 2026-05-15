@@ -78,20 +78,25 @@ function getMonthRange(month?: string) {
   };
 }
 
-function createSalaryExpense(paymentId: string, calc: any, notes: string | undefined, userId: string, createdAt: string) {
-  const expenseAmount = Number(calc.grossSalary || 0);
-  const cashAmount = Number(calc.netSalary || 0);
+function createEmployeeExpense(options: {
+  code: string;
+  amount: number;
+  cashAmount: number;
+  expenseDate: string;
+  description: string;
+  userId: string;
+  createdAt: string;
+  shiftId?: string | null;
+  businessDate?: string;
+}) {
+  const expenseAmount = Number(options.amount || 0);
+  const cashAmount = Number(options.cashAmount || 0);
   if (expenseAmount <= 0 && cashAmount <= 0) return null;
 
-  const existing = db.prepare('SELECT id FROM expenses WHERE code = ?').get(`EXP-SAL-${paymentId.slice(0, 12).toUpperCase()}`) as any;
+  const existing = db.prepare('SELECT id FROM expenses WHERE code = ?').get(options.code) as any;
   if (existing) return existing.id;
 
-  const shift = getOpenShift();
-  const businessDate = shift?.shift_date || getActiveBusinessDate();
   const expenseId = crypto.randomUUID();
-  const expenseDate = calc.periodEnd || businessDate;
-  const code = `EXP-SAL-${paymentId.slice(0, 12).toUpperCase()}`;
-  const description = `Salary - ${calc.employee.name} (${calc.periodStart} to ${calc.periodEnd})`;
 
   db.prepare(`
     INSERT INTO expenses (
@@ -100,31 +105,71 @@ function createSalaryExpense(paymentId: string, calc: any, notes: string | undef
     ) VALUES (?, ?, ?, ?, 'SALARY', ?, ?, ?, ?, ?, 0)
   `).run(
     expenseId,
-    code,
-    shift?.id || null,
-    expenseDate,
-    notes?.trim() ? `${description} - ${notes.trim()}` : description,
+    options.code,
+    options.shiftId || null,
+    options.expenseDate,
+    options.description,
     expenseAmount,
-    userId,
-    createdAt,
-    createdAt
+    options.userId,
+    options.createdAt,
+    options.createdAt
   );
 
   createOutboxEntry('expenses', 'INSERT', expenseId, {
     id: expenseId,
-    code,
-    shift_id: shift?.id || null,
-    expense_date: expenseDate,
+    code: options.code,
+    shift_id: options.shiftId || null,
+    expense_date: options.expenseDate,
     category: 'SALARY',
-    description: notes?.trim() ? `${description} - ${notes.trim()}` : description,
+    description: options.description,
     amount: expenseAmount,
-    created_by_id: userId,
-    created_at: createdAt,
-    updated_at: createdAt,
+    created_by_id: options.userId,
+    created_at: options.createdAt,
+    updated_at: options.createdAt,
   });
 
-  addCashOut(cashAmount, businessDate, shift?.id || null);
+  if (cashAmount > 0) {
+    addCashOut(cashAmount, options.businessDate || options.expenseDate, options.shiftId || null);
+  }
   return expenseId;
+}
+
+function createSalaryExpense(paymentId: string, calc: any, notes: string | undefined, userId: string, createdAt: string) {
+  const cashAmount = Number(calc.netSalary || 0);
+  if (cashAmount <= 0) return null;
+
+  const shift = getOpenShift();
+  const businessDate = shift?.shift_date || getActiveBusinessDate();
+  const description = `Salary payment - ${calc.employee.name} (${calc.periodStart} to ${calc.periodEnd})`;
+
+  return createEmployeeExpense({
+    code: `EXP-SAL-${paymentId.slice(0, 12).toUpperCase()}`,
+    amount: cashAmount,
+    cashAmount,
+    expenseDate: calc.periodEnd || businessDate,
+    description: notes?.trim() ? `${description} - ${notes.trim()}` : description,
+    userId,
+    createdAt,
+    shiftId: shift?.id || null,
+    businessDate,
+  });
+}
+
+function createKharchaExpense(advanceId: string, employee: any, amount: number, advanceDate: string, description: string | undefined, userId: string, createdAt: string) {
+  const shift = getOpenShift();
+  const businessDate = shift?.shift_date || getActiveBusinessDate();
+  const label = `Employee kharcha - ${employee.name}`;
+  return createEmployeeExpense({
+    code: `EXP-EMP-${advanceId.slice(0, 12).toUpperCase()}`,
+    amount,
+    cashAmount: amount,
+    expenseDate: advanceDate || businessDate,
+    description: description?.trim() ? `${label} - ${description.trim()}` : label,
+    userId,
+    createdAt,
+    shiftId: shift?.id || null,
+    businessDate,
+  });
 }
 
 // Core salary calculation — used for preview and for saving a payment.
@@ -314,18 +359,23 @@ export function registerEmployeesIPC() {
       const user = getCurrentUser();
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
-
-      const shift = getOpenShift();
-      const businessDate = shift?.shift_date || getActiveBusinessDate();
+      const employee = db.prepare('SELECT * FROM employees WHERE id = ? AND is_active = 1').get(data.employeeId) as any;
+      if (!employee) return { success: false, error: 'Employee not found or inactive' };
 
       db.transaction(() => {
+        const expenseId = createKharchaExpense(
+          id,
+          employee,
+          Number(data.amount),
+          data.advanceDate,
+          data.description,
+          user?.id || 'system',
+          now
+        );
         db.prepare(`
-          INSERT INTO employee_advances (id, employee_id, amount, advance_date, description, status, given_by_id, created_at)
-          VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)
-        `).run(id, data.employeeId, Number(data.amount), data.advanceDate, data.description || null, user?.id || 'system', now);
-
-        // Advance is cash paid today. It is deducted from the later salary expense.
-        addCashOut(Number(data.amount), businessDate, shift?.id || null);
+          INSERT INTO employee_advances (id, employee_id, amount, advance_date, description, status, expense_id, given_by_id, created_at)
+          VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)
+        `).run(id, data.employeeId, Number(data.amount), data.advanceDate, data.description || null, expenseId || null, user?.id || 'system', now);
       })();
 
       return { success: true, id };
@@ -408,7 +458,10 @@ export function registerEmployeesIPC() {
           WHERE employee_id = ? AND advance_date >= ? AND advance_date <= ? AND status = 'PENDING'
         `).run(paymentId, data.employeeId, data.periodStart, data.periodEnd);
 
-        createSalaryExpense(paymentId, calc, data.notes, user?.id || 'system', now);
+        const expenseId = createSalaryExpense(paymentId, calc, data.notes, user?.id || 'system', now);
+        if (expenseId) {
+          db.prepare('UPDATE employee_salary_payments SET expense_id = ? WHERE id = ?').run(expenseId, paymentId);
+        }
       })();
 
       return { success: true, id: paymentId, calc };

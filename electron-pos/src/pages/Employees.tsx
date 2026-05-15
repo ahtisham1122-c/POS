@@ -211,7 +211,7 @@ export default function Employees() {
       description: advDesc,
     });
     if (res?.success) {
-      flash("success", "Kharcha recorded");
+      flash("success", "Kharcha recorded and added to Expenses");
       setAdvAmount(""); setAdvDesc("");
       await selectEmployee(selected);
       await loadPayrollSummary();
@@ -268,7 +268,7 @@ export default function Employees() {
       notes: salaryPayNote,
     });
     if (res?.success) {
-      flash("success", `Salary paid — Net: ${toMoney(res.calc.netSalary)}`);
+      flash("success", `Salary paid and added to Expenses — Net: ${toMoney(res.calc.netSalary)}`);
       setSalaryCalc(null); setSalaryPayNote("");
       await selectEmployee(selected);
       await loadPayrollSummary();

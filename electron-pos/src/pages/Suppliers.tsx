@@ -17,6 +17,7 @@ type Supplier = {
   payment_cycle_days?: number;
   payment_cycle_notes?: string;
   current_balance: number;
+  is_active?: number;
 };
 
 type MilkType = "COW" | "BUFFALO" | "MIXED";
@@ -138,6 +139,7 @@ export default function Suppliers() {
   
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [showInactive, setShowInactive] = useState(false);
 
   // Admin-only payment correction state. We keep the current user in renderer
   // so the buttons only show for ADMINs; the IPC handler enforces the same
@@ -181,7 +183,7 @@ export default function Suppliers() {
         setCurrentUser(null);
       }
     })();
-  }, [collectionDate]);
+  }, [collectionDate, showInactive]);
 
   function openPaymentEdit(payment: any) {
     setPaymentEdit({ payment, mode: "EDIT" });
@@ -277,7 +279,7 @@ export default function Suppliers() {
     setIsLoading(true);
     try {
       const [supplierData, collectionData] = await Promise.all([
-        window.electronAPI?.suppliers?.getAll(),
+        window.electronAPI?.suppliers?.getAll(showInactive),
         window.electronAPI?.suppliers?.getCollections({ date: collectionDate }),
       ]);
       setSuppliers(supplierData || []);
@@ -285,6 +287,23 @@ export default function Suppliers() {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function deactivateSupplier() {
+    if (!selectedSupplier) return;
+    const confirmed = window.confirm(
+      `Mark ${selectedSupplier.name} as inactive?\n\nThey will disappear from daily milk entry lists, but all account history and statements will remain.`
+    );
+    if (!confirmed) return;
+    const result = await window.electronAPI?.suppliers?.deactivate?.(selectedSupplier.id, {
+      reason: "Supplier contract ended"
+    });
+    if (!result?.success) {
+      setMessage({ type: "error", text: result?.error || "Could not mark supplier inactive." });
+      return;
+    }
+    setMessage({ type: "success", text: "Supplier marked inactive. History and balance are preserved." });
+    await loadData();
   }
 
   function openAddSupplier() {
@@ -447,9 +466,20 @@ export default function Suppliers() {
             <h2 className="font-bold text-lg flex items-center gap-2">
               <UserRoundPlus className="w-5 h-5 text-primary" /> Farms
             </h2>
-            <button className="btn-primary px-3 py-1.5 text-xs inline-flex items-center gap-1" onClick={openAddSupplier}>
-              <Plus className="w-3 h-3" /> Add
-            </button>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1 text-[11px] text-text-secondary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showInactive}
+                  onChange={(event) => setShowInactive(event.target.checked)}
+                  className="rounded"
+                />
+                Inactive
+              </label>
+              <button className="btn-primary px-3 py-1.5 text-xs inline-flex items-center gap-1" onClick={openAddSupplier}>
+                <Plus className="w-3 h-3" /> Add
+              </button>
+            </div>
           </div>
           <div className="card flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-1">
             {suppliers.map(supplier => (
@@ -463,7 +493,10 @@ export default function Suppliers() {
               >
                 <div className="min-w-0 flex-1 pr-2">
                   <p className={cn("font-bold truncate", selectedSupplierId === supplier.id ? "text-primary" : "text-text-primary")}>{supplier.name}</p>
-                  <p className="text-xs text-text-secondary mt-0.5 truncate">{supplier.phone || supplier.code}</p>
+                  <p className="text-xs text-text-secondary mt-0.5 truncate">
+                    {supplier.phone || supplier.code}
+                    {Number(supplier.is_active ?? 1) === 0 ? " • inactive" : ""}
+                  </p>
                 </div>
                 <div className="text-right shrink-0">
                   <p className={cn("font-mono text-sm font-bold", Number(supplier.current_balance) > 0 ? "text-warning" : Number(supplier.current_balance) < 0 ? "text-success" : "text-text-secondary")}>
@@ -490,6 +523,9 @@ export default function Suppliers() {
                 <div>
                   <h2 className="text-2xl font-bold text-text-primary flex items-center gap-2">
                     {selectedSupplier.name}
+                    {Number(selectedSupplier.is_active ?? 1) === 0 && (
+                      <span className="rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-xs font-bold text-danger">Inactive</span>
+                    )}
                     <button onClick={() => openEditSupplier(selectedSupplier)} className="text-text-secondary hover:text-primary transition-colors">
                       <Pencil className="w-4 h-4" />
                     </button>
@@ -518,6 +554,11 @@ export default function Suppliers() {
                   <button onClick={() => setIsPaymentModalOpen(true)} className="btn-primary h-10 px-4 flex items-center gap-2 whitespace-nowrap">
                     <Banknote className="w-4 h-4" /> Pay
                   </button>
+                  {Number(selectedSupplier.is_active ?? 1) === 1 && (
+                    <button onClick={deactivateSupplier} className="btn-secondary h-10 px-4 whitespace-nowrap text-danger">
+                      Inactive
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -541,12 +582,17 @@ export default function Suppliers() {
               <div className="flex-1 overflow-y-auto p-6">
                 {activeTab === "COLLECTION" && (
                   <div className="space-y-6 max-w-4xl mx-auto animate-fade-in">
+                    {Number(selectedSupplier.is_active ?? 1) === 0 && (
+                      <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-warning">
+                        This supplier is inactive. Old statements and final payments are still available, but new milk collection is blocked.
+                      </div>
+                    )}
                     <div className="flex items-center justify-between">
                       <h3 className="font-bold text-lg">Collections for Date</h3>
                       <input type="date" value={collectionDate} onChange={e => setCollectionDate(e.target.value)} className="input w-48" />
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-6">
+                    {Number(selectedSupplier.is_active ?? 1) === 1 && <div className="grid md:grid-cols-2 gap-6">
                       <ShiftEntry
                         shift="MORNING"
                         supplier={selectedSupplier}
@@ -563,7 +609,7 @@ export default function Suppliers() {
                         onSuccess={loadData}
                         allowed={selectedSupplier.allowed_shifts === "EVENING" || selectedSupplier.allowed_shifts === "BOTH"}
                       />
-                    </div>
+                    </div>}
                   </div>
                 )}
 
@@ -914,14 +960,14 @@ export default function Suppliers() {
 // Subcomponent for Shift Entry
 function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: any) {
   const [isEditing, setIsEditing] = useState(false);
-  const [milkType, setMilkType] = useState<MilkType>(collection?.milk_type || "BUFFALO");
+  const [milkType, setMilkType] = useState<MilkType>(collection?.milk_type || "MIXED");
   const [quantity, setQuantity] = useState(collection ? String(collection.quantity) : "");
   const [notes, setNotes] = useState(collection?.notes || "");
   const [isSaving, setIsSaving] = useState(false);
   const lockedRate = supplierRate(supplier, milkType);
 
   useEffect(() => {
-    setMilkType(collection?.milk_type || "BUFFALO");
+    setMilkType(collection?.milk_type || "MIXED");
     setQuantity(collection ? String(collection.quantity) : "");
     setNotes(collection?.notes || "");
     setIsEditing(false);
@@ -974,7 +1020,7 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
           </button>
         )}
         {isEditing && (
-          <button onClick={() => { setIsEditing(false); setMilkType(collection.milk_type || "BUFFALO"); setQuantity(String(collection.quantity)); setNotes(collection.notes || ""); }} className="text-text-secondary hover:text-text-primary">
+          <button onClick={() => { setIsEditing(false); setMilkType(collection.milk_type || "MIXED"); setQuantity(String(collection.quantity)); setNotes(collection.notes || ""); }} className="text-text-secondary hover:text-text-primary">
             <X className="w-4 h-4" />
           </button>
         )}
@@ -994,9 +1040,9 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
       ) : (
         <div className="flex-1 flex flex-col space-y-4">
           <select className="input text-sm" value={milkType} onChange={(e) => setMilkType(e.target.value as MilkType)}>
+            <option value="MIXED">Mixed Milk</option>
             <option value="BUFFALO">Buffalo Milk</option>
             <option value="COW">Cow Milk</option>
-            <option value="MIXED">Mixed Milk</option>
           </select>
           <div className="grid grid-cols-2 gap-3">
             <div>

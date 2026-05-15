@@ -123,11 +123,11 @@ function nextSupplierCode() {
 }
 
 export function registerSuppliersIPC() {
-  ipcMain.handle('suppliers:getAll', () => {
+  ipcMain.handle('suppliers:getAll', (_event, showInactive = false) => {
     return db.prepare(`
       SELECT *
       FROM suppliers
-      WHERE is_active = 1
+      ${showInactive ? '' : 'WHERE is_active = 1'}
       ORDER BY name ASC
     `).all();
   });
@@ -244,6 +244,34 @@ export function registerSuppliersIPC() {
         updated_at: now
       });
 
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('suppliers:deactivate', (_event, id: string, options?: { reason?: string }) => {
+    try {
+      const actor = requireCurrentUser(['ADMIN', 'MANAGER']);
+      const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as any;
+      if (!supplier) return { success: false, error: 'Supplier not found' };
+      if (Number(supplier.is_active || 0) === 0) return { success: true };
+
+      const now = new Date().toISOString();
+      db.prepare('UPDATE suppliers SET is_active = 0, updated_at = ?, synced = 0 WHERE id = ?').run(now, id);
+      createOutboxEntry('suppliers', 'UPDATE', id, {
+        id,
+        is_active: 0,
+        updated_at: now
+      });
+      logAudit({
+        actionType: 'SUPPLIER_DEACTIVATE',
+        entityType: 'suppliers',
+        entityId: id,
+        before: { isActive: supplier.is_active, currentBalance: supplier.current_balance },
+        after: { isActive: 0, reason: options?.reason || 'Supplier contract ended' },
+        actor
+      });
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -529,7 +557,7 @@ export function registerSuppliersIPC() {
     try {
       requireCurrentUser(['ADMIN', 'MANAGER']);
       return db.transaction(() => {
-        const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ? AND is_active = 1').get(supplierId) as any;
+        const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(supplierId) as any;
         if (!supplier) throw new Error('Supplier not found');
 
         const amount = Number(data.amount || 0);

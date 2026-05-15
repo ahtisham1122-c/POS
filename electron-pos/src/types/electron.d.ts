@@ -37,9 +37,10 @@ export interface ElectronAPI {
     addWastage: (id: string, data: any) => Promise<{ success: boolean; error?: string }>;
   };
   suppliers: {
-    getAll: () => Promise<any[]>;
+    getAll: (showInactive?: boolean) => Promise<any[]>;
     create: (data: any) => Promise<{ success: boolean; id?: string; error?: string }>;
     update: (id: string, data: any) => Promise<{ success: boolean; error?: string }>;
+    deactivate: (id: string, options?: { reason?: string }) => Promise<{ success: boolean; error?: string }>;
     collectMilk: (data: any) => Promise<{ success: boolean; collectionId?: string; totalAmount?: number; supplierBalance?: number; error?: string }>;
     updateCollection: (id: string, data: any) => Promise<{ success: boolean; collectionId?: string; totalAmount?: number; supplierBalance?: number; error?: string }>;
     collectPayment: (id: string, data: any) => Promise<{ success: boolean; paymentId?: string; balanceAfter?: number; error?: string }>;

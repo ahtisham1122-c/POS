@@ -628,6 +628,26 @@ export function runMigrations() {
           }
           db.exec(`CREATE INDEX IF NOT EXISTS idx_delivery_entries_pickup_number ON delivery_entries(pickup_number)`);
         }
+      },
+      {
+        version: 22,
+        up: () => {
+          log.info('Running migration v22: Linking employee cash payments to expenses');
+          const advanceColumns = db.prepare(`PRAGMA table_info(employee_advances)`).all() as Array<{ name: string }>;
+          const advanceNames = new Set(advanceColumns.map((column) => column.name));
+          if (!advanceNames.has('expense_id')) {
+            db.exec(`ALTER TABLE employee_advances ADD COLUMN expense_id TEXT`);
+          }
+
+          const salaryPaymentColumns = db.prepare(`PRAGMA table_info(employee_salary_payments)`).all() as Array<{ name: string }>;
+          const salaryPaymentNames = new Set(salaryPaymentColumns.map((column) => column.name));
+          if (!salaryPaymentNames.has('expense_id')) {
+            db.exec(`ALTER TABLE employee_salary_payments ADD COLUMN expense_id TEXT`);
+          }
+
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_employee_advances_expense ON employee_advances(expense_id)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_employee_salary_payments_expense ON employee_salary_payments(expense_id)`);
+        }
       }
     ];
 
