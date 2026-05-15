@@ -19,7 +19,25 @@ import {
   Sparkles,
   LineChart
 } from "lucide-react";
+import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip as ReTooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 import { cn } from "../lib/utils";
+
+const CHART_COLORS = {
+  milk: "#388bfd",
+  yogurt: "#d29922",
+  revenue: "#2ea043",
+  grid: "#30363d",
+  axis: "#8b949e"
+};
 
 type TodayKpis = {
   bills: number;
@@ -173,13 +191,6 @@ export default function Analytics() {
 
   const maxHourBills = useMemo(
     () => Math.max(1, ...(data?.hourly?.map((h) => h.bills) || [0])),
-    [data]
-  );
-
-  // For the 30-day chart we plot combined kg (milk + yogurt) — that's the
-  // single number that tells the owner "is volume going up or down?"
-  const maxDayCombined = useMemo(
-    () => Math.max(1, ...(data?.dailyTrend?.map((d) => d.combinedKg) || [0])),
     [data]
   );
 
@@ -510,69 +521,12 @@ export default function Analytics() {
           </p>
         </div>
         <div className="p-5">
-          <StackedVolumeChart dailyTrend={dailyTrend} maxDayCombined={maxDayCombined} />
-          <div className="mt-4 flex items-center gap-5 text-xs text-text-secondary">
-            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm bg-info" /> Milk kg</span>
-            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm bg-warning" /> Yogurt kg</span>
-            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm bg-surface-4" /> No volume</span>
+          <DailyVolumeChart dailyTrend={dailyTrend} />
+          <div className="mt-4 flex items-center gap-5 text-xs text-text-secondary flex-wrap">
+            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm" style={{ background: CHART_COLORS.milk }} /> Milk kg</span>
+            <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-sm" style={{ background: CHART_COLORS.yogurt }} /> Yogurt kg</span>
+            <span className="inline-flex items-center gap-2"><span className="w-3 h-1 rounded-sm" style={{ background: CHART_COLORS.revenue }} /> Revenue (Rs.)</span>
           </div>
-          {/* Y-axis peak indicator + chart canvas. Days with zero combinedKg
-              still render a 1-px bar so the chart shows the full series. */}
-          <div className="hidden relative h-44 ml-12">
-            <div className="absolute -left-12 top-0 text-[10px] font-mono text-text-secondary">
-              {kg(maxDayCombined)}
-            </div>
-            <div className="absolute -left-12 bottom-0 text-[10px] font-mono text-text-secondary">0 kg</div>
-            <div className="absolute left-0 right-0 top-1/2 border-t border-dashed border-surface-4" />
-            <div className="absolute -left-12 top-1/2 -translate-y-1/2 text-[10px] font-mono text-text-secondary">
-              {kg(maxDayCombined / 2)}
-            </div>
-            <div className="flex items-end gap-[2px] h-full">
-              {dailyTrend.length === 0 && (
-                <div className="text-text-secondary text-sm w-full text-center py-10">
-                  Not enough sales data yet — need at least 1 day of sales.
-                </div>
-              )}
-              {dailyTrend.map((d) => {
-                const heightPct = (d.combinedKg / maxDayCombined) * 100;
-                const hasSales = d.combinedKg > 0;
-                return (
-                  <div
-                    key={d.date}
-                    className="flex-1 flex flex-col items-center justify-end min-w-0 group relative"
-                    title={`${formatChartDate(d.date)}\n${d.bills} bills, ${rs(d.revenue)}\nMilk: ${kg(d.milkKg)}  ·  Yogurt: ${kg(d.yogurtKg)}`}
-                  >
-                    <div
-                      className={cn(
-                        "w-full rounded-t-sm transition-all",
-                        hasSales
-                          ? "bg-success/70 group-hover:bg-success"
-                          : "bg-surface-3 group-hover:bg-surface-4"
-                      )}
-                      style={{ height: `${hasSales ? Math.max(heightPct, 2) : 1}%` }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          {/* X-axis: print a date label every Nth bar so labels don't overlap */}
-          {dailyTrend.length > 0 && (
-            <div className="hidden ml-12 gap-[2px] mt-2">
-              {dailyTrend.map((d, idx) => {
-                const stride = Math.max(1, Math.ceil(dailyTrend.length / 8));
-                const showLabel = idx === 0 || idx === dailyTrend.length - 1 || idx % stride === 0;
-                return (
-                  <div
-                    key={d.date}
-                    className="flex-1 text-[9px] text-text-secondary font-mono text-center min-w-0 truncate"
-                  >
-                    {showLabel ? formatChartDateShort(d.date) : ""}
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
       </section>
 
@@ -732,48 +686,132 @@ function CustomerBehaviorCard({ behavior }: { behavior?: Analytics["customerBeha
   );
 }
 
-function StackedVolumeChart({ dailyTrend, maxDayCombined }: { dailyTrend: DayPoint[]; maxDayCombined: number }) {
+function DailyVolumeChart({ dailyTrend }: { dailyTrend: DayPoint[] }) {
   if (dailyTrend.length === 0) {
-    return <div className="text-text-secondary text-sm w-full text-center py-10">Not enough sales data yet.</div>;
+    return (
+      <div className="text-text-secondary text-sm w-full text-center py-10">
+        Not enough sales data yet — make at least one sale.
+      </div>
+    );
   }
 
+  // Pre-format the X-axis label so recharts can render it directly. We
+  // keep the raw ISO date too — the tooltip uses it for the full header.
+  const chartData = dailyTrend.map((day) => ({
+    date: day.date,
+    label: formatChartDateShort(day.date),
+    milkKg: Number(day.milkKg || 0),
+    yogurtKg: Number(day.yogurtKg || 0),
+    revenue: Number(day.revenue || 0),
+    bills: Number(day.bills || 0)
+  }));
+
+  // Stride x-axis ticks so 30/60/90-day windows don't smash labels together.
+  const stride = Math.max(1, Math.ceil(chartData.length / 10));
+  const tickIndexes = chartData
+    .map((_, idx) => idx)
+    .filter((idx) => idx === 0 || idx === chartData.length - 1 || idx % stride === 0);
+  const tickValues = tickIndexes.map((idx) => chartData[idx].label);
+
   return (
-    <div>
-      <div className="relative h-52 ml-12">
-        <div className="absolute -left-12 top-0 text-[10px] font-mono text-text-secondary">{kg(maxDayCombined)}</div>
-        <div className="absolute -left-12 bottom-0 text-[10px] font-mono text-text-secondary">0 kg</div>
-        <div className="absolute left-0 right-0 top-1/2 border-t border-dashed border-surface-4" />
-        <div className="flex items-end gap-[3px] h-full">
-          {dailyTrend.map((day) => {
-            const combined = Number(day.combinedKg || 0);
-            const totalHeight = combined > 0 ? Math.max(4, (combined / maxDayCombined) * 100) : 1;
-            const milkPct = combined > 0 ? (Number(day.milkKg || 0) / combined) * 100 : 0;
-            const yogurtPct = combined > 0 ? (Number(day.yogurtKg || 0) / combined) * 100 : 0;
-            return (
-              <div
-                key={day.date}
-                className="flex-1 min-w-0 flex flex-col items-center justify-end group"
-                title={`${formatChartDate(day.date)}\n${day.bills} bills, ${rs(day.revenue)}\nMilk: ${kg(day.milkKg)} · Yogurt: ${kg(day.yogurtKg)}`}
-              >
-                <div className="w-full rounded-t-md overflow-hidden bg-surface-3 ring-1 ring-transparent group-hover:ring-white/20 transition-all" style={{ height: `${totalHeight}%` }}>
-                  {combined > 0 ? (
-                    <>
-                      <div className="w-full bg-warning" style={{ height: `${yogurtPct}%` }} />
-                      <div className="w-full bg-info" style={{ height: `${milkPct}%` }} />
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+    <div className="w-full h-[300px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={chartData} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}>
+          <CartesianGrid stroke={CHART_COLORS.grid} strokeDasharray="3 3" vertical={false} />
+          <XAxis
+            dataKey="label"
+            ticks={tickValues}
+            interval="preserveStartEnd"
+            tick={{ fill: CHART_COLORS.axis, fontSize: 10, fontFamily: "Consolas, monospace" }}
+            axisLine={{ stroke: CHART_COLORS.grid }}
+            tickLine={false}
+          />
+          <YAxis
+            yAxisId="kg"
+            tick={{ fill: CHART_COLORS.axis, fontSize: 10, fontFamily: "Consolas, monospace" }}
+            axisLine={false}
+            tickLine={false}
+            width={48}
+            tickFormatter={(value: number) => `${value.toFixed(0)}kg`}
+          />
+          <YAxis
+            yAxisId="rs"
+            orientation="right"
+            tick={{ fill: CHART_COLORS.axis, fontSize: 10, fontFamily: "Consolas, monospace" }}
+            axisLine={false}
+            tickLine={false}
+            width={64}
+            tickFormatter={(value: number) =>
+              value >= 1000 ? `${Math.round(value / 1000)}k` : `${Math.round(value)}`
+            }
+          />
+          <ReTooltip
+            cursor={{ fill: "rgba(56,139,253,0.08)" }}
+            content={<DailyVolumeTooltip />}
+          />
+          <Bar
+            yAxisId="kg"
+            dataKey="milkKg"
+            stackId="vol"
+            fill={CHART_COLORS.milk}
+            radius={[0, 0, 0, 0]}
+            maxBarSize={32}
+          />
+          <Bar
+            yAxisId="kg"
+            dataKey="yogurtKg"
+            stackId="vol"
+            fill={CHART_COLORS.yogurt}
+            radius={[4, 4, 0, 0]}
+            maxBarSize={32}
+          />
+          <Line
+            yAxisId="rs"
+            type="monotone"
+            dataKey="revenue"
+            stroke={CHART_COLORS.revenue}
+            strokeWidth={2.5}
+            dot={false}
+            activeDot={{ r: 4, fill: CHART_COLORS.revenue, stroke: "#0d1117", strokeWidth: 2 }}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function DailyVolumeTooltip({ active, payload }: any) {
+  if (!active || !payload || payload.length === 0) return null;
+  const row = payload[0].payload as {
+    date: string;
+    milkKg: number;
+    yogurtKg: number;
+    revenue: number;
+    bills: number;
+  };
+  const combined = row.milkKg + row.yogurtKg;
+  return (
+    <div className="rounded-lg border border-surface-4 bg-surface-1/95 shadow-float px-3 py-2 text-xs font-mono">
+      <div className="font-bold text-text-primary mb-1">{formatChartDate(row.date)}</div>
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-text-secondary">Milk</span>
+        <span style={{ color: CHART_COLORS.milk }}>{kg(row.milkKg)}</span>
       </div>
-      <div className="ml-12 flex gap-[3px] mt-2">
-        {dailyTrend.map((day, idx) => {
-          const stride = Math.max(1, Math.ceil(dailyTrend.length / 8));
-          const showLabel = idx === 0 || idx === dailyTrend.length - 1 || idx % stride === 0;
-          return <div key={day.date} className="flex-1 text-[9px] text-text-secondary font-mono text-center min-w-0 truncate">{showLabel ? formatChartDateShort(day.date) : ""}</div>;
-        })}
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-text-secondary">Yogurt</span>
+        <span style={{ color: CHART_COLORS.yogurt }}>{kg(row.yogurtKg)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-4 border-t border-surface-4 mt-1 pt-1">
+        <span className="text-text-secondary">Combined</span>
+        <span className="text-text-primary">{kg(combined)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-text-secondary">Revenue</span>
+        <span style={{ color: CHART_COLORS.revenue }}>{rs(row.revenue)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-text-secondary">Bills</span>
+        <span className="text-text-primary">{row.bills}</span>
       </div>
     </div>
   );
