@@ -1069,7 +1069,7 @@ export default function Settings() {
                         value={newUser.role}
                         onChange={(e) => setNewUser((u) => ({ ...u, role: e.target.value as "ADMIN" | "MANAGER" | "CASHIER" }))}
                       >
-                        <option value="CASHIER">Cashier - POS only</option>
+                        <option value="CASHIER">Cashier - shop counter access</option>
                         <option value="MANAGER">Manager - reports and approvals</option>
                         <option value="ADMIN">Admin - full access</option>
                       </select>
@@ -1254,7 +1254,7 @@ export default function Settings() {
                         <div>
                           <label className="label">New Role</label>
                           <select className="input" value={userActionNewRole} onChange={(e) => setUserActionNewRole(e.target.value as any)}>
-                            <option value="CASHIER">Cashier - POS only</option>
+                            <option value="CASHIER">Cashier - shop counter access</option>
                             <option value="MANAGER">Manager - reports and approvals</option>
                             <option value="ADMIN">Admin - full access</option>
                           </select>
