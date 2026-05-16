@@ -113,7 +113,11 @@ export function registerReturnsIPC() {
         }
 
         const now = new Date().toISOString();
-        const approver = requireManagerApproval((input as any).managerPin, 'processing a refund');
+        const correctionType = input.correctionType === 'REFUND' ? 'REFUND' : 'CORRECTION';
+        const approver = requireManagerApproval(
+          (input as any).managerPin,
+          correctionType === 'REFUND' ? 'processing a refund' : 'correcting a wrong bill'
+        );
         const cashierId = requireCurrentUser().id;
         const actionShift = getOpenShift();
         const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(input.saleId) as any;
@@ -172,8 +176,6 @@ export function registerReturnsIPC() {
 
         refundAmount = Number(refundAmount.toFixed(2));
         if (refundAmount <= 0) throw new Error('Refund amount must be greater than zero');
-
-        const correctionType = input.correctionType || 'REFUND';
 
         // ── INSERT returns PARENT ROW first (FK parent must exist before children) ──
         db.prepare(`
@@ -355,7 +357,7 @@ export function registerReturnsIPC() {
         const returnedTotal = db.prepare(`
           SELECT COALESCE(SUM(refund_amount), 0) as total
           FROM returns
-          WHERE sale_id = ? AND status = 'COMPLETED'
+          WHERE sale_id = ? AND status = 'COMPLETED' AND correction_type = 'REFUND'
         `).get(sale.id) as any;
 
         let newStatus = 'PARTIALLY_REFUNDED';

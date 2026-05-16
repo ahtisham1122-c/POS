@@ -94,6 +94,7 @@ export default function Returns() {
 
       setSale(result);
       setRefundMethod(result.customer_id ? "CREDIT_ADJUSTMENT" : "CASH");
+      setCorrectionType("CORRECTION");
     } finally {
       setIsLoading(false);
     }
@@ -154,6 +155,7 @@ export default function Returns() {
       setSale(null);
       setReturnQty({});
       setReason("");
+      setCorrectionType("CORRECTION");
       await loadReturns();
     } finally {
       setIsSubmitting(false);
@@ -339,7 +341,9 @@ export default function Returns() {
 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-surface-3 rounded-xl border border-surface-4 p-4">
                   <div>
-                    <p className="text-xs text-text-secondary uppercase font-bold">Refund Total</p>
+                    <p className="text-xs text-text-secondary uppercase font-bold">
+                      {correctionType === "CORRECTION" ? "Correction Value" : "Refund Total"}
+                    </p>
                     <p className="text-3xl font-mono font-bold text-accent">{toMoney(refundTotal)}</p>
                   </div>
                   <button
@@ -348,7 +352,7 @@ export default function Returns() {
                     className="btn-primary h-14 min-w-52 flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     <Undo2 className="w-5 h-5" />
-                    {isSubmitting ? "Processing..." : "Complete Return"}
+                    {isSubmitting ? "Processing..." : correctionType === "CORRECTION" ? "Complete Correction" : "Process Refund"}
                   </button>
                 </div>
               </div>
@@ -413,7 +417,9 @@ export default function Returns() {
               <button onClick={() => resolvePin(null)} className="text-text-secondary hover:text-text-primary">✕</button>
             </div>
             <div className="p-5 space-y-4">
-              <p className="text-sm text-text-secondary text-center">Enter Manager PIN to approve this refund.</p>
+              <p className="text-sm text-text-secondary text-center">
+                Enter Manager PIN to approve this {correctionType === "CORRECTION" ? "bill correction" : "refund"}.
+              </p>
               <input
                 type="password"
                 inputMode="numeric"

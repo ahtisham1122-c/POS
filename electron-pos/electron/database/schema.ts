@@ -322,7 +322,7 @@ CREATE TABLE IF NOT EXISTS returns (
   refund_amount REAL NOT NULL,
   reason TEXT NOT NULL,
   restock_items INTEGER DEFAULT 1,
-  correction_type TEXT DEFAULT 'REFUND',
+  correction_type TEXT DEFAULT 'CORRECTION',
   status TEXT DEFAULT 'COMPLETED',
   created_at TEXT NOT NULL,
   synced INTEGER DEFAULT 0,

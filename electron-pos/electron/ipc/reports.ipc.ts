@@ -5,6 +5,7 @@ import { getCashRegisterExpected } from '../database/cashRegister';
 import { getActiveBusinessDate, getBusinessDate, formatLocalDate } from '../database/businessDay';
 
 const ACCOUNTING_SALE_STATUSES = "'COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED'";
+const REAL_REFUND_WHERE = "r.status = 'COMPLETED' AND r.correction_type = 'REFUND'";
 
 function getShiftScope(reportDate: string) {
   const shift = db.prepare(`
@@ -82,7 +83,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(refund_amount), 0) as totalRefunds,
         COALESCE(SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END), 0) as cashRefunds
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND ${REAL_REFUND_WHERE}
     `).get(...scopeParams(scope)) as any;
 
     const voidStats = db.prepare(`
@@ -167,7 +168,7 @@ export function registerReportsIPC() {
         SUM(refund_amount) as total,
         SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END) as cashRefunds
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND ${REAL_REFUND_WHERE}
     `).get(...scopeParams(scope)) as any;
     const expenses = db.prepare(`SELECT SUM(amount) as total FROM expenses e WHERE ${shiftTableScope('e', 'expense_date', scope)}`).get(...scopeParams(scope)) as any;
     const refundTotal = returns?.total || 0;
@@ -225,7 +226,7 @@ export function registerReportsIPC() {
         SUM(refund_amount) as total,
         SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END) as cashRefunds
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND ${REAL_REFUND_WHERE}
     `).get(...scopeParams(scope)) as any;
 
     const drawer = getCashRegisterExpected(scope.date, scope.shiftId);
@@ -332,7 +333,7 @@ export function registerReportsIPC() {
       LEFT JOIN shifts sh ON sh.id = r.shift_id
       WHERE COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) >= ?
         AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) <= ?
-        AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+        AND ${REAL_REFUND_WHERE}
       GROUP BY COALESCE(sh.shift_date, substr(r.return_date, 1, 10))
     `).all(start, end) as Array<{ date: string; refunds: number }>;
     const refundsByDate = new Map(returnRows.map((row) => [row.date, Number(row.refunds || 0)]));
@@ -421,7 +422,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END), 0) as cashRefunds
       FROM returns r
       LEFT JOIN shifts sh ON sh.id = r.shift_id
-      WHERE r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+      WHERE ${REAL_REFUND_WHERE}
       AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) >= ?
       AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) <= ?
     `).get(startDate, endDate) as any;
@@ -434,6 +435,19 @@ export function registerReportsIPC() {
       WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
         AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) <= ?
         AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+    `).get(startDate, endDate) as any;
+
+    const returnedCogsStats = db.prepare(`
+      SELECT COALESCE(SUM(
+        CASE WHEN r.restock_items = 1 THEN ri.quantity * si.cost_price ELSE 0 END
+      ), 0) as returnedCogs
+      FROM return_items ri
+      JOIN returns r ON r.id = ri.return_id
+      JOIN sale_items si ON si.id = ri.sale_item_id
+      LEFT JOIN shifts sh ON sh.id = r.shift_id
+      WHERE ${REAL_REFUND_WHERE}
+        AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(r.return_date, 1, 10)) <= ?
     `).get(startDate, endDate) as any;
 
     const expenseStats = db.prepare(`
@@ -461,15 +475,15 @@ export function registerReportsIPC() {
 
     const refunds = returnStats.refunds;
     const revenue = revenueStats.revenue - refunds;
-    const cogs = cogsStats.cogs;
+    const cogs = Number(cogsStats.cogs || 0) - Number(returnedCogsStats.returnedCogs || 0);
     const grossProfit = revenue - cogs;
     const expenses = expenseStats.expenses;
     const netProfit = grossProfit - expenses;
 
     return {
       revenue,
-      // Owner treats returns as corrections (wrongly-printed receipts), not
-      // returned merchandise. Gross revenue here already excludes refunds.
+      // Wrong-entry corrections are excluded by sale status. Real refunds
+      // reduce revenue; restocked items also reverse their COGS.
       grossRevenue: revenue,
       refunds,
       cogs,
@@ -506,7 +520,7 @@ export function registerReportsIPC() {
       FROM returns r
       LEFT JOIN shifts sh ON sh.id = r.shift_id
       WHERE substr(COALESCE(sh.shift_date, substr(r.return_date, 1, 10)), 1, 4) = ?
-        AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+        AND ${REAL_REFUND_WHERE}
       GROUP BY substr(COALESCE(sh.shift_date, substr(r.return_date, 1, 10)), 1, 7)
     `).all(year) as Array<{ month: string; refunded: number }>;
     const refundByMonth = new Map(refunds.map((r) => [r.month, Number(r.refunded || 0)]));
@@ -544,7 +558,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(refund_amount), 0) as total,
         COALESCE(SUM(CASE WHEN refund_method = 'CASH' THEN refund_amount ELSE 0 END), 0) as cashRefunds
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND ${REAL_REFUND_WHERE}
     `).get(...scopeParams(scope)) as any;
 
     const todayExpenses = db.prepare(`
@@ -695,7 +709,7 @@ export function registerReportsIPC() {
     const todayRefunds = db.prepare(`
       SELECT COALESCE(SUM(refund_amount), 0) AS refunds, COUNT(*) AS refundCount
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND r.status = 'COMPLETED' AND r.correction_type = 'REFUND'
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND ${REAL_REFUND_WHERE}
     `).get(...scopeParams(scope)) as any;
     const todayExpenses = db.prepare(`
       SELECT COALESCE(SUM(amount), 0) AS expenses
@@ -711,6 +725,15 @@ export function registerReportsIPC() {
       JOIN sales s ON s.id = si.sale_id
       WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
+    const todayRefundProfitImpact = db.prepare(`
+      SELECT COALESCE(SUM(
+        ri.line_total - CASE WHEN r.restock_items = 1 THEN ri.quantity * si.cost_price ELSE 0 END
+      ), 0) AS profitImpact
+      FROM return_items ri
+      JOIN returns r ON r.id = ri.return_id
+      JOIN sale_items si ON si.id = ri.sale_item_id
+      WHERE ${shiftTableScope('r', 'return_date', scope)} AND ${REAL_REFUND_WHERE}
+    `).get(...scopeParams(scope)) as any;
     const tenderRows = db.prepare(`
       SELECT sp.method, COALESCE(SUM(sp.amount), 0) AS amount, COUNT(DISTINCT sp.sale_id) AS bills
       FROM split_payments sp
@@ -724,7 +747,7 @@ export function registerReportsIPC() {
     const safeBills = bills > 0 ? bills : 1;
     const refunds = Number(todayRefunds?.refunds || 0);
     const expensesToday = Number(todayExpenses?.expenses || 0);
-    const grossProfit = Number(todayProfit?.grossProfit || 0);
+    const grossProfit = Number(todayProfit?.grossProfit || 0) - Number(todayRefundProfitImpact?.profitImpact || 0);
     const netSales = Number((revenue - refunds).toFixed(2));
     const today_kpis = {
       bills,
@@ -734,8 +757,8 @@ export function registerReportsIPC() {
       netSales,
       expenses: expensesToday,
       estimatedGrossProfit: Number(grossProfit.toFixed(2)),
-      estimatedNetProfit: Number((grossProfit - expensesToday - refunds).toFixed(2)),
-      marginPct: revenue > 0 ? Number(((grossProfit / revenue) * 100).toFixed(1)) : 0,
+      estimatedNetProfit: Number((grossProfit - expensesToday).toFixed(2)),
+      marginPct: netSales > 0 ? Number(((grossProfit / netSales) * 100).toFixed(1)) : 0,
       avgBill: Number((revenue / safeBills).toFixed(2)),
       avgMilkKgPerBill: Number((milkKg / safeBills).toFixed(3)),
       avgYogurtKgPerBill: Number((yogurtKg / safeBills).toFixed(3)),

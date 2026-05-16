@@ -426,6 +426,7 @@ export class SyncService {
         refundAmount: safeAmount,
         reason: 'Sync placeholder — real return row should overwrite this',
         restockItems: false,
+        correctionType: 'CORRECTION',
         status: 'COMPLETED'
       }
     });

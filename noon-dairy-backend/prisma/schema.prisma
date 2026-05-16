@@ -312,7 +312,7 @@ model Return {
   refundAmount Decimal  @db.Decimal(10, 2)
   reason       String
   restockItems Boolean  @default(true)
-  correctionType String  @default("REFUND")
+  correctionType String  @default("CORRECTION")
   status       String   @default("COMPLETED")
   createdAt    DateTime @default(now())
   shift        Shift?   @relation(fields: [shiftId], references: [id])

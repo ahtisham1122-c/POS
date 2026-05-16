@@ -547,7 +547,7 @@ export function runMigrations() {
           const returnColumns = db.prepare(`PRAGMA table_info(returns)`).all() as Array<{ name: string }>;
           const returnNames = new Set(returnColumns.map((column) => column.name));
           if (!returnNames.has('correction_type')) {
-            db.exec(`ALTER TABLE returns ADD COLUMN correction_type TEXT DEFAULT 'REFUND'`);
+            db.exec(`ALTER TABLE returns ADD COLUMN correction_type TEXT DEFAULT 'CORRECTION'`);
           }
         }
       },
@@ -647,6 +647,21 @@ export function runMigrations() {
 
           db.exec(`CREATE INDEX IF NOT EXISTS idx_employee_advances_expense ON employee_advances(expense_id)`);
           db.exec(`CREATE INDEX IF NOT EXISTS idx_employee_salary_payments_expense ON employee_salary_payments(expense_id)`);
+        }
+      },
+      {
+        version: 23,
+        up: () => {
+          log.info('Running migration v23: Normalizing empty return correction types');
+          const returnColumns = db.prepare(`PRAGMA table_info(returns)`).all() as Array<{ name: string }>;
+          const returnNames = new Set(returnColumns.map((column) => column.name));
+          if (returnNames.has('correction_type')) {
+            db.exec(`
+              UPDATE returns
+              SET correction_type = 'CORRECTION'
+              WHERE correction_type IS NULL OR TRIM(correction_type) = ''
+            `);
+          }
         }
       }
     ];
