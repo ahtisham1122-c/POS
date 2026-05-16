@@ -1,7 +1,7 @@
 import { ipcMain, dialog, app } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import { getBackupDir, getDatabasePath, listBackups, performBackup, requestRestoreOnRestart } from '../sync/backup';
+import { getBackupDir, getBackupDirInfo, getDatabasePath, listBackups, performBackup, requestRestoreOnRestart, resetBackupDir, setBackupDir } from '../sync/backup';
 import { getBusinessDateInfo } from '../database/businessDay';
 import db from '../database/db';
 import { fetchWithTimeout, getApiBaseUrl, getSyncHeaders } from '../sync/apiConfig';
@@ -100,6 +100,51 @@ export function registerSystemIPC() {
     const { shell } = await import('electron');
     await shell.openPath(backupDir);
     return { success: true, backupDir };
+  });
+
+  ipcMain.handle('system:getBackupDirInfo', () => {
+    return { success: true, ...getBackupDirInfo() };
+  });
+
+  // Native folder picker. Owner clicks "Change…" → Windows folder dialog.
+  // We only set the override if the chosen path passes the writability probe;
+  // otherwise the old folder stays in place.
+  ipcMain.handle('system:chooseBackupFolder', async (_event, options?: { migrateExisting?: boolean }) => {
+    try {
+      const { canceled, filePaths } = await dialog.showOpenDialog({
+        title: 'Select Backup Folder',
+        properties: ['openDirectory', 'createDirectory'],
+        defaultPath: getBackupDir()
+      });
+      if (canceled || filePaths.length === 0) {
+        return { success: false, reason: 'canceled' };
+      }
+      const result = setBackupDir(filePaths[0], { migrateExisting: options?.migrateExisting === true });
+      return result;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Lets the owner type/paste a path (useful when the picker doesn't show a
+  // network drive, or when restoring via a script). Same validation as the
+  // picker — we don't accept unwritable paths.
+  ipcMain.handle('system:setBackupFolder', (_event, payload: { path?: string; migrateExisting?: boolean }) => {
+    try {
+      const target = String(payload?.path || '').trim();
+      if (!target) throw new Error('Folder path is empty');
+      return setBackupDir(target, { migrateExisting: payload?.migrateExisting === true });
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('system:resetBackupFolder', () => {
+    try {
+      return resetBackupDir();
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   });
 
   ipcMain.handle('system:getPaths', () => {

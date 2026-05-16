@@ -71,6 +71,10 @@ export default function Settings() {
   const [rateHistory, setRateHistory] = useState<any[]>([]);
   const [backups, setBackups] = useState<any[]>([]);
   const [backupDir, setBackupDir] = useState("");
+  const [backupDirInfo, setBackupDirInfo] = useState<{ backupDir: string; defaultDir: string; isCustom: boolean } | null>(null);
+  const [backupMigrateOnChange, setBackupMigrateOnChange] = useState(true);
+  const [backupFolderBusy, setBackupFolderBusy] = useState(false);
+  const [backupFolderMessage, setBackupFolderMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isBackingUp, setIsBackingUp] = useState(false);
 
   const [syncStatus, setSyncStatus] = useState<{
@@ -341,8 +345,48 @@ export default function Settings() {
         setBackups(result.backups || []);
         setBackupDir(result.backupDir || "");
       }
+      const info = await window.electronAPI?.system?.getBackupDirInfo();
+      if (info?.success) {
+        setBackupDirInfo({ backupDir: info.backupDir, defaultDir: info.defaultDir, isCustom: !!info.isCustom });
+      }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleChangeBackupFolder = async () => {
+    setBackupFolderBusy(true);
+    setBackupFolderMessage(null);
+    try {
+      const result = await window.electronAPI?.system?.chooseBackupFolder({ migrateExisting: backupMigrateOnChange });
+      if (!result?.success) {
+        if (result?.reason === "canceled") return;
+        setBackupFolderMessage({ type: "error", text: result?.error || "Could not change folder." });
+        return;
+      }
+      setBackupFolderMessage({
+        type: "success",
+        text: `Backup folder set to ${result.backupDir}${result.migrated ? ` · copied ${result.migrated} existing file(s)` : ""}.`
+      });
+      await loadBackupList();
+    } finally {
+      setBackupFolderBusy(false);
+    }
+  };
+
+  const handleResetBackupFolder = async () => {
+    setBackupFolderBusy(true);
+    setBackupFolderMessage(null);
+    try {
+      const result = await window.electronAPI?.system?.resetBackupFolder();
+      if (!result?.success) {
+        setBackupFolderMessage({ type: "error", text: result?.error || "Could not reset folder." });
+        return;
+      }
+      setBackupFolderMessage({ type: "success", text: `Reset to default folder ${result.backupDir}.` });
+      await loadBackupList();
+    } finally {
+      setBackupFolderBusy(false);
     }
   };
 
@@ -1725,11 +1769,58 @@ export default function Settings() {
                 </button>
               </div>
 
-              {backupDir && (
-                <div className="rounded-lg border border-surface-4 bg-surface-3/50 px-4 py-2 text-xs text-text-secondary font-mono">
-                  Backup folder: {backupDir}
+              <div className="rounded-xl border border-surface-4 bg-surface-2 p-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-text-primary">Backup Folder</h3>
+                    <p className="text-xs text-text-secondary mt-0.5">
+                      Where every backup file is saved. Picking a folder on a USB stick or a synced cloud folder
+                      (OneDrive, Google Drive) means you get an off-PC copy automatically.
+                    </p>
+                    <p className="mt-2 font-mono text-xs text-text-primary break-all">
+                      {backupDir || "Loading…"}
+                    </p>
+                    {backupDirInfo && (
+                      <p className="text-[10px] text-text-secondary mt-1">
+                        {backupDirInfo.isCustom
+                          ? <>Custom folder · Default would be <span className="font-mono">{backupDirInfo.defaultDir}</span></>
+                          : <>Default folder</>}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2 shrink-0">
+                    <label className="text-[11px] text-text-secondary flex items-center gap-2 select-none">
+                      <input
+                        type="checkbox"
+                        checked={backupMigrateOnChange}
+                        onChange={(e) => setBackupMigrateOnChange(e.target.checked)}
+                      />
+                      Copy existing backups to new folder
+                    </label>
+                    <div className="flex gap-2 flex-wrap">
+                      <button onClick={handleChangeBackupFolder} disabled={backupFolderBusy} className="btn-primary text-sm px-3 py-1.5 disabled:opacity-50">
+                        Change Folder…
+                      </button>
+                      <button
+                        onClick={handleResetBackupFolder}
+                        disabled={backupFolderBusy || !backupDirInfo?.isCustom}
+                        className="btn-secondary text-sm px-3 py-1.5 disabled:opacity-50"
+                        title={backupDirInfo?.isCustom ? "Reset to Documents/NoonDairyBackup" : "Already using the default folder"}
+                      >
+                        Reset to Default
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              )}
+                {backupFolderMessage && (
+                  <div className={cn(
+                    "mt-3 text-sm rounded-md p-2",
+                    backupFolderMessage.type === "error" ? "bg-danger/10 text-danger" : "bg-success/10 text-success"
+                  )}>
+                    {backupFolderMessage.text}
+                  </div>
+                )}
+              </div>
 
               <div className="rounded-xl border border-surface-4 overflow-hidden">
                 <table className="w-full text-sm text-left">

@@ -3,8 +3,133 @@ import path from 'path';
 import { app, dialog } from 'electron';
 import log from '../utils/logger';
 
-export function getBackupDir() {
+function getBackupConfigPath() {
+  return path.join(app.getPath('userData'), 'backup-config.json');
+}
+
+function getDefaultBackupDir() {
   return path.join(app.getPath('documents'), 'NoonDairyBackup');
+}
+
+// Cached after the first read so getBackupDir() stays cheap; this matters
+// because performBackup, listBackups, and applyPendingRestoreIfAny all call
+// it in tight paths. Invalidate by calling setBackupDir / resetBackupDir.
+let cachedBackupDir: string | null = null;
+
+function readOverrideFromDisk(): string | null {
+  try {
+    const configPath = getBackupConfigPath();
+    if (!fs.existsSync(configPath)) return null;
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const parsed = JSON.parse(raw) as { overridePath?: string | null };
+    const override = parsed?.overridePath;
+    if (override && typeof override === 'string' && override.trim()) {
+      return override.trim();
+    }
+    return null;
+  } catch (err: any) {
+    // A bad config file shouldn't break backups. Fall back to default and log.
+    log.error(`Could not read backup config, using default folder: ${err?.message || err}`);
+    return null;
+  }
+}
+
+function writeOverrideToDisk(overridePath: string | null) {
+  const configPath = getBackupConfigPath();
+  if (!overridePath) {
+    if (fs.existsSync(configPath)) fs.rmSync(configPath, { force: true });
+    return;
+  }
+  fs.writeFileSync(configPath, JSON.stringify({ overridePath, updatedAt: new Date().toISOString() }, null, 2));
+}
+
+export function getBackupDir() {
+  if (cachedBackupDir) return cachedBackupDir;
+  const override = readOverrideFromDisk();
+  const chosen = override || getDefaultBackupDir();
+  cachedBackupDir = chosen;
+  return chosen;
+}
+
+// Test whether a folder is usable for backups *before* committing the change.
+// We create the folder if missing, then write+delete a probe file. If the
+// disk is read-only or the path is bogus, we throw rather than silently
+// breaking the next backup.
+function assertWritableDir(targetDir: string) {
+  if (!targetDir || typeof targetDir !== 'string') {
+    throw new Error('Backup folder path is empty');
+  }
+  // Disallow placing backups under userData — restoring a backup wipes that
+  // folder, so a backup living in it would be destroyed mid-restore.
+  const userData = app.getPath('userData');
+  const normalized = path.resolve(targetDir);
+  if (normalized === path.resolve(userData) || normalized.startsWith(path.resolve(userData) + path.sep)) {
+    throw new Error('Backup folder cannot live inside the app data folder');
+  }
+
+  if (!fs.existsSync(normalized)) {
+    fs.mkdirSync(normalized, { recursive: true });
+  } else {
+    const stat = fs.statSync(normalized);
+    if (!stat.isDirectory()) throw new Error('Backup path exists but is not a folder');
+  }
+
+  const probe = path.join(normalized, `.noon-write-test-${process.pid}-${Date.now()}`);
+  fs.writeFileSync(probe, 'ok');
+  fs.rmSync(probe, { force: true });
+  return normalized;
+}
+
+export function setBackupDir(newPath: string, options?: { migrateExisting?: boolean }) {
+  const oldDir = getBackupDir();
+  const normalized = assertWritableDir(newPath);
+  if (normalized === path.resolve(oldDir)) {
+    // Nothing to do, but make sure the override is persisted (the user may
+    // have manually re-selected the default folder).
+    writeOverrideToDisk(normalized);
+    cachedBackupDir = normalized;
+    return { success: true, backupDir: normalized, migrated: 0 };
+  }
+
+  let migrated = 0;
+  if (options?.migrateExisting && fs.existsSync(oldDir)) {
+    try {
+      for (const file of fs.readdirSync(oldDir)) {
+        if (!file.endsWith('.db') && !file.endsWith('.sqlite')) continue;
+        const src = path.join(oldDir, file);
+        const dst = path.join(normalized, file);
+        if (fs.existsSync(dst)) continue;
+        fs.copyFileSync(src, dst);
+        for (const suffix of ['-wal', '-shm']) {
+          if (fs.existsSync(src + suffix)) fs.copyFileSync(src + suffix, dst + suffix);
+        }
+        migrated += 1;
+      }
+    } catch (err: any) {
+      log.error(`Backup migration partially failed: ${err?.message || err}`);
+    }
+  }
+
+  writeOverrideToDisk(normalized);
+  cachedBackupDir = normalized;
+  log.info(`Backup folder changed to ${normalized}${migrated ? ` (migrated ${migrated} files)` : ''}`);
+  return { success: true, backupDir: normalized, migrated };
+}
+
+export function resetBackupDir() {
+  writeOverrideToDisk(null);
+  cachedBackupDir = null;
+  const dir = getBackupDir();
+  log.info(`Backup folder reset to default: ${dir}`);
+  return { success: true, backupDir: dir };
+}
+
+export function getBackupDirInfo() {
+  return {
+    backupDir: getBackupDir(),
+    defaultDir: getDefaultBackupDir(),
+    isCustom: readOverrideFromDisk() !== null
+  };
 }
 
 export function getDatabasePath() {

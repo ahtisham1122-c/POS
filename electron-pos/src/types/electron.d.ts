@@ -156,6 +156,10 @@ export interface ElectronAPI {
     restore: () => Promise<{ success: boolean; restoredFrom?: string; safetyBackup?: string | null; message?: string; reason?: string; error?: string }>;
     listBackups: () => Promise<{ success: boolean; backupDir: string; dbPath: string; backups: any[] }>;
     openBackupFolder: () => Promise<{ success: boolean; backupDir: string }>;
+    getBackupDirInfo: () => Promise<{ success: boolean; backupDir: string; defaultDir: string; isCustom: boolean }>;
+    chooseBackupFolder: (options?: { migrateExisting?: boolean }) => Promise<{ success: boolean; backupDir?: string; migrated?: number; reason?: string; error?: string }>;
+    setBackupFolder: (data: { path: string; migrateExisting?: boolean }) => Promise<{ success: boolean; backupDir?: string; migrated?: number; error?: string }>;
+    resetBackupFolder: () => Promise<{ success: boolean; backupDir?: string; error?: string }>;
     getPaths: () => Promise<any>;
     getBusinessDate: () => Promise<{ date: string; openShiftId?: string | null; openShiftOpenedAt?: string | null; shopDayStartHour: number; ramadan24Hour: boolean; is24HourMode?: boolean }>;
     getHealth: () => Promise<any>;
