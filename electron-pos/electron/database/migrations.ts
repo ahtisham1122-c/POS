@@ -663,6 +663,22 @@ export function runMigrations() {
             `);
           }
         }
+      },
+      {
+        version: 24,
+        up: () => {
+          log.info('Running migration v24: Adding supplier milk supply mode');
+          const supplierColumns = db.prepare(`PRAGMA table_info(suppliers)`).all() as Array<{ name: string }>;
+          const supplierNames = new Set(supplierColumns.map((column) => column.name));
+          if (!supplierNames.has('milk_supply_mode')) {
+            db.exec(`ALTER TABLE suppliers ADD COLUMN milk_supply_mode TEXT NOT NULL DEFAULT 'MIXED'`);
+          }
+          db.exec(`
+            UPDATE suppliers
+            SET milk_supply_mode = 'MIXED'
+            WHERE milk_supply_mode IS NULL OR milk_supply_mode NOT IN ('MIXED', 'SEPARATE')
+          `);
+        }
       }
     ];
 

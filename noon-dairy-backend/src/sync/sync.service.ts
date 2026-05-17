@@ -185,6 +185,7 @@ export class SyncService {
       if (!data.code) data.code = `SYNC-SUP-${supplierId.slice(0, 12)}`;
       if (!data.name) data.name = `Synced Supplier ${supplierId.slice(0, 8)}`;
       if (!data.allowedShifts) data.allowedShifts = 'BOTH';
+      data.milkSupplyMode = String(data.milkSupplyMode || 'MIXED').toUpperCase() === 'SEPARATE' ? 'SEPARATE' : 'MIXED';
       if (data.defaultRate === undefined || data.defaultRate === null) data.defaultRate = 0;
       if (data.cowRate === undefined || data.cowRate === null) data.cowRate = data.defaultRate || 0;
       if (data.buffaloRate === undefined || data.buffaloRate === null) data.buffaloRate = data.defaultRate || 0;
@@ -329,6 +330,7 @@ export class SyncService {
         code: `SYNC-SUP-${String(supplierId).slice(0, 12)}`,
         name: `Synced Supplier ${String(supplierId).slice(0, 8)}`,
         allowedShifts: 'BOTH',
+        milkSupplyMode: 'MIXED',
         defaultRate: 0,
         cowRate: 0,
         buffaloRate: 0,

@@ -367,6 +367,7 @@ model Supplier {
   phone          String?
   address        String?
   allowedShifts  String   @default("BOTH")
+  milkSupplyMode String   @default("MIXED")
   defaultRate    Decimal  @default(0) @db.Decimal(10, 2)
   cowRate        Decimal  @default(0) @db.Decimal(10, 2)
   buffaloRate    Decimal  @default(0) @db.Decimal(10, 2)

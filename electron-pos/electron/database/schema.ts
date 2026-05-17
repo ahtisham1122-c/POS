@@ -410,6 +410,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
   phone TEXT,
   address TEXT,
   allowed_shifts TEXT NOT NULL DEFAULT 'BOTH',
+  milk_supply_mode TEXT NOT NULL DEFAULT 'MIXED',
   default_rate REAL DEFAULT 0,
   cow_rate REAL DEFAULT 0,
   buffalo_rate REAL DEFAULT 0,
@@ -690,6 +691,7 @@ function prepareLegacyTablesForSchemaIndexes() {
 function prepareSupplierMilkRateColumns() {
   addColumnIfMissing('suppliers', 'cow_rate', 'REAL DEFAULT 0');
   addColumnIfMissing('suppliers', 'buffalo_rate', 'REAL DEFAULT 0');
+  addColumnIfMissing('suppliers', 'milk_supply_mode', "TEXT NOT NULL DEFAULT 'MIXED'");
   addColumnIfMissing('suppliers', 'guaranteed_advance_balance', 'REAL DEFAULT 0');
   addColumnIfMissing('suppliers', 'payment_cycle', "TEXT NOT NULL DEFAULT 'MONTHLY'");
   addColumnIfMissing('suppliers', 'payment_cycle_days', 'INTEGER DEFAULT 30');
@@ -699,6 +701,7 @@ function prepareSupplierMilkRateColumns() {
     UPDATE suppliers
     SET cow_rate = CASE WHEN COALESCE(cow_rate, 0) <= 0 THEN COALESCE(default_rate, 0) ELSE cow_rate END,
         buffalo_rate = CASE WHEN COALESCE(buffalo_rate, 0) <= 0 THEN COALESCE(default_rate, 0) ELSE buffalo_rate END,
+        milk_supply_mode = CASE WHEN COALESCE(milk_supply_mode, '') IN ('MIXED', 'SEPARATE') THEN milk_supply_mode ELSE 'MIXED' END,
         payment_cycle = CASE WHEN COALESCE(payment_cycle, '') = '' THEN 'MONTHLY' ELSE payment_cycle END,
         payment_cycle_days = CASE WHEN COALESCE(payment_cycle_days, 0) <= 0 THEN 30 ELSE payment_cycle_days END
   `).run();

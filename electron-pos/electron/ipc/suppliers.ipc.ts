@@ -11,6 +11,7 @@ type SupplierInput = {
   phone?: string;
   address?: string;
   allowedShifts: 'MORNING' | 'EVENING' | 'BOTH';
+  milkSupplyMode?: 'MIXED' | 'SEPARATE';
   defaultRate: number;
   cowRate?: number;
   buffaloRate?: number;
@@ -38,6 +39,11 @@ function getMilkProduct() {
 function normalizeMilkType(value?: string) {
   const milkType = String(value || 'MIXED').toUpperCase();
   return ['COW', 'BUFFALO', 'MIXED'].includes(milkType) ? milkType : 'MIXED';
+}
+
+function normalizeMilkSupplyMode(value?: string) {
+  const mode = String(value || 'MIXED').toUpperCase();
+  return mode === 'SEPARATE' ? 'SEPARATE' : 'MIXED';
 }
 
 function getSupplierRate(data: { defaultRate?: number; cowRate?: number; buffaloRate?: number }, milkType: string) {
@@ -139,6 +145,7 @@ export function registerSuppliersIPC() {
       const id = crypto.randomUUID();
       const code = nextSupplierCode();
       const allowedShifts = data.allowedShifts || 'BOTH';
+      const milkSupplyMode = normalizeMilkSupplyMode(data.milkSupplyMode);
       const defaultRate = Number(data.defaultRate || 0);
       const cowRate = Number(data.cowRate || defaultRate || 0);
       const buffaloRate = Number(data.buffaloRate || defaultRate || 0);
@@ -150,10 +157,10 @@ export function registerSuppliersIPC() {
 
       db.prepare(`
         INSERT INTO suppliers (
-          id, code, name, phone, address, allowed_shifts, default_rate, cow_rate, buffalo_rate,
+          id, code, name, phone, address, allowed_shifts, milk_supply_mode, default_rate, cow_rate, buffalo_rate,
           guaranteed_advance_balance, payment_cycle, payment_cycle_days, payment_cycle_notes,
           current_balance, is_active, created_at, updated_at, synced
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, 0)
       `).run(
         id,
         code,
@@ -161,6 +168,7 @@ export function registerSuppliersIPC() {
         data.phone || null,
         data.address || null,
         allowedShifts,
+        milkSupplyMode,
         defaultRate,
         cowRate,
         buffaloRate,
@@ -179,6 +187,7 @@ export function registerSuppliersIPC() {
         phone: data.phone || null,
         address: data.address || null,
         allowed_shifts: allowedShifts,
+        milk_supply_mode: milkSupplyMode,
         default_rate: defaultRate,
         cow_rate: cowRate,
         buffalo_rate: buffaloRate,
@@ -205,10 +214,11 @@ export function registerSuppliersIPC() {
       const paymentCycle = normalizePaymentCycle(data.paymentCycle);
       const paymentCycleDays = normalizeCycleDays(paymentCycle, data.paymentCycleDays);
       const guaranteedAdvanceBalance = Number(data.guaranteedAdvanceBalance || 0);
+      const milkSupplyMode = normalizeMilkSupplyMode(data.milkSupplyMode);
 
       db.prepare(`
         UPDATE suppliers
-        SET name = ?, phone = ?, address = ?, allowed_shifts = ?, default_rate = ?, cow_rate = ?, buffalo_rate = ?,
+        SET name = ?, phone = ?, address = ?, allowed_shifts = ?, milk_supply_mode = ?, default_rate = ?, cow_rate = ?, buffalo_rate = ?,
             guaranteed_advance_balance = ?, payment_cycle = ?, payment_cycle_days = ?, payment_cycle_notes = ?,
             updated_at = ?, synced = 0
         WHERE id = ?
@@ -217,6 +227,7 @@ export function registerSuppliersIPC() {
         data.phone || null,
         data.address || null,
         data.allowedShifts || 'BOTH',
+        milkSupplyMode,
         Number(data.defaultRate || 0),
         Number(data.cowRate || data.defaultRate || 0),
         Number(data.buffaloRate || data.defaultRate || 0),
@@ -234,6 +245,7 @@ export function registerSuppliersIPC() {
         phone: data.phone || null,
         address: data.address || null,
         allowed_shifts: data.allowedShifts || 'BOTH',
+        milk_supply_mode: milkSupplyMode,
         default_rate: Number(data.defaultRate || 0),
         cow_rate: Number(data.cowRate || data.defaultRate || 0),
         buffalo_rate: Number(data.buffaloRate || data.defaultRate || 0),
@@ -293,6 +305,13 @@ export function registerSuppliersIPC() {
         }
 
         const milkType = normalizeMilkType(data.milkType);
+        const milkSupplyMode = normalizeMilkSupplyMode(supplier.milk_supply_mode);
+        if (milkSupplyMode === 'MIXED' && milkType !== 'MIXED') {
+          throw new Error(`${supplier.name} is configured for mixed milk. Use mixed milk entry only.`);
+        }
+        if (milkSupplyMode === 'SEPARATE' && milkType === 'MIXED') {
+          throw new Error(`${supplier.name} is configured for separate cow/buffalo milk. Enter cow and buffalo separately.`);
+        }
         const quantity = Number(data.quantity || 0);
         const rate = Number(getCollectionRateFromSupplier(supplier, milkType));
         if (quantity <= 0) throw new Error('Milk quantity must be greater than zero');
@@ -442,7 +461,7 @@ export function registerSuppliersIPC() {
       return db.transaction(() => {
         const now = new Date().toISOString();
         const existing = db.prepare(`
-          SELECT mc.*, s.name as supplier_name, s.allowed_shifts, s.default_rate, s.cow_rate, s.buffalo_rate
+          SELECT mc.*, s.name as supplier_name, s.allowed_shifts, s.milk_supply_mode, s.default_rate, s.cow_rate, s.buffalo_rate
           FROM milk_collections mc
           JOIN suppliers s ON s.id = mc.supplier_id
           WHERE mc.id = ?
@@ -456,6 +475,13 @@ export function registerSuppliersIPC() {
         }
 
         const milkType = normalizeMilkType(data.milkType || existing.milk_type);
+        const milkSupplyMode = normalizeMilkSupplyMode(existing.milk_supply_mode);
+        if (milkSupplyMode === 'MIXED' && milkType !== 'MIXED') {
+          throw new Error(`${existing.supplier_name} is configured for mixed milk. Use mixed milk entry only.`);
+        }
+        if (milkSupplyMode === 'SEPARATE' && milkType === 'MIXED') {
+          throw new Error(`${existing.supplier_name} is configured for separate cow/buffalo milk. Enter cow and buffalo separately.`);
+        }
         const date = data.date || existing.collection_date;
         const duplicate = db.prepare(`
           SELECT id

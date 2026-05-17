@@ -9,6 +9,7 @@ type Supplier = {
   phone?: string;
   address?: string;
   allowed_shifts: "MORNING" | "EVENING" | "BOTH";
+  milk_supply_mode?: "MIXED" | "SEPARATE";
   default_rate: number;
   cow_rate?: number;
   buffalo_rate?: number;
@@ -21,6 +22,7 @@ type Supplier = {
 };
 
 type MilkType = "COW" | "BUFFALO" | "MIXED";
+type MilkSupplyMode = "MIXED" | "SEPARATE";
 type PaymentCycle = "10_DAYS" | "15_DAYS" | "MONTHLY" | "CUSTOM";
 
 function toMoney(value: number) {
@@ -127,6 +129,7 @@ export default function Suppliers() {
     phone: "",
     address: "",
     allowedShifts: "BOTH",
+    milkSupplyMode: "MIXED" as MilkSupplyMode,
     defaultRate: "0",
     cowRate: "0",
     buffaloRate: "0",
@@ -166,8 +169,8 @@ export default function Suppliers() {
     [collections, selectedSupplierId]
   );
 
-  const morningCollection = supplierCollections.find(c => c.shift === "MORNING");
-  const eveningCollection = supplierCollections.find(c => c.shift === "EVENING");
+  const morningCollections = supplierCollections.filter(c => c.shift === "MORNING");
+  const eveningCollections = supplierCollections.filter(c => c.shift === "EVENING");
 
   const payableTotal = suppliers.reduce((sum, supplier) => sum + Math.max(0, Number(supplier.current_balance || 0)), 0);
   const supplierCreditTotal = suppliers.reduce((sum, supplier) => sum + Math.max(0, -Number(supplier.current_balance || 0)), 0);
@@ -308,7 +311,7 @@ export default function Suppliers() {
 
   function openAddSupplier() {
     setEditingSupplierId("");
-    setSupplierForm({ name: "", phone: "", address: "", allowedShifts: "BOTH", defaultRate: "0", cowRate: "0", buffaloRate: "0", guaranteedAdvanceBalance: "0", paymentCycle: "MONTHLY", paymentCycleDays: "30", paymentCycleNotes: "" });
+    setSupplierForm({ name: "", phone: "", address: "", allowedShifts: "BOTH", milkSupplyMode: "MIXED", defaultRate: "0", cowRate: "0", buffaloRate: "0", guaranteedAdvanceBalance: "0", paymentCycle: "MONTHLY", paymentCycleDays: "30", paymentCycleNotes: "" });
     setIsSupplierModalOpen(true);
   }
 
@@ -319,6 +322,7 @@ export default function Suppliers() {
       phone: supplier.phone || "",
       address: supplier.address || "",
       allowedShifts: supplier.allowed_shifts,
+      milkSupplyMode: supplier.milk_supply_mode || "MIXED",
       defaultRate: String(supplier.default_rate || 0),
       cowRate: String(supplier.cow_rate || supplier.default_rate || 0),
       buffaloRate: String(supplier.buffalo_rate || supplier.default_rate || 0),
@@ -337,6 +341,7 @@ export default function Suppliers() {
       phone: supplierForm.phone,
       address: supplierForm.address,
       allowedShifts: supplierForm.allowedShifts,
+      milkSupplyMode: supplierForm.milkSupplyMode,
       defaultRate: Number(supplierForm.defaultRate || 0),
       cowRate: Number(supplierForm.cowRate || supplierForm.defaultRate || 0),
       buffaloRate: Number(supplierForm.buffaloRate || supplierForm.defaultRate || 0),
@@ -532,6 +537,7 @@ export default function Suppliers() {
                   </h2>
                   <div className="flex items-center gap-3 mt-2 text-sm text-text-secondary">
                     <span>{selectedSupplier.phone || "No phone"}</span>
+                    <span>{(selectedSupplier.milk_supply_mode || "MIXED") === "SEPARATE" ? "Cow/Buffalo Separate" : "Mixed Milk"}</span>
                     <span>•</span>
                     <span>Default Rate: {toMoney(selectedSupplier.default_rate)}</span>
                     {(selectedSupplier.cow_rate || 0) > 0 && <span>• Cow: {toMoney(selectedSupplier.cow_rate || 0)}</span>}
@@ -596,7 +602,7 @@ export default function Suppliers() {
                       <ShiftEntry
                         shift="MORNING"
                         supplier={selectedSupplier}
-                        collection={morningCollection}
+                        collections={morningCollections}
                         date={collectionDate}
                         onSuccess={loadData}
                         allowed={selectedSupplier.allowed_shifts === "MORNING" || selectedSupplier.allowed_shifts === "BOTH"}
@@ -604,7 +610,7 @@ export default function Suppliers() {
                       <ShiftEntry
                         shift="EVENING"
                         supplier={selectedSupplier}
-                        collection={eveningCollection}
+                        collections={eveningCollections}
                         date={collectionDate}
                         onSuccess={loadData}
                         allowed={selectedSupplier.allowed_shifts === "EVENING" || selectedSupplier.allowed_shifts === "BOTH"}
@@ -808,17 +814,24 @@ export default function Suppliers() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-text-secondary font-bold mb-1 block">Default Rate</label>
-                  <input className="input" type="number" value={supplierForm.defaultRate} onChange={(e) => setSupplierForm(c => ({ ...c, defaultRate: e.target.value }))} />
+                  <label className="text-xs text-text-secondary font-bold mb-1 block">Milk Entry Mode</label>
+                  <select className="input" value={supplierForm.milkSupplyMode} onChange={(e) => setSupplierForm(c => ({ ...c, milkSupplyMode: e.target.value as MilkSupplyMode }))}>
+                    <option value="MIXED">Mixed milk - one rate</option>
+                    <option value="SEPARATE">Separate cow + buffalo</option>
+                  </select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs text-text-secondary font-bold mb-1 block">Cow Rate (Optional)</label>
+                  <label className="text-xs text-text-secondary font-bold mb-1 block">Mixed Rate</label>
+                  <input className="input" type="number" value={supplierForm.defaultRate} onChange={(e) => setSupplierForm(c => ({ ...c, defaultRate: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="text-xs text-text-secondary font-bold mb-1 block">Cow Rate</label>
                   <input className="input" type="number" value={supplierForm.cowRate} onChange={(e) => setSupplierForm(c => ({ ...c, cowRate: e.target.value }))} />
                 </div>
                 <div>
-                  <label className="text-xs text-text-secondary font-bold mb-1 block">Buffalo Rate (Optional)</label>
+                  <label className="text-xs text-text-secondary font-bold mb-1 block">Buffalo Rate</label>
                   <input className="input" type="number" value={supplierForm.buffaloRate} onChange={(e) => setSupplierForm(c => ({ ...c, buffaloRate: e.target.value }))} />
                 </div>
               </div>
@@ -958,20 +971,9 @@ export default function Suppliers() {
 }
 
 // Subcomponent for Shift Entry
-function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: any) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [milkType, setMilkType] = useState<MilkType>(collection?.milk_type || "MIXED");
-  const [quantity, setQuantity] = useState(collection ? String(collection.quantity) : "");
-  const [notes, setNotes] = useState(collection?.notes || "");
-  const [isSaving, setIsSaving] = useState(false);
-  const lockedRate = supplierRate(supplier, milkType);
-
-  useEffect(() => {
-    setMilkType(collection?.milk_type || "MIXED");
-    setQuantity(collection ? String(collection.quantity) : "");
-    setNotes(collection?.notes || "");
-    setIsEditing(false);
-  }, [collection?.id, collection?.milk_type, collection?.quantity, collection?.notes]);
+function ShiftEntry({ shift, supplier, collections, date, onSuccess, allowed }: any) {
+  const supplyMode: MilkSupplyMode = (supplier?.milk_supply_mode || "MIXED") === "SEPARATE" ? "SEPARATE" : "MIXED";
+  const milkTypes: MilkType[] = supplyMode === "SEPARATE" ? ["COW", "BUFFALO"] : ["MIXED"];
 
   if (!allowed) {
     return (
@@ -981,6 +983,52 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
       </div>
     );
   }
+
+  return (
+    <div className="card p-5 flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className={cn("font-bold text-sm tracking-wider uppercase", shift === "MORNING" ? "text-info" : "text-warning")}>
+            {shift} SHIFT
+          </h4>
+          <p className="text-xs text-text-secondary mt-1">
+            {supplyMode === "SEPARATE" ? "Enter cow and buffalo separately" : "Mixed milk entry"}
+          </p>
+        </div>
+        <span className="rounded-full border border-surface-4 bg-surface-3 px-2 py-1 text-[10px] font-bold text-text-secondary">
+          {supplyMode}
+        </span>
+      </div>
+
+      <div className="space-y-3">
+        {milkTypes.map((type) => (
+          <MilkCollectionEntry
+            key={type}
+            shift={shift}
+            supplier={supplier}
+            collection={(collections || []).find((row: any) => row.milk_type === type)}
+            date={date}
+            milkType={type}
+            onSuccess={onSuccess}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MilkCollectionEntry({ shift, supplier, collection, date, milkType, onSuccess }: any) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [quantity, setQuantity] = useState(collection ? String(collection.quantity) : "");
+  const [notes, setNotes] = useState(collection?.notes || "");
+  const [isSaving, setIsSaving] = useState(false);
+  const lockedRate = supplierRate(supplier, milkType);
+
+  useEffect(() => {
+    setQuantity(collection ? String(collection.quantity) : "");
+    setNotes(collection?.notes || "");
+    setIsEditing(false);
+  }, [collection?.id, collection?.quantity, collection?.notes]);
 
   const isFormActive = isEditing || !collection;
 
@@ -1002,6 +1050,8 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
       if (result?.success) {
         setIsEditing(false);
         onSuccess();
+      } else if (result?.error) {
+        alert(result.error);
       }
     } finally {
       setIsSaving(false);
@@ -1009,18 +1059,18 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
   }
 
   return (
-    <div className={cn("card p-5 flex flex-col transition-all", isFormActive ? "border-primary/50 shadow-md" : "")}>
+    <div className={cn("rounded-lg border border-surface-4 bg-surface-2 p-4 transition-all", isFormActive ? "border-primary/50 shadow-md" : "")}>
       <div className="flex justify-between items-center mb-4">
-        <h4 className={cn("font-bold text-sm tracking-wider uppercase", shift === "MORNING" ? "text-info" : "text-warning")}>
-          {shift} SHIFT
-        </h4>
+        <h5 className="font-bold text-sm tracking-wider uppercase text-text-primary">
+          {milkType === "MIXED" ? "Mixed Milk" : milkType === "COW" ? "Cow Milk" : "Buffalo Milk"}
+        </h5>
         {collection && !isEditing && (
           <button onClick={() => setIsEditing(true)} className="btn-secondary px-2 py-1 text-xs flex items-center gap-1">
             <Pencil className="w-3 h-3" /> Edit
           </button>
         )}
         {isEditing && (
-          <button onClick={() => { setIsEditing(false); setMilkType(collection.milk_type || "MIXED"); setQuantity(String(collection.quantity)); setNotes(collection.notes || ""); }} className="text-text-secondary hover:text-text-primary">
+          <button onClick={() => { setIsEditing(false); setQuantity(String(collection.quantity)); setNotes(collection.notes || ""); }} className="text-text-secondary hover:text-text-primary">
             <X className="w-4 h-4" />
           </button>
         )}
@@ -1039,11 +1089,6 @@ function ShiftEntry({ shift, supplier, collection, date, onSuccess, allowed }: a
         </div>
       ) : (
         <div className="flex-1 flex flex-col space-y-4">
-          <select className="input text-sm" value={milkType} onChange={(e) => setMilkType(e.target.value as MilkType)}>
-            <option value="MIXED">Mixed Milk</option>
-            <option value="BUFFALO">Buffalo Milk</option>
-            <option value="COW">Cow Milk</option>
-          </select>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] text-text-secondary font-bold uppercase mb-1 block">Quantity (kg)</label>
