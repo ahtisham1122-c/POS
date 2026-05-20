@@ -1368,12 +1368,150 @@ export function registerReportsIPC() {
       }
     } : null;
 
+    // ---- Daily milk procurement cost (weighted avg buy rate) ----
+    // Each supplier has their own per-kg rate, and even within one supplier
+    // the cow vs buffalo rate differs. Owner wants the single number that
+    // matters: "what did I pay per kg of milk on average today?". Computed
+    // as SUM(total_amount) / SUM(quantity), which is the only correct
+    // weighted average — straight AVG(rate) over-weights small entries.
+    const milkCostToday = db.prepare(`
+      SELECT
+        COALESCE(SUM(quantity), 0) AS total_kg,
+        COALESCE(SUM(total_amount), 0) AS total_spend,
+        COUNT(*) AS entry_count,
+        COUNT(DISTINCT supplier_id) AS supplier_count,
+        COALESCE(MIN(rate), 0) AS min_rate,
+        COALESCE(MAX(rate), 0) AS max_rate
+      FROM milk_collections
+      WHERE collection_date = ?
+    `).get(today) as any;
+
+    const milkCostByType = db.prepare(`
+      SELECT
+        milk_type,
+        COALESCE(SUM(quantity), 0) AS total_kg,
+        COALESCE(SUM(total_amount), 0) AS total_spend
+      FROM milk_collections
+      WHERE collection_date = ?
+      GROUP BY milk_type
+    `).all(today) as Array<{ milk_type: string; total_kg: number; total_spend: number }>;
+
+    // Lowest/highest single entry today — useful for negotiation ("Farmer X
+    // gave you the priciest milk today, see if cow/buffalo mix is right").
+    const milkCostExtremes = db.prepare(`
+      SELECT mc.rate, mc.quantity, mc.milk_type, mc.shift, s.name AS supplier_name
+      FROM milk_collections mc
+      JOIN suppliers s ON s.id = mc.supplier_id
+      WHERE mc.collection_date = ?
+      ORDER BY mc.rate ASC
+    `).all(today) as Array<{ rate: number; quantity: number; milk_type: string; shift: string; supplier_name: string }>;
+
+    // Window-wide weighted avg + per-day series for the trend sparkline. The
+    // owner needs context: "today's Rs.182/kg — is that high or low for the
+    // last 30 days?" so we expose both the window-avg and the daily series.
+    const milkCostWindow = db.prepare(`
+      SELECT
+        COALESCE(SUM(quantity), 0) AS total_kg,
+        COALESCE(SUM(total_amount), 0) AS total_spend
+      FROM milk_collections
+      WHERE collection_date >= ? AND collection_date < ?
+    `).get(trendStartIso, trendEndIso) as any;
+
+    const milkCostDaily = db.prepare(`
+      SELECT
+        collection_date AS date,
+        COALESCE(SUM(quantity), 0) AS total_kg,
+        COALESCE(SUM(total_amount), 0) AS total_spend
+      FROM milk_collections
+      WHERE collection_date >= ? AND collection_date < ?
+      GROUP BY collection_date
+      ORDER BY collection_date ASC
+    `).all(trendStartIso, trendEndIso) as Array<{ date: string; total_kg: number; total_spend: number }>;
+
+    const sellingRateRow = db.prepare(`
+      SELECT milk_rate FROM daily_rates WHERE date <= ? ORDER BY date DESC LIMIT 1
+    `).get(today) as any;
+    const milkSellingRate = Number(sellingRateRow?.milk_rate || 0);
+
+    const computeAvgRate = (kg: number, spend: number) =>
+      kg > 0 ? Number((Number(spend) / Number(kg)).toFixed(2)) : 0;
+
+    const todayKg = Number(milkCostToday?.total_kg || 0);
+    const todaySpend = Number(milkCostToday?.total_spend || 0);
+    const todayAvgRate = computeAvgRate(todayKg, todaySpend);
+    const windowKg = Number(milkCostWindow?.total_kg || 0);
+    const windowSpend = Number(milkCostWindow?.total_spend || 0);
+    const windowAvgRate = computeAvgRate(windowKg, windowSpend);
+
+    const byType = (typeKey: 'COW' | 'BUFFALO' | 'MIXED') => {
+      const row = milkCostByType.find((r) => String(r.milk_type).toUpperCase() === typeKey);
+      const kg = Number(row?.total_kg || 0);
+      const spend = Number(row?.total_spend || 0);
+      return {
+        kg: Number(kg.toFixed(2)),
+        spend: Number(spend.toFixed(0)),
+        avgRate: computeAvgRate(kg, spend)
+      };
+    };
+
+    const dailyAvgRates = milkCostDaily.map((row) => ({
+      date: row.date,
+      avgRatePerKg: computeAvgRate(Number(row.total_kg || 0), Number(row.total_spend || 0)),
+      totalKg: Number(Number(row.total_kg || 0).toFixed(2))
+    }));
+
+    const cheapest = milkCostExtremes[0];
+    const priciest = milkCostExtremes[milkCostExtremes.length - 1];
+
+    const marginPerKg = milkSellingRate > 0 && todayAvgRate > 0 ? Number((milkSellingRate - todayAvgRate).toFixed(2)) : 0;
+    const marginPct = milkSellingRate > 0 && todayAvgRate > 0
+      ? Number((((milkSellingRate - todayAvgRate) / milkSellingRate) * 100).toFixed(1))
+      : 0;
+
+    const milkCost = {
+      today: {
+        date: today,
+        totalKg: Number(todayKg.toFixed(2)),
+        totalSpend: Number(todaySpend.toFixed(0)),
+        avgRatePerKg: todayAvgRate,
+        supplierCount: Number(milkCostToday?.supplier_count || 0),
+        entryCount: Number(milkCostToday?.entry_count || 0),
+        minRate: Number(milkCostToday?.min_rate || 0),
+        maxRate: Number(milkCostToday?.max_rate || 0),
+        cow: byType('COW'),
+        buffalo: byType('BUFFALO'),
+        mixed: byType('MIXED'),
+        cheapestSupplier: cheapest ? { name: cheapest.supplier_name, rate: Number(cheapest.rate), milkType: cheapest.milk_type, shift: cheapest.shift } : null,
+        priciestSupplier: priciest ? { name: priciest.supplier_name, rate: Number(priciest.rate), milkType: priciest.milk_type, shift: priciest.shift } : null
+      },
+      window: {
+        days: daysBack,
+        totalKg: Number(windowKg.toFixed(2)),
+        totalSpend: Number(windowSpend.toFixed(0)),
+        avgRatePerKg: windowAvgRate
+      },
+      selling: {
+        milkRate: milkSellingRate,
+        marginPerKg,
+        marginPct
+      },
+      dailyTrend: dailyAvgRates
+    };
+
     const insights = [
       busiestHour ? `Peak hour is ${String(busiestHour.hour).padStart(2, '0')}:00 with ${busiestHour.bills} bills.` : 'No peak hour yet because there are no sales in this period.',
       bestDay ? `Best day in the selected window was ${bestDay.date} with Rs. ${Math.round(bestDay.revenue).toLocaleString('en-PK')} sales.` : 'No best day yet.',
       Number(customerRiskRow?.totalDues || 0) > 0 ? `Khata dues are Rs. ${Math.round(Number(customerRiskRow.totalDues)).toLocaleString('en-PK')} across ${customerRiskRow.customersWithDues} customers.` : 'No active customer dues right now.',
       stockRisk.length > 0 ? `${stockRisk.length} product(s) are at or below low-stock level.` : 'No low-stock risk found.'
     ];
+
+    if (milkCost.today.totalKg > 0) {
+      insights.push(`Avg milk buy rate today: Rs. ${milkCost.today.avgRatePerKg}/kg across ${milkCost.today.totalKg.toFixed(0)} kg from ${milkCost.today.supplierCount} farmer(s).`);
+      if (milkSellingRate > 0 && marginPerKg !== 0) {
+        const verb = marginPerKg >= 0 ? 'margin' : 'LOSS';
+        insights.push(`Per-kg ${verb}: Rs. ${Math.abs(marginPerKg)} (${Math.abs(marginPct)}%) — selling at Rs. ${milkSellingRate}/kg.`);
+      }
+    }
     if (buyPatterns.milk.mostCommonQty > 0) {
       insights.push(`Most customers buy ${buyPatterns.milk.mostCommonQty} kg milk (${buyPatterns.milk.mostCommonSharePct}% of milk bills).`);
     }
@@ -1445,6 +1583,7 @@ export function registerReportsIPC() {
       buyPatterns,
       milkYogurtMix,
       sameDayLastYear,
+      milkCost,
       stockRisk,
       insights,
       generatedAt: new Date().toISOString()

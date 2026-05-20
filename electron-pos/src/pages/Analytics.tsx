@@ -159,6 +159,7 @@ type Analytics = {
     billsDeltaPct: number | null;
     window: { start: string; end: string; bills: number; revenue: number };
   } | null;
+  milkCost?: MilkCost;
   stockRisk?: any[];
   insights?: string[];
   generatedAt: string;
@@ -169,6 +170,36 @@ type BuyPattern = {
   mostCommonQty: number;
   mostCommonSharePct: number;
   top: Array<{ qty: number; bills: number; revenue: number; sharePct: number }>;
+};
+
+type MilkCost = {
+  today: {
+    date: string;
+    totalKg: number;
+    totalSpend: number;
+    avgRatePerKg: number;
+    supplierCount: number;
+    entryCount: number;
+    minRate: number;
+    maxRate: number;
+    cow: { kg: number; spend: number; avgRate: number };
+    buffalo: { kg: number; spend: number; avgRate: number };
+    mixed: { kg: number; spend: number; avgRate: number };
+    cheapestSupplier: { name: string; rate: number; milkType: string; shift: string } | null;
+    priciestSupplier: { name: string; rate: number; milkType: string; shift: string } | null;
+  };
+  window: {
+    days: number;
+    totalKg: number;
+    totalSpend: number;
+    avgRatePerKg: number;
+  };
+  selling: {
+    milkRate: number;
+    marginPerKg: number;
+    marginPct: number;
+  };
+  dailyTrend: Array<{ date: string; avgRatePerKg: number; totalKg: number }>;
 };
 
 function todayLocalIso() {
@@ -271,7 +302,8 @@ export default function Analytics() {
     customerBehavior,
     buyPatterns,
     milkYogurtMix,
-    sameDayLastYear
+    sameDayLastYear,
+    milkCost
   } = data;
 
   return (
@@ -467,7 +499,8 @@ export default function Analytics() {
         <MilkYogurtMixCard mix={milkYogurtMix} />
       </section>
 
-      <section>
+      <section className="grid xl:grid-cols-2 gap-4">
+        <MilkCostCard milkCost={milkCost} isToday={isToday} />
         <SameDayLastYearCard sameDay={sameDayLastYear ?? null} todayKpis={today} pickedDate={pickedDate} />
       </section>
 
@@ -1087,6 +1120,174 @@ function MilkYogurtMixCard({ mix }: { mix?: Analytics["milkYogurtMix"] }) {
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+function MilkCostCard({ milkCost, isToday }: { milkCost?: MilkCost; isToday: boolean }) {
+  if (!milkCost || milkCost.today.totalKg === 0) {
+    return (
+      <div className="card p-5">
+        <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+          <Milk className="w-5 h-5" style={{ color: CHART_COLORS.milk }} /> Milk Procurement Cost
+        </h2>
+        <p className="text-sm text-text-secondary mt-2">
+          {isToday
+            ? "No milk collections recorded yet today. As farmers' entries arrive, this card will show your weighted average buy rate per kg."
+            : "No milk collections recorded for this date."}
+        </p>
+      </div>
+    );
+  }
+
+  const { today: milkToday, window, selling, dailyTrend } = milkCost;
+  const todayVsWindow = window.avgRatePerKg > 0
+    ? ((milkToday.avgRatePerKg - window.avgRatePerKg) / window.avgRatePerKg) * 100
+    : 0;
+  const todayHigherThanAvg = todayVsWindow > 0.5;
+  const todayLowerThanAvg = todayVsWindow < -0.5;
+  const trendData = (dailyTrend || []).filter((row) => row.totalKg > 0).map((row) => ({
+    date: row.date,
+    label: formatChartDateShort(row.date),
+    rate: row.avgRatePerKg
+  }));
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+            <Milk className="w-5 h-5" style={{ color: CHART_COLORS.milk }} /> Milk Procurement Cost
+          </h2>
+          <p className="text-xs text-text-secondary mt-1">
+            Weighted average paid per kg — every supplier and milk type combined.
+          </p>
+        </div>
+        {window.avgRatePerKg > 0 && (
+          <span
+            className={cn(
+              "text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 px-2 py-0.5 rounded-full border",
+              todayHigherThanAvg && "text-danger border-danger/30",
+              todayLowerThanAvg && "text-success border-success/30",
+              !todayHigherThanAvg && !todayLowerThanAvg && "text-text-secondary border-surface-4"
+            )}
+            title={`Window avg: Rs. ${window.avgRatePerKg.toFixed(2)}/kg over last ${window.days} days`}
+          >
+            {todayHigherThanAvg ? <TrendingUp className="w-3 h-3" /> : todayLowerThanAvg ? <TrendingDown className="w-3 h-3" /> : <BarChart3 className="w-3 h-3" />}
+            {todayVsWindow > 0 ? "+" : ""}{todayVsWindow.toFixed(1)}% vs {window.days}d avg
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">Avg buy rate today</p>
+        <p className="text-4xl font-black mt-1" style={{ color: CHART_COLORS.milk }}>
+          Rs. {milkToday.avgRatePerKg.toFixed(2)}<span className="text-base text-text-secondary font-mono"> / kg</span>
+        </p>
+        <p className="text-xs text-text-secondary mt-1">
+          {milkToday.totalKg.toFixed(2)} kg in for {rs(milkToday.totalSpend)} · {milkToday.supplierCount} farmer{milkToday.supplierCount === 1 ? "" : "s"} · {milkToday.entryCount} entries
+        </p>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+        <MiniStat
+          label="Cow"
+          value={milkToday.cow.kg > 0 ? `Rs. ${milkToday.cow.avgRate.toFixed(2)}` : "—"}
+          sub={milkToday.cow.kg > 0 ? `${milkToday.cow.kg.toFixed(2)} kg` : "no entry"}
+        />
+        <MiniStat
+          label="Buffalo"
+          value={milkToday.buffalo.kg > 0 ? `Rs. ${milkToday.buffalo.avgRate.toFixed(2)}` : "—"}
+          sub={milkToday.buffalo.kg > 0 ? `${milkToday.buffalo.kg.toFixed(2)} kg` : "no entry"}
+        />
+        <MiniStat
+          label="Mixed"
+          value={milkToday.mixed.kg > 0 ? `Rs. ${milkToday.mixed.avgRate.toFixed(2)}` : "—"}
+          sub={milkToday.mixed.kg > 0 ? `${milkToday.mixed.kg.toFixed(2)} kg` : "no entry"}
+        />
+      </div>
+
+      {selling.milkRate > 0 && (
+        <div className={cn(
+          "mt-4 rounded-lg border p-3 flex items-center justify-between gap-3",
+          selling.marginPerKg >= 0 ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"
+        )}>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">
+              {selling.marginPerKg >= 0 ? "Per-kg margin" : "Per-kg LOSS"}
+            </p>
+            <p className={cn(
+              "font-mono font-bold text-lg",
+              selling.marginPerKg >= 0 ? "text-success" : "text-danger"
+            )}>
+              Rs. {Math.abs(selling.marginPerKg).toFixed(2)} <span className="text-xs text-text-secondary">({Math.abs(selling.marginPct).toFixed(1)}%)</span>
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] text-text-secondary">Selling at</p>
+            <p className="font-mono font-bold text-text-primary">Rs. {selling.milkRate.toFixed(2)}/kg</p>
+          </div>
+        </div>
+      )}
+
+      {(milkToday.cheapestSupplier || milkToday.priciestSupplier) && milkToday.cheapestSupplier?.rate !== milkToday.priciestSupplier?.rate && (
+        <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+          {milkToday.cheapestSupplier && (
+            <div className="rounded-lg border border-success/20 bg-success/5 p-2">
+              <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">Cheapest</p>
+              <p className="font-bold text-text-primary truncate" title={milkToday.cheapestSupplier.name}>{milkToday.cheapestSupplier.name}</p>
+              <p className="font-mono text-success">Rs. {milkToday.cheapestSupplier.rate.toFixed(2)} ({milkToday.cheapestSupplier.milkType.toLowerCase()})</p>
+            </div>
+          )}
+          {milkToday.priciestSupplier && (
+            <div className="rounded-lg border border-danger/20 bg-danger/5 p-2">
+              <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">Priciest</p>
+              <p className="font-bold text-text-primary truncate" title={milkToday.priciestSupplier.name}>{milkToday.priciestSupplier.name}</p>
+              <p className="font-mono text-danger">Rs. {milkToday.priciestSupplier.rate.toFixed(2)} ({milkToday.priciestSupplier.milkType.toLowerCase()})</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {trendData.length >= 3 && (
+        <div className="mt-4">
+          <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold mb-1">
+            Last {window.days} days · avg Rs. {window.avgRatePerKg.toFixed(2)}/kg
+          </p>
+          <div className="h-16">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={trendData} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="milkCostFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={CHART_COLORS.milk} stopOpacity={0.55} />
+                    <stop offset="100%" stopColor={CHART_COLORS.milk} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <ReTooltip
+                  content={({ active, payload }: any) => {
+                    if (!active || !payload || !payload.length) return null;
+                    const row = payload[0].payload as { date: string; rate: number };
+                    return (
+                      <div className="rounded border border-surface-4 bg-surface-1/95 px-2 py-1 text-[11px] font-mono">
+                        <div className="text-text-primary font-bold">{formatChartDateShort(row.date)}</div>
+                        <div style={{ color: CHART_COLORS.milk }}>Rs. {row.rate.toFixed(2)}/kg</div>
+                      </div>
+                    );
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="rate"
+                  stroke={CHART_COLORS.milk}
+                  strokeWidth={2}
+                  fill="url(#milkCostFill)"
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       )}
     </div>
   );
