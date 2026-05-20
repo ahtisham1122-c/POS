@@ -140,9 +140,35 @@ type Analytics = {
   categoryMix?: Array<{ category: string; revenue: number; quantity: number; bills: number }>;
   expenseBreakdown?: Array<{ category: string; amount: number; count: number }>;
   customerRisk?: { customersWithDues: number; totalDues: number; overLimitCount: number; topDues: any[] };
+  buyPatterns?: {
+    milk: BuyPattern;
+    yogurt: BuyPattern;
+  };
+  milkYogurtMix?: {
+    windowDays: number;
+    bills: { onlyMilk: number; onlyYogurt: number; both: number; neither: number; total: number };
+    knownCustomers: { onlyMilk: number; onlyYogurt: number; both: number; total: number };
+  };
+  sameDayLastYear?: {
+    date: string;
+    bills: number;
+    revenue: number;
+    milkKg: number;
+    yogurtKg: number;
+    revenueDeltaPct: number | null;
+    billsDeltaPct: number | null;
+    window: { start: string; end: string; bills: number; revenue: number };
+  } | null;
   stockRisk?: any[];
   insights?: string[];
   generatedAt: string;
+};
+
+type BuyPattern = {
+  totalBillsWithItem: number;
+  mostCommonQty: number;
+  mostCommonSharePct: number;
+  top: Array<{ qty: number; bills: number; revenue: number; sharePct: number }>;
 };
 
 function todayLocalIso() {
@@ -242,7 +268,10 @@ export default function Analytics() {
     busiestHour,
     quietestHour,
     yogurtPlan,
-    customerBehavior
+    customerBehavior,
+    buyPatterns,
+    milkYogurtMix,
+    sameDayLastYear
   } = data;
 
   return (
@@ -419,6 +448,27 @@ export default function Analytics() {
             </div>
           </div>
         </div>
+      </section>
+
+      {/* ---------- BUY PATTERNS, MIX, SAME-DAY-LAST-YEAR ---------- */}
+      <section className="grid xl:grid-cols-3 gap-4">
+        <BuyPatternCard
+          title="Milk Buying Pattern"
+          subtitle="Most common kg sizes customers ask for"
+          accent={CHART_COLORS.milk}
+          pattern={buyPatterns?.milk}
+        />
+        <BuyPatternCard
+          title="Yogurt Buying Pattern"
+          subtitle="Most common kg sizes customers ask for"
+          accent={CHART_COLORS.yogurt}
+          pattern={buyPatterns?.yogurt}
+        />
+        <MilkYogurtMixCard mix={milkYogurtMix} />
+      </section>
+
+      <section>
+        <SameDayLastYearCard sameDay={sameDayLastYear ?? null} todayKpis={today} pickedDate={pickedDate} />
       </section>
 
       {/* ---------- HOURLY BREAKDOWN ---------- */}
@@ -897,6 +947,261 @@ function DailyVolumeTooltip({ active, payload }: any) {
       <div className="flex items-center justify-between gap-4">
         <span className="text-text-secondary">Bills</span>
         <span className="text-text-primary">{row.bills}</span>
+      </div>
+    </div>
+  );
+}
+
+function BuyPatternCard({
+  title,
+  subtitle,
+  accent,
+  pattern
+}: {
+  title: string;
+  subtitle: string;
+  accent: string;
+  pattern?: BuyPattern;
+}) {
+  const top = pattern?.top || [];
+  const totalBills = pattern?.totalBillsWithItem || 0;
+  const headline = pattern?.mostCommonQty || 0;
+  const headlineShare = pattern?.mostCommonSharePct || 0;
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+            <Milk className="w-5 h-5" style={{ color: accent }} /> {title}
+          </h2>
+          <p className="text-xs text-text-secondary mt-1">{subtitle}</p>
+        </div>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-text-secondary">
+          {totalBills.toLocaleString("en-PK")} bills
+        </span>
+      </div>
+      {top.length === 0 ? (
+        <p className="text-sm text-text-secondary mt-6">No sales yet in this window.</p>
+      ) : (
+        <>
+          <div className="mt-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-text-secondary">Most common</p>
+            <p className="text-4xl font-black mt-1" style={{ color: accent }}>{headline} kg</p>
+            <p className="text-xs text-text-secondary mt-1">{headlineShare.toFixed(1)}% of {title.split(" ")[0].toLowerCase()} bills</p>
+          </div>
+          <div className="mt-4 space-y-2">
+            {top.map((row) => (
+              <div key={row.qty}>
+                <div className="flex justify-between text-xs font-mono">
+                  <span className="text-text-primary font-bold">{row.qty} kg</span>
+                  <span className="text-text-secondary">{row.bills} bills · {row.sharePct.toFixed(1)}%</span>
+                </div>
+                <div className="mt-1 h-1.5 rounded-full bg-surface-3 overflow-hidden">
+                  <div className="h-full" style={{
+                    width: `${Math.max(2, Math.min(100, row.sharePct))}%`,
+                    background: accent,
+                    opacity: 0.7
+                  }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MilkYogurtMixCard({ mix }: { mix?: Analytics["milkYogurtMix"] }) {
+  const bills = mix?.bills;
+  const customers = mix?.knownCustomers;
+  const total = bills?.total || 0;
+  const knownTotal = customers?.total || 0;
+  const pct = (numerator: number, denom: number) => denom > 0 ? (numerator / denom) * 100 : 0;
+  // Build a 3-segment stacked bar for the bill mix. We exclude "neither"
+  // (items like sugar, eggs, soap) from the bar — those bills don't have
+  // milk or yogurt at all.
+  const billCounted = (bills?.onlyMilk || 0) + (bills?.onlyYogurt || 0) + (bills?.both || 0);
+  const segments = [
+    { key: "milk", label: "Only milk", value: bills?.onlyMilk || 0, color: CHART_COLORS.milk },
+    { key: "both", label: "Both", value: bills?.both || 0, color: CHART_COLORS.revenue },
+    { key: "yogurt", label: "Only yogurt", value: bills?.onlyYogurt || 0, color: CHART_COLORS.yogurt }
+  ];
+  return (
+    <div className="card p-5">
+      <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+        <Users className="w-5 h-5 text-primary" /> Milk vs Yogurt Mix
+      </h2>
+      <p className="text-xs text-text-secondary mt-1">
+        Last {mix?.windowDays || 30} days — who buys what.
+      </p>
+      {total === 0 ? (
+        <p className="text-sm text-text-secondary mt-6">No bills yet in this window.</p>
+      ) : (
+        <>
+          <div className="mt-5">
+            <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">Per bill</p>
+            <div className="mt-2 h-3 rounded-full bg-surface-3 overflow-hidden flex">
+              {segments.map((seg) => (
+                <div
+                  key={seg.key}
+                  className="h-full"
+                  style={{ width: `${pct(seg.value, billCounted)}%`, background: seg.color }}
+                  title={`${seg.label}: ${seg.value} bills`}
+                />
+              ))}
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              {segments.map((seg) => (
+                <div key={seg.key} className="rounded-lg border border-surface-4 bg-surface-2/60 p-2">
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span className="w-2 h-2 rounded-sm" style={{ background: seg.color }} />
+                    <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">{seg.label}</p>
+                  </div>
+                  <p className="font-mono font-bold text-text-primary mt-1">{seg.value.toLocaleString("en-PK")}</p>
+                  <p className="text-[10px] text-text-secondary">{pct(seg.value, billCounted).toFixed(0)}%</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {knownTotal > 0 && (
+            <div className="mt-5 rounded-lg border border-surface-4 bg-surface-2/40 p-3">
+              <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold mb-2">
+                Known (khata) customers — {knownTotal.toLocaleString("en-PK")} unique
+              </p>
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div>
+                  <p className="font-mono font-bold" style={{ color: CHART_COLORS.milk }}>{customers?.onlyMilk || 0}</p>
+                  <p className="text-text-secondary">Only milk</p>
+                </div>
+                <div>
+                  <p className="font-mono font-bold" style={{ color: CHART_COLORS.revenue }}>{customers?.both || 0}</p>
+                  <p className="text-text-secondary">Both</p>
+                </div>
+                <div>
+                  <p className="font-mono font-bold" style={{ color: CHART_COLORS.yogurt }}>{customers?.onlyYogurt || 0}</p>
+                  <p className="text-text-secondary">Only yogurt</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function SameDayLastYearCard({
+  sameDay,
+  todayKpis,
+  pickedDate
+}: {
+  sameDay: Analytics["sameDayLastYear"] | null;
+  todayKpis: TodayKpis;
+  pickedDate: string;
+}) {
+  if (!sameDay) {
+    return (
+      <div className="card p-5">
+        <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+          <Calendar className="w-5 h-5 text-info" /> Same Day Last Year
+        </h2>
+        <p className="text-sm text-text-secondary mt-2">
+          Once you have a full year of sales history, this card will show how today compares to
+          the same day in {Number(pickedDate.slice(0, 4)) - 1}. Especially useful around Eid, Muharram, school
+          holidays, and other patterns that repeat year-after-year.
+        </p>
+      </div>
+    );
+  }
+
+  const revDelta = sameDay.revenueDeltaPct;
+  const billDelta = sameDay.billsDeltaPct;
+  const positive = (delta: number | null) => delta != null && delta > 0;
+  const negative = (delta: number | null) => delta != null && delta < 0;
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-info" /> Same Day Last Year
+          </h2>
+          <p className="text-xs text-text-secondary mt-1">
+            Comparing {format(new Date(`${pickedDate}T00:00:00`), "EEE, dd MMM yyyy")} vs {format(new Date(`${sameDay.date}T00:00:00`), "EEE, dd MMM yyyy")}.
+            Watch for Eid / Muharram / festival shifts that move a few days year-over-year.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5 grid md:grid-cols-2 gap-4">
+        <div className="rounded-lg border border-surface-4 bg-surface-2/60 p-4">
+          <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">Revenue</p>
+          <div className="mt-1 flex items-end gap-3 flex-wrap">
+            <div>
+              <p className="font-mono font-bold text-2xl text-text-primary">{rs(todayKpis.revenue || 0)}</p>
+              <p className="text-[10px] text-text-secondary">Today</p>
+            </div>
+            <div>
+              <p className="font-mono font-bold text-text-secondary">{rs(sameDay.revenue)}</p>
+              <p className="text-[10px] text-text-secondary">Last year</p>
+            </div>
+            {revDelta != null && (
+              <span className={cn(
+                "ml-auto inline-flex items-center gap-1 text-sm font-bold",
+                positive(revDelta) && "text-success",
+                negative(revDelta) && "text-danger",
+                !positive(revDelta) && !negative(revDelta) && "text-text-secondary"
+              )}>
+                {positive(revDelta) && <TrendingUp className="w-4 h-4" />}
+                {negative(revDelta) && <TrendingDown className="w-4 h-4" />}
+                {revDelta > 0 ? "+" : ""}{revDelta.toFixed(1)}%
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-surface-4 bg-surface-2/60 p-4">
+          <p className="text-[10px] uppercase tracking-wider text-text-secondary font-bold">Bills</p>
+          <div className="mt-1 flex items-end gap-3 flex-wrap">
+            <div>
+              <p className="font-mono font-bold text-2xl text-text-primary">{(todayKpis.bills || 0).toLocaleString("en-PK")}</p>
+              <p className="text-[10px] text-text-secondary">Today</p>
+            </div>
+            <div>
+              <p className="font-mono font-bold text-text-secondary">{sameDay.bills.toLocaleString("en-PK")}</p>
+              <p className="text-[10px] text-text-secondary">Last year</p>
+            </div>
+            {billDelta != null && (
+              <span className={cn(
+                "ml-auto inline-flex items-center gap-1 text-sm font-bold",
+                positive(billDelta) && "text-success",
+                negative(billDelta) && "text-danger",
+                !positive(billDelta) && !negative(billDelta) && "text-text-secondary"
+              )}>
+                {positive(billDelta) && <TrendingUp className="w-4 h-4" />}
+                {negative(billDelta) && <TrendingDown className="w-4 h-4" />}
+                {billDelta > 0 ? "+" : ""}{billDelta.toFixed(1)}%
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+        <div className="rounded-lg border border-surface-4 bg-surface-2/40 p-2">
+          <p className="text-text-secondary">Milk LY</p>
+          <p className="font-mono font-bold" style={{ color: CHART_COLORS.milk }}>{kg(sameDay.milkKg)}</p>
+        </div>
+        <div className="rounded-lg border border-surface-4 bg-surface-2/40 p-2">
+          <p className="text-text-secondary">Yogurt LY</p>
+          <p className="font-mono font-bold" style={{ color: CHART_COLORS.yogurt }}>{kg(sameDay.yogurtKg)}</p>
+        </div>
+        <div className="rounded-lg border border-surface-4 bg-surface-2/40 p-2">
+          <p className="text-text-secondary">±3 days LY</p>
+          <p className="font-mono font-bold text-text-primary">{rs(sameDay.window.revenue)}</p>
+          <p className="text-[9px] text-text-secondary">{sameDay.window.bills.toLocaleString("en-PK")} bills</p>
+        </div>
       </div>
     </div>
   );

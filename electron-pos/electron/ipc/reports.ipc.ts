@@ -1186,12 +1186,204 @@ export function registerReportsIPC() {
       thisMonth: periodSummary(ymd(startOfThisMonth), ymd(tomorrow)),
       lastMonth: periodSummary(ymd(startOfLastMonth), ymd(endOfLastMonth))
     };
+    // ---- Most common buy size (modal quantity) ----
+    // Owner wants to know "what kg do people most often buy?" — answers the
+    // basic question: should we keep loose 1kg measures ready, or 0.5kg.
+    // We round to 2 decimals so 0.999kg and 1.001kg collapse into a "1.00"
+    // bucket, then take the top 6 by bill count.
+    const buyPatternRows = db.prepare(`
+      SELECT
+        CASE
+          WHEN UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%' THEN 'MILK'
+          WHEN UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%' THEN 'YOGURT'
+          ELSE NULL
+        END AS kind,
+        ROUND(si.quantity, 2) AS qty,
+        COUNT(*) AS bills,
+        COALESCE(SUM(si.line_total), 0) AS revenue
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+        AND si.quantity > 0
+      GROUP BY kind, ROUND(si.quantity, 2)
+      HAVING kind IS NOT NULL
+      ORDER BY bills DESC
+    `).all(trendStartIso, trendEndIso) as Array<{ kind: 'MILK' | 'YOGURT'; qty: number; bills: number; revenue: number }>;
+
+    const buildBuyPattern = (kind: 'MILK' | 'YOGURT') => {
+      const rows = buyPatternRows.filter((row) => row.kind === kind);
+      const totalBills = rows.reduce((sum, row) => sum + Number(row.bills || 0), 0);
+      const top = rows.slice(0, 6).map((row) => ({
+        qty: Number(row.qty || 0),
+        bills: Number(row.bills || 0),
+        revenue: Number(row.revenue || 0),
+        sharePct: totalBills > 0 ? Number(((Number(row.bills || 0) / totalBills) * 100).toFixed(1)) : 0
+      }));
+      return {
+        totalBillsWithItem: totalBills,
+        mostCommonQty: top[0]?.qty ?? 0,
+        mostCommonSharePct: top[0]?.sharePct ?? 0,
+        top
+      };
+    };
+
+    const buyPatterns = {
+      milk: buildBuyPattern('MILK'),
+      yogurt: buildBuyPattern('YOGURT')
+    };
+
+    // ---- Milk vs Yogurt customer mix ----
+    // Per-bill segmentation: was this bill only milk, only yogurt, or both?
+    // We then mirror the same logic against known (khata) customers so the
+    // owner can see "of my 23 khata customers, 12 buy both / 8 only milk".
+    const milkYogurtMixRow = db.prepare(`
+      WITH bill_kinds AS (
+        SELECT
+          s.id AS sale_id,
+          MAX(CASE WHEN UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%' THEN 1 ELSE 0 END) AS has_milk,
+          MAX(CASE WHEN UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%' THEN 1 ELSE 0 END) AS has_yogurt
+        FROM sales s
+        LEFT JOIN sale_items si ON si.sale_id = s.id
+        LEFT JOIN products p ON p.id = si.product_id
+        LEFT JOIN shifts sh ON sh.id = s.shift_id
+        WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+          AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+          AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+        GROUP BY s.id
+      )
+      SELECT
+        COALESCE(SUM(CASE WHEN has_milk = 1 AND has_yogurt = 0 THEN 1 ELSE 0 END), 0) AS only_milk,
+        COALESCE(SUM(CASE WHEN has_milk = 0 AND has_yogurt = 1 THEN 1 ELSE 0 END), 0) AS only_yogurt,
+        COALESCE(SUM(CASE WHEN has_milk = 1 AND has_yogurt = 1 THEN 1 ELSE 0 END), 0) AS both,
+        COALESCE(SUM(CASE WHEN has_milk = 0 AND has_yogurt = 0 THEN 1 ELSE 0 END), 0) AS neither,
+        COUNT(*) AS total_bills
+      FROM bill_kinds
+    `).get(trendStartIso, trendEndIso) as any;
+
+    const knownCustomerMixRow = db.prepare(`
+      WITH customer_kinds AS (
+        SELECT
+          s.customer_id,
+          MAX(CASE WHEN UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%' THEN 1 ELSE 0 END) AS has_milk,
+          MAX(CASE WHEN UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%' THEN 1 ELSE 0 END) AS has_yogurt
+        FROM sales s
+        LEFT JOIN sale_items si ON si.sale_id = s.id
+        LEFT JOIN products p ON p.id = si.product_id
+        LEFT JOIN shifts sh ON sh.id = s.shift_id
+        WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+          AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+          AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+          AND s.customer_id IS NOT NULL
+        GROUP BY s.customer_id
+      )
+      SELECT
+        COALESCE(SUM(CASE WHEN has_milk = 1 AND has_yogurt = 0 THEN 1 ELSE 0 END), 0) AS only_milk,
+        COALESCE(SUM(CASE WHEN has_milk = 0 AND has_yogurt = 1 THEN 1 ELSE 0 END), 0) AS only_yogurt,
+        COALESCE(SUM(CASE WHEN has_milk = 1 AND has_yogurt = 1 THEN 1 ELSE 0 END), 0) AS both,
+        COUNT(*) AS total_customers
+      FROM customer_kinds
+    `).get(trendStartIso, trendEndIso) as any;
+
+    const milkYogurtMix = {
+      windowDays: daysBack,
+      bills: {
+        onlyMilk: Number(milkYogurtMixRow?.only_milk || 0),
+        onlyYogurt: Number(milkYogurtMixRow?.only_yogurt || 0),
+        both: Number(milkYogurtMixRow?.both || 0),
+        neither: Number(milkYogurtMixRow?.neither || 0),
+        total: Number(milkYogurtMixRow?.total_bills || 0)
+      },
+      knownCustomers: {
+        onlyMilk: Number(knownCustomerMixRow?.only_milk || 0),
+        onlyYogurt: Number(knownCustomerMixRow?.only_yogurt || 0),
+        both: Number(knownCustomerMixRow?.both || 0),
+        total: Number(knownCustomerMixRow?.total_customers || 0)
+      }
+    };
+
+    // ---- Same-day-last-year comparison ----
+    // Only meaningful once we have history older than a year. We compute the
+    // calendar-anchored date (handles leap years naturally) and pull totals
+    // for that single day. Also compute a ±3-day window because a holiday
+    // can shift by a couple of days year-over-year (Eid, Muharram, etc.).
+    const lastYearAnchor = new Date(`${today}T00:00:00`);
+    lastYearAnchor.setFullYear(lastYearAnchor.getFullYear() - 1);
+    const lastYearIso = formatLocalDate(lastYearAnchor);
+    const lastYearWindowStart = new Date(lastYearAnchor); lastYearWindowStart.setDate(lastYearWindowStart.getDate() - 3);
+    const lastYearWindowEnd   = new Date(lastYearAnchor); lastYearWindowEnd.setDate(lastYearWindowEnd.getDate() + 4); // exclusive
+
+    const sameDayLastYearRow = db.prepare(`
+      SELECT
+        COUNT(s.id) AS bills,
+        COALESCE(SUM(s.grand_total), 0) AS revenue
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) = ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+    `).get(lastYearIso) as any;
+    const sameDayLastYearVolRow = db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%' THEN si.quantity ELSE 0 END), 0) AS milkKg,
+        COALESCE(SUM(CASE WHEN UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%' THEN si.quantity ELSE 0 END), 0) AS yogurtKg
+      FROM sales s
+      LEFT JOIN sale_items si ON si.sale_id = s.id
+      LEFT JOIN products p ON p.id = si.product_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) = ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+    `).get(lastYearIso) as any;
+    const lastYearWindowRow = db.prepare(`
+      SELECT
+        COUNT(s.id) AS bills,
+        COALESCE(SUM(s.grand_total), 0) AS revenue
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      WHERE COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) >= ?
+        AND COALESCE(sh.shift_date, substr(s.sale_date, 1, 10)) < ?
+        AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+    `).get(formatLocalDate(lastYearWindowStart), formatLocalDate(lastYearWindowEnd)) as any;
+
+    const lyBills = Number(sameDayLastYearRow?.bills || 0);
+    const lyRevenue = Number(sameDayLastYearRow?.revenue || 0);
+    const lyHasData = lyBills > 0 || lyRevenue > 0 || Number(lastYearWindowRow?.bills || 0) > 0;
+    const todayBillsForLy = Number(today_kpis.bills || 0);
+    const todayRevenueForLy = Number(today_kpis.revenue || 0);
+    const sameDayLastYear = lyHasData ? {
+      date: lastYearIso,
+      bills: lyBills,
+      revenue: lyRevenue,
+      milkKg: Number(Number(sameDayLastYearVolRow?.milkKg || 0).toFixed(2)),
+      yogurtKg: Number(Number(sameDayLastYearVolRow?.yogurtKg || 0).toFixed(2)),
+      revenueDeltaPct: lyRevenue > 0 ? Number((((todayRevenueForLy - lyRevenue) / lyRevenue) * 100).toFixed(1)) : null,
+      billsDeltaPct: lyBills > 0 ? Number((((todayBillsForLy - lyBills) / lyBills) * 100).toFixed(1)) : null,
+      window: {
+        start: formatLocalDate(lastYearWindowStart),
+        end: formatLocalDate(new Date(lastYearWindowEnd.getTime() - 86400000)),
+        bills: Number(lastYearWindowRow?.bills || 0),
+        revenue: Number(lastYearWindowRow?.revenue || 0)
+      }
+    } : null;
+
     const insights = [
       busiestHour ? `Peak hour is ${String(busiestHour.hour).padStart(2, '0')}:00 with ${busiestHour.bills} bills.` : 'No peak hour yet because there are no sales in this period.',
       bestDay ? `Best day in the selected window was ${bestDay.date} with Rs. ${Math.round(bestDay.revenue).toLocaleString('en-PK')} sales.` : 'No best day yet.',
       Number(customerRiskRow?.totalDues || 0) > 0 ? `Khata dues are Rs. ${Math.round(Number(customerRiskRow.totalDues)).toLocaleString('en-PK')} across ${customerRiskRow.customersWithDues} customers.` : 'No active customer dues right now.',
       stockRisk.length > 0 ? `${stockRisk.length} product(s) are at or below low-stock level.` : 'No low-stock risk found.'
     ];
+    if (buyPatterns.milk.mostCommonQty > 0) {
+      insights.push(`Most customers buy ${buyPatterns.milk.mostCommonQty} kg milk (${buyPatterns.milk.mostCommonSharePct}% of milk bills).`);
+    }
+    if (buyPatterns.yogurt.mostCommonQty > 0) {
+      insights.push(`Most customers buy ${buyPatterns.yogurt.mostCommonQty} kg yogurt (${buyPatterns.yogurt.mostCommonSharePct}% of yogurt bills).`);
+    }
+    if (sameDayLastYear && sameDayLastYear.revenueDeltaPct != null) {
+      const verb = sameDayLastYear.revenueDeltaPct >= 0 ? 'up' : 'down';
+      insights.push(`Same day last year: Rs. ${Math.round(sameDayLastYear.revenue).toLocaleString('en-PK')} — today is ${verb} ${Math.abs(sameDayLastYear.revenueDeltaPct).toFixed(1)}%.`);
+    }
 
     return {
       reportDate: today,
@@ -1250,6 +1442,9 @@ export function registerReportsIPC() {
         overLimitCount: Number(customerRiskRow?.overLimitCount || 0),
         topDues
       },
+      buyPatterns,
+      milkYogurtMix,
+      sameDayLastYear,
       stockRisk,
       insights,
       generatedAt: new Date().toISOString()
