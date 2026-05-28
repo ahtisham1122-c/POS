@@ -39,6 +39,10 @@ function shiftTableScope(alias: string, dateColumn: string, scope: { date: strin
   return `substr(${alias}.${dateColumn}, 1, 10) = ?`;
 }
 
+function businessDayScope(alias: string, shiftAlias: string, dateColumn: string) {
+  return `COALESCE(${shiftAlias}.shift_date, substr(${alias}.${dateColumn}, 1, 10)) = ?`;
+}
+
 export function registerReportsIPC() {
   ipcMain.handle('reports:getZReport', (_event, date: string) => {
     const reportDate = date || getBusinessDate();
@@ -670,9 +674,15 @@ export function registerReportsIPC() {
       ? filters.date
       : getActiveBusinessDate();
     const daysBack = Math.max(7, Math.min(180, Number(filters?.daysBack) || 30));
-    const scope = getShiftScope(today);
-    const saleWhere = saleScope('s', scope);
-    const saleParams = scopeParams(scope);
+    // Analytics is a full business-date view, not a single-register view.
+    // If the register is closed early and a same-date shift/register is later
+    // opened, using only the latest shift makes today's cards look empty while
+    // Sales History still shows the date's receipts. Scope by shift_date so all
+    // shifts for the picked business date are included.
+    const saleWhere = businessDayScope('s', 'sh', 'sale_date');
+    const saleParams = [today];
+    const returnWhere = businessDayScope('r', 'sh', 'return_date');
+    const expenseWhere = businessDayScope('e', 'sh', 'expense_date');
 
     // ---- Today's KPIs ----
     const todayKpis = db.prepare(`
@@ -680,6 +690,7 @@ export function registerReportsIPC() {
         COUNT(*) AS bills,
         COALESCE(SUM(s.grand_total), 0) AS revenue
       FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
       WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
 
@@ -691,6 +702,7 @@ export function registerReportsIPC() {
       SELECT COALESCE(SUM(si.quantity), 0) AS qty
       FROM sale_items si JOIN sales s ON s.id = si.sale_id
       LEFT JOIN products p ON p.id = si.product_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
       WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
         AND (UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%')
     `).get(...saleParams) as any;
@@ -698,6 +710,7 @@ export function registerReportsIPC() {
       SELECT COALESCE(SUM(si.quantity), 0) AS qty
       FROM sale_items si JOIN sales s ON s.id = si.sale_id
       LEFT JOIN products p ON p.id = si.product_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
       WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
         AND (UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%')
     `).get(...saleParams) as any;
@@ -709,13 +722,15 @@ export function registerReportsIPC() {
     const todayRefunds = db.prepare(`
       SELECT COALESCE(SUM(refund_amount), 0) AS refunds, COUNT(*) AS refundCount
       FROM returns r
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND ${REAL_REFUND_WHERE}
-    `).get(...scopeParams(scope)) as any;
+      LEFT JOIN shifts sh ON sh.id = r.shift_id
+      WHERE ${returnWhere} AND ${REAL_REFUND_WHERE}
+    `).get(today) as any;
     const todayExpenses = db.prepare(`
       SELECT COALESCE(SUM(amount), 0) AS expenses
       FROM expenses e
-      WHERE ${shiftTableScope('e', 'expense_date', scope)}
-    `).get(...scopeParams(scope)) as any;
+      LEFT JOIN shifts sh ON sh.id = e.shift_id
+      WHERE ${expenseWhere}
+    `).get(today) as any;
     const todayProfit = db.prepare(`
       SELECT
         COALESCE(SUM(si.line_total), 0) AS itemRevenue,
@@ -723,6 +738,7 @@ export function registerReportsIPC() {
         COALESCE(SUM(si.line_total - (si.quantity * si.cost_price)), 0) AS grossProfit
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
       WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
     `).get(...saleParams) as any;
     const todayRefundProfitImpact = db.prepare(`
@@ -732,12 +748,14 @@ export function registerReportsIPC() {
       FROM return_items ri
       JOIN returns r ON r.id = ri.return_id
       JOIN sale_items si ON si.id = ri.sale_item_id
-      WHERE ${shiftTableScope('r', 'return_date', scope)} AND ${REAL_REFUND_WHERE}
-    `).get(...scopeParams(scope)) as any;
+      LEFT JOIN shifts sh ON sh.id = r.shift_id
+      WHERE ${returnWhere} AND ${REAL_REFUND_WHERE}
+    `).get(today) as any;
     const tenderRows = db.prepare(`
       SELECT sp.method, COALESCE(SUM(sp.amount), 0) AS amount, COUNT(DISTINCT sp.sale_id) AS bills
       FROM split_payments sp
       JOIN sales s ON s.id = sp.sale_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
       WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
       GROUP BY sp.method
       ORDER BY amount DESC
@@ -786,6 +804,7 @@ export function registerReportsIPC() {
         COUNT(*) AS bills,
         COALESCE(SUM(s.grand_total), 0) AS revenue
       FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
       WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
       GROUP BY hour
       ORDER BY hour ASC
