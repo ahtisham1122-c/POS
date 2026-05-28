@@ -29,6 +29,48 @@ Use this file to continue development in a new Codex/Antigravity chat. Keep answ
 - `532ba4e fix: held bill shows subtotal and correct time format in POS hold picker`
 - `a774617 codex: speed up cash checkout` (previous)
 
+## Newer Commit Trail / Latest Updates (2026-05-20 to 2026-05-28)
+- `4cdda3f codex: add daily milk procurement cost card (weighted avg buy rate per kg)`
+- `8f43545 codex: add buy patterns, milk/yogurt customer mix, same-day-last-year`
+- `43e1777 codex: support mixed and separate supplier milk`
+- `f4bf6c4 codex: make backup folder configurable via settings`
+- `411bf40 codex: polish dashboard layout`
+- `133a7fd codex: adjust cashier page access`
+- `e511aac codex: keep correction returns out of profit`
+- `c7d9cf5 codex: link employee payments and inactive suppliers`
+- Last known built installer: `electron-pos/dist/Noon Dairy POS Setup 1.0.0.exe`.
+  - Built successfully on 2026-05-20 after Claude analytics updates.
+  - SHA256: `34722DB2BCC6D4EB72A56CB1916314667B060FDEF65D6440512A365682D4F305`.
+  - Build command used: `npm run build:win`.
+  - If code changed after this build, rebuild before transferring to the HP POS.
+- Dashboard redesigned in `electron-pos/src/pages/Dashboard.tsx`.
+- Cashier page access changed in `electron-pos/src/App.tsx`:
+  - Cashier can see only Dashboard, POS, Inventory, Deliveries, Customers, Khata, and Expenses.
+  - Cashier no longer sees Returns, Receipt Audit, Shifts, Cash Register, Suppliers, Reports, Analytics, Employees, Settings, Backup.
+- Returns/corrections accounting fixed:
+  - Wrong-entry bill corrections default to `CORRECTION`, not `REFUND`.
+  - Correction returns are excluded from profit loss.
+  - Real refunds still reduce revenue/profit correctly.
+  - Backend migration: `noon-dairy-backend/prisma/migrations/20260516000000_default_returns_to_corrections/migration.sql`.
+- Supplier milk logic updated:
+  - Supplier profile now has `milk_supply_mode` locally and `milkSupplyMode` in backend Prisma.
+  - `MIXED` farmers use one mixed milk entry and mixed/default rate.
+  - `SEPARATE` farmers use separate cow and buffalo entries/rates per shift.
+  - UI now shows cow and buffalo rows in the same shift instead of hiding one collection.
+  - Local migration version 24 added in `electron-pos/electron/database/migrations.ts`.
+  - Backend migration: `noon-dairy-backend/prisma/migrations/20260517000000_add_supplier_milk_supply_mode/migration.sql`.
+- Backup folder is configurable:
+  - Code: `electron-pos/electron/sync/backup.ts`, `electron-pos/electron/ipc/system.ipc.ts`, `electron-pos/src/pages/Settings.tsx`.
+  - Owner can choose a backup folder, reset to default, and optionally copy existing backups.
+  - Chosen folder is checked for writability before saving.
+  - Backups are blocked from living inside Electron app data folder to avoid restore-time data loss.
+- Analytics tab was expanded:
+  - Customer buy patterns for milk/yogurt quantities.
+  - Milk/yogurt customer mix.
+  - Same-day-last-year comparison.
+  - Daily milk procurement cost card using weighted average buy rate per kg.
+  - Source: `electron-pos/electron/ipc/reports.ipc.ts`, `electron-pos/src/pages/Analytics.tsx`.
+
 ## Latest Production-Hardening Summary (2026-05-01)
 - Latest important commits:
   - `d3d9ed8 fix: issue per-terminal sync credentials`
@@ -81,6 +123,7 @@ Backend:
 cd "C:\Users\Ahtisham Ul Haq\Documents\Codex\2026-04-23-files-mentioned-by-the-user-noon\noon-dairy-pos\noon-dairy-backend"
 npm run build
 npx prisma validate
+npx prisma generate
 npx prisma migrate status
 npx prisma migrate deploy
 npm run test:sync-token
@@ -137,6 +180,22 @@ npm audit --omit=dev
   - `24_hour_mode`
 - Z-report/cash register should group by shift, not calendar date.
 
+## Supplier / Milk Collection Rules Implemented
+- Supplier master records support mixed vs separate milk collection:
+  - local column `suppliers.milk_supply_mode`
+  - backend Prisma field `Supplier.milkSupplyMode`
+- `MIXED` supplier:
+  - one milk entry per shift
+  - uses default/mixed rate
+  - cow/buffalo entry is blocked by IPC
+- `SEPARATE` supplier:
+  - cow and buffalo are entered separately for the same shift/date
+  - each uses its own farmer rate
+  - mixed entry is blocked by IPC
+- Duplicate same supplier/date/shift/milk_type entries are blocked; use Edit if quantity/rate was wrong.
+- Milk stock cost is based on supplier purchase cost / weighted average, not POS selling price.
+- Supplier account can be inactive; old statements/final payments remain available.
+
 ## Key Electron Files
 - DB schema/seed: `electron-pos/electron/database/schema.ts`
 - DB connection: `electron-pos/electron/database/db.ts`
@@ -162,11 +221,15 @@ npm audit --omit=dev
   - Settings: `electron-pos/electron/ipc/settings.ipc.ts`
   - Sync: `electron-pos/electron/ipc/sync.ipc.ts`
 - UI pages:
+  - Dashboard: `electron-pos/src/pages/Dashboard.tsx`
   - POS: `electron-pos/src/pages/POS.tsx`
   - Cash register: `electron-pos/src/pages/CashRegister.tsx`
   - Settings: `electron-pos/src/pages/Settings.tsx`
   - Reports: `electron-pos/src/pages/Reports.tsx`
+  - Analytics: `electron-pos/src/pages/Analytics.tsx`
   - Suppliers: `electron-pos/src/pages/Suppliers.tsx`
+  - Deliveries: `electron-pos/src/pages/Deliveries.tsx`
+  - Employees: `electron-pos/src/pages/Employees.tsx`
   - Receipt audit: `electron-pos/src/pages/ReceiptAudit.tsx`
 
 ## Key Backend Files
