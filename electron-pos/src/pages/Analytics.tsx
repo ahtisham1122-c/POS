@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { format } from "date-fns";
 import {
   RefreshCw,
@@ -17,7 +18,13 @@ import {
   BarChart3,
   Target,
   Sparkles,
-  LineChart
+  LineChart,
+  Activity,
+  Gauge,
+  ShieldAlert,
+  CheckCircle2,
+  ArrowUpRight,
+  Landmark
 } from "lucide-react";
 import {
   Area,
@@ -202,6 +209,9 @@ type MilkCost = {
   dailyTrend: Array<{ date: string; avgRatePerKg: number; totalKg: number }>;
 };
 
+type TopProductInsight = NonNullable<Analytics["topProducts"]>[number];
+type ExpenseInsight = NonNullable<Analytics["expenseBreakdown"]>[number];
+
 function todayLocalIso() {
   const now = new Date();
   const year = now.getFullYear();
@@ -236,6 +246,10 @@ function avgKg(n: number) {
 function deltaPct(current: number, previous: number) {
   if (!previous) return null;
   return ((current - previous) / previous) * 100;
+}
+
+function pct(n: number) {
+  return `${Number(n || 0).toFixed(1)}%`;
 }
 
 export default function Analytics() {
@@ -305,6 +319,41 @@ export default function Analytics() {
     sameDayLastYear,
     milkCost
   } = data;
+  const activeDays = dailyTrend.filter((day) => day.bills > 0);
+  const windowRevenue = dailyTrend.reduce((sum, day) => sum + Number(day.revenue || 0), 0);
+  const windowBills = dailyTrend.reduce((sum, day) => sum + Number(day.bills || 0), 0);
+  const windowMilkKg = dailyTrend.reduce((sum, day) => sum + Number(day.milkKg || 0), 0);
+  const windowYogurtKg = dailyTrend.reduce((sum, day) => sum + Number(day.yogurtKg || 0), 0);
+  const avgActiveDayRevenue = activeDays.length ? windowRevenue / activeDays.length : 0;
+  const avgWindowBill = windowBills > 0 ? windowRevenue / windowBills : 0;
+  const bestDay = activeDays.reduce((best, row) => !best || row.revenue > best.revenue ? row : best, null as DayPoint | null);
+  const softDay = activeDays.reduce((best, row) => !best || row.revenue < best.revenue ? row : best, null as DayPoint | null);
+  const cashTender = tenderMix.find((row) => row.method === "CASH");
+  const onlineTender = tenderMix.find((row) => row.method === "ONLINE");
+  const khataTender = tenderMix.find((row) => row.method === "KHATA");
+  const tenderTotal = tenderMix.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const refundRate = today.revenue > 0 ? (Number(today.refunds || 0) / today.revenue) * 100 : 0;
+  const expenseRate = (today.netSales || today.revenue) > 0 ? (Number(today.expenses || 0) / Number(today.netSales || today.revenue)) * 100 : 0;
+  const topProduct = topProducts[0];
+  const biggestExpense = expenseBreakdown[0];
+  const duesToRevenueDays = avgActiveDayRevenue > 0 ? Number(customerRisk?.totalDues || 0) / avgActiveDayRevenue : 0;
+  const lowStockCount = stockRisk.length;
+  const healthSignals = [
+    { ok: Number(today.marginPct || 0) >= 15, label: "Profit margin" },
+    { ok: refundRate <= 3, label: "Refund control" },
+    { ok: lowStockCount === 0, label: "Stock position" },
+    { ok: Number(customerRisk?.overLimitCount || 0) === 0, label: "Khata discipline" },
+    { ok: today.bills > 0, label: "Trading activity" }
+  ];
+  const healthScore = Math.round((healthSignals.filter((item) => item.ok).length / healthSignals.length) * 100);
+  const actions = [
+    lowStockCount > 0 ? `Restock ${lowStockCount} low-stock item${lowStockCount === 1 ? "" : "s"} before peak hours.` : "Stock position is clean for the current low-stock rules.",
+    Number(customerRisk?.overLimitCount || 0) > 0
+      ? `Collect or review ${customerRisk?.overLimitCount} khata account${Number(customerRisk?.overLimitCount || 0) === 1 ? "" : "s"} over limit.`
+      : "No customer is over credit limit.",
+    biggestExpense ? `Review ${biggestExpense.category.toLowerCase()} expense: ${rs(biggestExpense.amount)} in this window.` : "No expense pressure found in this window.",
+    busiestHour ? `Keep strongest staff ready around ${formatHour(busiestHour.hour)}.` : "Peak staffing hour will appear after sales are recorded."
+  ];
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto animate-slide-up">
@@ -370,6 +419,36 @@ export default function Analytics() {
           </button>
         </div>
       </div>
+
+      <BusinessCommandDashboard
+        healthScore={healthScore}
+        healthSignals={healthSignals}
+        today={today}
+        daysBack={daysBack}
+        windowRevenue={windowRevenue}
+        windowBills={windowBills}
+        windowMilkKg={windowMilkKg}
+        windowYogurtKg={windowYogurtKg}
+        avgActiveDayRevenue={avgActiveDayRevenue}
+        avgWindowBill={avgWindowBill}
+        bestDay={bestDay}
+        softDay={softDay}
+        cashTender={cashTender}
+        onlineTender={onlineTender}
+        khataTender={khataTender}
+        tenderTotal={tenderTotal}
+        refundRate={refundRate}
+        expenseRate={expenseRate}
+        topProduct={topProduct}
+        biggestExpense={biggestExpense}
+        customerRisk={customerRisk}
+        duesToRevenueDays={duesToRevenueDays}
+        stockRisk={stockRisk}
+        busiestHour={busiestHour}
+        quietestHour={quietestHour}
+        milkCost={milkCost}
+        actions={actions}
+      />
 
       {/* ---------- TODAY/HISTORICAL KPI CARDS ---------- */}
       <section>
@@ -712,6 +791,272 @@ export default function Analytics() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function BusinessCommandDashboard({
+  healthScore,
+  healthSignals,
+  today,
+  daysBack,
+  windowRevenue,
+  windowBills,
+  windowMilkKg,
+  windowYogurtKg,
+  avgActiveDayRevenue,
+  avgWindowBill,
+  bestDay,
+  softDay,
+  cashTender,
+  onlineTender,
+  khataTender,
+  tenderTotal,
+  refundRate,
+  expenseRate,
+  topProduct,
+  biggestExpense,
+  customerRisk,
+  duesToRevenueDays,
+  stockRisk,
+  busiestHour,
+  quietestHour,
+  milkCost,
+  actions
+}: {
+  healthScore: number;
+  healthSignals: Array<{ ok: boolean; label: string }>;
+  today: TodayKpis;
+  daysBack: number;
+  windowRevenue: number;
+  windowBills: number;
+  windowMilkKg: number;
+  windowYogurtKg: number;
+  avgActiveDayRevenue: number;
+  avgWindowBill: number;
+  bestDay: DayPoint | null;
+  softDay: DayPoint | null;
+  cashTender?: { method: string; amount: number; bills: number; pct: number };
+  onlineTender?: { method: string; amount: number; bills: number; pct: number };
+  khataTender?: { method: string; amount: number; bills: number; pct: number };
+  tenderTotal: number;
+  refundRate: number;
+  expenseRate: number;
+  topProduct?: TopProductInsight;
+  biggestExpense?: ExpenseInsight;
+  customerRisk?: Analytics["customerRisk"];
+  duesToRevenueDays: number;
+  stockRisk: any[];
+  busiestHour?: HourPoint | null;
+  quietestHour?: HourPoint | null;
+  milkCost?: MilkCost;
+  actions: string[];
+}) {
+  const healthTone =
+    healthScore >= 80 ? "text-success border-success/30 bg-success/5"
+    : healthScore >= 55 ? "text-warning border-warning/30 bg-warning/5"
+    : "text-danger border-danger/30 bg-danger/5";
+  const netSales = Number(today.netSales ?? today.revenue);
+  const grossProfit = Number(today.estimatedGrossProfit || 0);
+  const netProfit = Number(today.estimatedNetProfit || 0);
+  const cashPct = tenderTotal > 0 ? (Number(cashTender?.amount || 0) / tenderTotal) * 100 : 0;
+  const onlinePct = tenderTotal > 0 ? (Number(onlineTender?.amount || 0) / tenderTotal) * 100 : 0;
+  const khataPct = tenderTotal > 0 ? (Number(khataTender?.amount || 0) / tenderTotal) * 100 : 0;
+
+  return (
+    <section className="grid xl:grid-cols-12 gap-4">
+      <div className="card p-5 xl:col-span-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+              <Gauge className="w-5 h-5 text-primary" /> Business Health
+            </h2>
+            <p className="text-xs text-text-secondary mt-1">Trading, profit, stock, and khata signals.</p>
+          </div>
+          <span className={cn("text-sm font-black px-3 py-1 rounded-full border", healthTone)}>
+            {healthScore}/100
+          </span>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <CommandMetric label="Net sales" value={rs(netSales)} sub={`${today.bills.toLocaleString("en-PK")} bills`} tone="success" />
+          <CommandMetric label="Net profit" value={rs(netProfit)} sub={`${pct(today.marginPct || 0)} gross margin`} tone={netProfit >= 0 ? "primary" : "danger"} />
+          <CommandMetric label={`${daysBack}d sales`} value={rs(windowRevenue)} sub={`${windowBills.toLocaleString("en-PK")} bills`} tone="info" />
+          <CommandMetric label="Avg active day" value={rs(avgActiveDayRevenue)} sub={`Avg bill ${rs(avgWindowBill)}`} />
+        </div>
+
+        <div className="mt-4 grid grid-cols-5 gap-1">
+          {healthSignals.map((signal) => (
+            <div
+              key={signal.label}
+              className={cn(
+                "h-2 rounded-full",
+                signal.ok ? "bg-success" : "bg-danger/70"
+              )}
+              title={`${signal.label}: ${signal.ok ? "OK" : "Needs attention"}`}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="card p-5 xl:col-span-4">
+        <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+          <Landmark className="w-5 h-5 text-success" /> Money Quality
+        </h2>
+        <p className="text-xs text-text-secondary mt-1">Cash, online, khata, refunds, and expenses.</p>
+
+        <div className="mt-5 space-y-3">
+          <MoneyMixBar label="Cash" value={cashPct} amount={cashTender?.amount || 0} color="#2ea043" />
+          <MoneyMixBar label="Online" value={onlinePct} amount={onlineTender?.amount || 0} color="#388bfd" />
+          <MoneyMixBar label="Khata" value={khataPct} amount={khataTender?.amount || 0} color="#d29922" />
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+          <MiniStat label="Refund rate" value={pct(refundRate)} sub={rs(today.refunds || 0)} />
+          <MiniStat label="Expense rate" value={pct(expenseRate)} sub={rs(today.expenses || 0)} />
+          <MiniStat label="Gross profit" value={rs(grossProfit)} sub={pct(today.marginPct || 0)} />
+        </div>
+      </div>
+
+      <div className="card p-5 xl:col-span-4">
+        <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
+          <ShieldAlert className="w-5 h-5 text-warning" /> Owner Actions
+        </h2>
+        <p className="text-xs text-text-secondary mt-1">Highest-value decisions from the selected data.</p>
+        <div className="mt-4 space-y-3">
+          {actions.map((action, index) => (
+            <div key={action} className="flex gap-3 text-sm">
+              <CheckCircle2 className={cn("w-4 h-4 mt-0.5 shrink-0", index === 0 ? "text-warning" : "text-success")} />
+              <span className="text-text-primary">{action}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card p-5 xl:col-span-12">
+        <div className="grid md:grid-cols-2 xl:grid-cols-6 gap-3">
+          <InsightTile
+            icon={<ArrowUpRight className="w-4 h-4" />}
+            label="Best Day"
+            value={bestDay ? rs(bestDay.revenue) : "No sales"}
+            sub={bestDay ? formatChartDateShort(bestDay.date) : "window"}
+            tone="success"
+          />
+          <InsightTile
+            icon={<Activity className="w-4 h-4" />}
+            label="Softest Active Day"
+            value={softDay ? rs(softDay.revenue) : "No sales"}
+            sub={softDay ? formatChartDateShort(softDay.date) : "window"}
+            tone="warning"
+          />
+          <InsightTile
+            icon={<Clock className="w-4 h-4" />}
+            label="Peak Hour"
+            value={busiestHour ? formatHour(busiestHour.hour) : "Pending"}
+            sub={busiestHour ? `${busiestHour.bills} bills` : "after sales"}
+            tone="info"
+          />
+          <InsightTile
+            icon={<Package className="w-4 h-4" />}
+            label="Top Product"
+            value={topProduct?.productName || "Pending"}
+            sub={topProduct ? `${rs(topProduct.revenue)} sales` : "after sales"}
+            tone="primary"
+          />
+          <InsightTile
+            icon={<Users className="w-4 h-4" />}
+            label="Khata Exposure"
+            value={rs(customerRisk?.totalDues || 0)}
+            sub={duesToRevenueDays > 0 ? `${duesToRevenueDays.toFixed(1)} active sales days` : `${customerRisk?.customersWithDues || 0} customers`}
+            tone={Number(customerRisk?.overLimitCount || 0) > 0 ? "danger" : "warning"}
+          />
+          <InsightTile
+            icon={<Milk className="w-4 h-4" />}
+            label="Milk Cost"
+            value={milkCost?.today.avgRatePerKg ? `Rs. ${milkCost.today.avgRatePerKg.toFixed(2)}` : "No entry"}
+            sub={milkCost?.today.totalKg ? `${kg(milkCost.today.totalKg)} in` : `${kg(windowMilkKg + windowYogurtKg)} sold`}
+            tone="info"
+          />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-text-secondary">
+          <span className="rounded-full border border-surface-4 px-2 py-1">Window volume: {kg(windowMilkKg)} milk, {kg(windowYogurtKg)} yogurt</span>
+          {quietestHour && <span className="rounded-full border border-surface-4 px-2 py-1">Quiet active hour: {formatHour(quietestHour.hour)}</span>}
+          {biggestExpense && <span className="rounded-full border border-surface-4 px-2 py-1">Biggest expense: {biggestExpense.category} {rs(biggestExpense.amount)}</span>}
+          {stockRisk.length > 0 && <span className="rounded-full border border-danger/30 text-danger px-2 py-1">Stock alerts: {stockRisk.length}</span>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CommandMetric({
+  label,
+  value,
+  sub,
+  tone = "neutral"
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  tone?: "neutral" | "success" | "primary" | "info" | "danger";
+}) {
+  const toneClass =
+    tone === "success" ? "text-success"
+    : tone === "primary" ? "text-primary"
+    : tone === "info" ? "text-info"
+    : tone === "danger" ? "text-danger"
+    : "text-text-primary";
+  return (
+    <div className="rounded-lg border border-surface-4 bg-surface-2/50 p-3 min-w-0">
+      <p className="text-[10px] uppercase tracking-wider font-bold text-text-secondary truncate">{label}</p>
+      <p className={cn("mt-1 font-mono font-black text-lg truncate", toneClass)} title={value}>{value}</p>
+      <p className="text-[11px] text-text-secondary truncate" title={sub}>{sub}</p>
+    </div>
+  );
+}
+
+function MoneyMixBar({ label, value, amount, color }: { label: string; value: number; amount: number; color: string }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="font-bold text-text-primary">{label}</span>
+        <span className="font-mono text-text-secondary">{rs(amount)} · {pct(value)}</span>
+      </div>
+      <div className="mt-1.5 h-2 rounded-full bg-surface-3 overflow-hidden">
+        <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, value))}%`, background: color }} />
+      </div>
+    </div>
+  );
+}
+
+function InsightTile({
+  icon,
+  label,
+  value,
+  sub,
+  tone = "neutral"
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  sub: string;
+  tone?: "neutral" | "success" | "warning" | "info" | "primary" | "danger";
+}) {
+  const toneClass =
+    tone === "success" ? "text-success bg-success/10"
+    : tone === "warning" ? "text-warning bg-warning/10"
+    : tone === "info" ? "text-info bg-info/10"
+    : tone === "primary" ? "text-primary bg-primary/10"
+    : tone === "danger" ? "text-danger bg-danger/10"
+    : "text-text-secondary bg-surface-3";
+  return (
+    <div className="rounded-lg border border-surface-4 bg-surface-2/40 p-3 min-w-0">
+      <div className="flex items-center gap-2">
+        <span className={cn("w-7 h-7 rounded-lg flex items-center justify-center shrink-0", toneClass)}>{icon}</span>
+        <p className="text-[10px] uppercase tracking-wider font-bold text-text-secondary truncate">{label}</p>
+      </div>
+      <p className="mt-2 font-mono font-black text-text-primary truncate" title={value}>{value}</p>
+      <p className="text-[11px] text-text-secondary truncate" title={sub}>{sub}</p>
     </div>
   );
 }
