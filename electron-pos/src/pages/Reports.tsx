@@ -192,6 +192,7 @@ export default function Reports() {
   const [dateStr, setDateStr] = useState(new Date().toISOString().split('T')[0]);
   const [dailyData, setDailyData] = useState<any>(null);
   const [salesHistory, setSalesHistory] = useState<any[]>([]);
+  const [salesMinTotal, setSalesMinTotal] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duesData, setDuesData] = useState<any[]>([]);
@@ -367,6 +368,15 @@ export default function Reports() {
     }
   };
 
+  const salesMinTotalValue = Number(salesMinTotal || 0);
+  const isBigSaleFilterActive = Number.isFinite(salesMinTotalValue) && salesMinTotalValue > 0;
+  const visibleSalesHistory = isBigSaleFilterActive
+    ? salesHistory
+      .filter((sale) => Number(sale.grand_total || 0) >= salesMinTotalValue)
+      .sort((a, b) => Number(b.grand_total || 0) - Number(a.grand_total || 0))
+    : salesHistory;
+  const visibleSalesTotal = visibleSalesHistory.reduce((sum, sale) => sum + Number(sale.grand_total || 0), 0);
+
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto animate-slide-up">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -478,14 +488,49 @@ export default function Reports() {
 
         {activeTab === "SALES" && (
           <div className="p-4 md:p-6 animate-slide-in-right space-y-4">
-            <div className="flex items-center gap-4 bg-surface-3 p-4 rounded-lg border border-surface-4">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-4 bg-surface-3 p-4 rounded-lg border border-surface-4">
               <input 
                 type="date" 
                 value={dateStr}
                 onChange={e => setDateStr(e.target.value)}
                 className="input py-2 w-auto"
               />
-              <p className="text-sm text-text-secondary">Showing {salesHistory.length} transactions</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setSalesMinTotal("")}
+                  className={cn("btn-secondary h-10 px-3 text-sm", !isBigSaleFilterActive && "bg-primary/10 text-primary border-primary/30")}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setSalesMinTotal("1000")}
+                  className={cn("btn-secondary h-10 px-3 text-sm", salesMinTotal === "1000" && "bg-primary/10 text-primary border-primary/30")}
+                >
+                  Rs. 1000+
+                </button>
+                <button
+                  onClick={() => setSalesMinTotal("2000")}
+                  className={cn("btn-secondary h-10 px-3 text-sm", salesMinTotal === "2000" && "bg-primary/10 text-primary border-primary/30")}
+                >
+                  Rs. 2000+
+                </button>
+                <div className="relative">
+                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
+                  <input
+                    type="number"
+                    min="0"
+                    step="100"
+                    value={salesMinTotal}
+                    onChange={(event) => setSalesMinTotal(event.target.value)}
+                    className="input pl-10 h-10 w-36"
+                    placeholder="Min bill"
+                  />
+                </div>
+              </div>
+              <p className="text-sm text-text-secondary lg:ml-auto">
+                Showing {visibleSalesHistory.length} of {salesHistory.length} bills
+                {isBigSaleFilterActive ? `, total ${toMoney(visibleSalesTotal)}` : ""}
+              </p>
             </div>
 
             <div className="overflow-x-auto border border-surface-4 rounded-xl">
@@ -503,7 +548,7 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-4">
-                  {salesHistory.map((sale) => (
+                  {visibleSalesHistory.map((sale) => (
                     <tr key={sale.id} className="hover:bg-surface-3/50 transition-colors">
                       <td className="px-4 py-3 font-bold text-text-primary">{sale.bill_number}</td>
                       <td className="px-4 py-3 text-text-secondary">{format(new Date(sale.sale_date), "hh:mm a")}</td>
@@ -550,9 +595,11 @@ export default function Reports() {
                       </td>
                     </tr>
                   ))}
-                  {salesHistory.length === 0 && (
+                  {visibleSalesHistory.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center text-text-secondary">No sales found for this date.</td>
+                      <td colSpan={8} className="px-4 py-12 text-center text-text-secondary">
+                        {salesHistory.length === 0 ? "No sales found for this date." : `No bills found above ${toMoney(salesMinTotalValue)}.`}
+                      </td>
                     </tr>
                   )}
                 </tbody>
@@ -736,7 +783,7 @@ export default function Reports() {
         activeTab={activeTab}
         dateStr={dateStr}
         dailyData={dailyData}
-        salesHistory={salesHistory}
+        salesHistory={activeTab === "SALES" ? visibleSalesHistory : salesHistory}
         productPerformance={productPerformance}
         duesData={duesData}
         profitLossData={profitLossData}
