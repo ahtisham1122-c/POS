@@ -210,14 +210,31 @@ export function registerReportsIPC() {
       SELECT SUM(si.quantity) as qty
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
-      WHERE si.product_name LIKE '%milk%' AND ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+        AND (UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%')
     `).get(...saleParams) as any;
 
     const yogurtStats = db.prepare(`
       SELECT SUM(si.quantity) as qty
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
-      WHERE si.product_name LIKE '%yogurt%' AND ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+        AND (UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%')
+    `).get(...saleParams) as any;
+
+    const otherStats = db.prepare(`
+      SELECT
+        SUM(si.quantity) as qty,
+        SUM(si.line_total) as sales,
+        COUNT(*) as lines
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE ${saleWhere} AND s.status IN (${ACCOUNTING_SALE_STATUSES})
+        AND NOT (UPPER(COALESCE(p.code, '')) = 'MILK' OR LOWER(si.product_name) LIKE '%milk%')
+        AND NOT (UPPER(COALESCE(p.code, '')) IN ('YOGT', 'YOGURT') OR LOWER(si.product_name) LIKE '%yog%')
     `).get(...saleParams) as any;
 
     const expenseStats = db.prepare(`
@@ -255,6 +272,9 @@ export function registerReportsIPC() {
       creditSales: saleStats?.creditSales || 0,
       milkSold: milkStats?.qty || 0,
       yogurtSold: yogurtStats?.qty || 0,
+      otherItemsSold: otherStats?.qty || 0,
+      otherItemsSales: otherStats?.sales || 0,
+      otherItemLines: otherStats?.lines || 0,
       expenses: expenseStats?.total || 0,
       cashInDrawer: drawer.expectedCash
     };

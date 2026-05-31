@@ -80,6 +80,7 @@ function ReportPrintView({
             <div className="thermal-row"><span>Bills</span><strong>{dailyData.bills || 0}</strong></div>
             <div className="thermal-row"><span>Milk Sold</span><strong>{Number(dailyData.milkSold || 0).toFixed(2)} kg</strong></div>
             <div className="thermal-row"><span>Yogurt Sold</span><strong>{Number(dailyData.yogurtSold || 0).toFixed(2)} kg</strong></div>
+            <div className="thermal-row"><span>Other Items</span><strong>{Number(dailyData.otherItemsSold || 0).toFixed(2)}</strong></div>
             <div className="thermal-rule" />
             <div className="thermal-row thermal-total"><span>Net Cash</span><strong>{toMoney(Number(dailyData.cashSales || 0) - Number(dailyData.expenses || 0))}</strong></div>
           </>
@@ -456,6 +457,11 @@ export default function Reports() {
                   <p className="text-xl font-bold font-mono text-text-primary">{dailyData.yogurtSold.toFixed(2)} kg</p>
                 </div>
                 <div className="card p-5">
+                  <p className="text-xs text-text-secondary font-bold uppercase mb-2">Other Items Sold</p>
+                  <p className="text-xl font-bold font-mono text-text-primary">{Number(dailyData.otherItemsSold || 0).toFixed(2)}</p>
+                  <p className="text-xs text-text-secondary mt-1">{toMoney(dailyData.otherItemsSales || 0)} sales</p>
+                </div>
+                <div className="card p-5">
                   <p className="text-xs text-text-secondary font-bold uppercase mb-2">Expenses</p>
                   <p className="text-xl font-bold font-mono text-danger">{toMoney(dailyData.expenses)}</p>
                 </div>
@@ -739,9 +745,9 @@ export default function Reports() {
       />
 
       {voidSale && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg card border-danger/40 shadow-2xl animate-slide-up">
-            <div className="p-5 border-b border-surface-4 flex items-start gap-3">
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3">
+          <div className="w-full max-w-2xl max-h-[calc(100vh-1.5rem)] card border-danger/40 shadow-2xl animate-slide-up flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-surface-4 flex items-start gap-3 shrink-0">
               <div className="h-10 w-10 rounded-xl bg-danger/10 text-danger flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
@@ -753,8 +759,8 @@ export default function Reports() {
               </div>
             </div>
 
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+            <div className="p-4 space-y-4 overflow-y-auto">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="bg-surface-3 rounded-xl p-4 border border-surface-4">
                   <p className="text-xs text-text-secondary uppercase font-bold">Total</p>
                   <p className="font-mono text-xl font-bold text-text-primary mt-1">{toMoney(voidSale.grand_total)}</p>
@@ -763,6 +769,19 @@ export default function Reports() {
                   <p className="text-xs text-text-secondary uppercase font-bold">Paid</p>
                   <p className="font-mono text-xl font-bold text-success mt-1">{toMoney(voidSale.amount_paid)}</p>
                 </div>
+                <label className="block md:col-span-2 bg-danger/5 rounded-xl p-4 border border-danger/20">
+                  <span className="text-xs font-bold uppercase text-danger">Manager PIN</span>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    value={voidPin}
+                    onChange={e => setVoidPin(e.target.value)}
+                    className="input mt-2 font-mono text-center text-lg tracking-widest"
+                    placeholder="PIN"
+                    autoComplete="off"
+                    autoFocus
+                  />
+                </label>
               </div>
 
               <label className="block">
@@ -770,7 +789,7 @@ export default function Reports() {
                 <textarea
                   value={voidReason}
                   onChange={(event) => setVoidReason(event.target.value)}
-                  className="input mt-2 min-h-28 resize-none"
+                  className="input mt-2 min-h-20 resize-none"
                   placeholder="Example: Wrong quantity entered, duplicate bill, cashier mistake..."
                 />
               </label>
@@ -785,7 +804,7 @@ export default function Reports() {
                 {voidRestockItems ? "Restore sold items back into stock" : "Do not restore stock"}
               </button>
 
-              <label className="block">
+              <label className="hidden">
                 <span className="text-sm font-semibold text-text-primary">Manager PIN</span>
                 <input
                   type="password"
@@ -799,7 +818,7 @@ export default function Reports() {
               </label>
             </div>
 
-            <div className="p-5 border-t border-surface-4 flex gap-3 justify-end">
+            <div className="p-4 border-t border-surface-4 flex gap-3 justify-end shrink-0 bg-surface-2">
               <button
                 onClick={() => setVoidSale(null)}
                 disabled={isVoiding}

@@ -8,6 +8,15 @@ type Product = { id: string; code: string; name: string; category: string; unit:
 type Customer = { id: string; name: string; card_number?: string; current_balance?: number; phone?: string; };
 type DailyRate = { date?: string; milk_rate: number; yogurt_rate: number; };
 type TaxConfig = { enabled: boolean; label: string; rate: number; };
+type SoldDaySummary = {
+  date: string;
+  bills?: number;
+  totalSales?: number;
+  milkSold?: number;
+  yogurtSold?: number;
+  otherItemsSold?: number;
+  otherItemsSales?: number;
+};
 
 function roundMoney(value: number) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -53,6 +62,12 @@ function localDateString(date = new Date()) {
 
 function previousDateString() {
   const date = new Date();
+  date.setDate(date.getDate() - 1);
+  return localDateString(date);
+}
+
+function previousDateFromIso(iso: string) {
+  const date = new Date(`${iso}T00:00:00`);
   date.setDate(date.getDate() - 1);
   return localDateString(date);
 }
@@ -157,6 +172,26 @@ function TouchInputPad({ input, onClose }: { input: TouchInputRequest; onClose: 
   );
 }
 
+function SoldSnapshotPill({ label, summary, muted = false }: { label: string; summary: SoldDaySummary; muted?: boolean }) {
+  return (
+    <div className={cn(
+      "rounded-lg border px-2.5 py-1 text-[10px] leading-tight min-w-[205px]",
+      muted ? "border-surface-4 bg-surface-3/50 text-text-secondary" : "border-success/30 bg-success/10 text-text-primary"
+    )}>
+      <div className="flex items-center justify-between gap-2 font-bold">
+        <span className={muted ? "text-text-secondary" : "text-success"}>{label}</span>
+        <span className="font-mono">{format(new Date(`${summary.date}T00:00:00`), "dd MMM")}</span>
+      </div>
+      <div className="mt-0.5 grid grid-cols-4 gap-1 font-mono">
+        <span title="Total bills">{Number(summary.bills || 0)} bills</span>
+        <span title="Milk sold">{Number(summary.milkSold || 0).toFixed(1)} kg M</span>
+        <span title="Yogurt sold">{Number(summary.yogurtSold || 0).toFixed(1)} kg Y</span>
+        <span title="Other items sold">{Number(summary.otherItemsSold || 0).toFixed(1)} O</span>
+      </div>
+    </div>
+  );
+}
+
 export default function POS() {
   // Global Data
   const [products, setProducts] = useState<Product[]>([]);
@@ -168,6 +203,7 @@ export default function POS() {
   const [syncStatus, setSyncStatus] = useState("Online");
   const [taxConfig, setTaxConfig] = useState<TaxConfig>({ enabled: false, label: "GST", rate: 0 });
   const [autoPrintReceipt, setAutoPrintReceipt] = useState(true);
+  const [soldSnapshot, setSoldSnapshot] = useState<{ today: SoldDaySummary; previous: SoldDaySummary } | null>(null);
   // Toast notifications for alerts (low stock, credit, etc.)
   const [alerts, setAlerts] = useState<string[]>([]);
   const addAlert = (msg: string) => {
@@ -299,7 +335,11 @@ export default function POS() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 60000); // Check for rate updates every minute
+    loadSoldSnapshot();
+    const interval = setInterval(() => {
+      fetchData();
+      loadSoldSnapshot();
+    }, 60000); // Check for rate updates every minute
     return () => clearInterval(interval);
   }, []);
 
@@ -364,6 +404,24 @@ export default function POS() {
         rate: Number(config.taxRate || 0) || 0
       });
       setAutoPrintReceipt(String(config.autoPrint ?? "true").toLowerCase() === "true");
+    }
+  };
+
+  const loadSoldSnapshot = async () => {
+    try {
+      const day = await window.electronAPI?.system?.getBusinessDate();
+      const today = day?.date || format(new Date(), "yyyy-MM-dd");
+      const previous = previousDateFromIso(today);
+      const [todayData, previousData] = await Promise.all([
+        window.electronAPI?.reports?.getEndOfDay(today),
+        window.electronAPI?.reports?.getEndOfDay(previous)
+      ]);
+      setSoldSnapshot({
+        today: { ...(todayData || {}), date: today },
+        previous: { ...(previousData || {}), date: previous }
+      });
+    } catch (err) {
+      console.error("Failed to load sold snapshot", err);
     }
   };
 
@@ -1028,6 +1086,7 @@ export default function POS() {
       setDiscountInput("");
       setShowDiscount(false);
       activeTransactionIdRef.current = null;
+      loadSoldSnapshot();
       // After sale, check for low stock alerts
       items.forEach(item => {
         const prod = products.find(p => p.id === item.productId);
@@ -1128,6 +1187,12 @@ export default function POS() {
         </div>
 
         <div className="flex items-center gap-3">
+          {soldSnapshot && (
+            <div className="hidden xl:flex items-center gap-2">
+              <SoldSnapshotPill label="Today" summary={soldSnapshot.today} />
+              <SoldSnapshotPill label="Previous" summary={soldSnapshot.previous} muted />
+            </div>
+          )}
           {selectedCustomerId && (
             <div className="bg-danger/20 border border-danger/30 text-danger px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
               Khata: {selectedCustomer?.name || customerSearchQuery || "Selected"}
@@ -1152,28 +1217,30 @@ export default function POS() {
           
           <div className="hp-product-body flex-1 p-3 flex flex-col gap-3 overflow-hidden">
             {/* Custom Input */}
-            <div className="flex gap-2 shrink-0 bg-white/5 p-2 rounded-xl border border-white/10">
-              <input 
-                type="number" 
-                placeholder="Custom Value" 
-                value={customMilkQty}
-                onChange={e => setCustomMilkQty(e.target.value)}
-                onFocus={() => openTouchInput({ title: "Milk custom value", mode: "number", value: customMilkQty, setValue: setCustomMilkQty, allowDecimal: true })}
-                className="min-w-0 flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
-              />
-              <div className="flex bg-surface-1 rounded-lg p-1">
+            <div className="shrink-0 bg-white/5 p-2 rounded-xl border border-white/10 space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  placeholder={customMilkType === "RS" ? "Amount in Rs" : "Quantity in kg"}
+                  value={customMilkQty}
+                  onChange={e => setCustomMilkQty(e.target.value)}
+                  onFocus={() => openTouchInput({ title: "Milk custom value", mode: "number", value: customMilkQty, setValue: setCustomMilkQty, allowDecimal: true })}
+                  className="min-w-0 flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
+                />
+                <button onClick={handleCustomMilkAdd} disabled={!customMilkQty} className="min-w-[88px] bg-success hover:bg-success/90 text-white font-bold px-5 rounded-lg transition-colors disabled:opacity-50">
+                  Add
+                </button>
+              </div>
+              <div className="flex bg-surface-1 rounded-lg p-1 max-w-[180px]" title="Choose whether the custom value is rupees or kilograms">
                 <button
                   onClick={() => setCustomMilkType("RS")}
-                  className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customMilkType === "RS" ? "bg-success text-white" : "text-text-secondary hover:text-white")}
+                  className={cn("flex-1 px-4 py-2 rounded-md text-sm font-bold transition-colors", customMilkType === "RS" ? "bg-success text-white" : "text-text-secondary hover:text-white")}
                 >RS</button>
                 <button
                   onClick={() => setCustomMilkType("KG")}
-                  className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customMilkType === "KG" ? "bg-success text-white" : "text-text-secondary hover:text-white")}
+                  className={cn("flex-1 px-4 py-2 rounded-md text-sm font-bold transition-colors", customMilkType === "KG" ? "bg-success text-white" : "text-text-secondary hover:text-white")}
                 >KG</button>
               </div>
-              <button onClick={handleCustomMilkAdd} disabled={!customMilkQty} className="min-w-[70px] bg-success hover:bg-success/90 text-white font-bold px-5 rounded-lg transition-colors disabled:opacity-50">
-                Add
-              </button>
             </div>
 
             {/* 6x3 Grid */}
@@ -1217,28 +1284,30 @@ export default function POS() {
           
           <div className="hp-product-body flex-1 p-3 flex flex-col gap-3 overflow-y-auto">
             {/* Custom Input */}
-            <div className="flex gap-2 shrink-0 bg-white/5 p-2 rounded-xl border border-white/10">
-              <input 
-                type="number" 
-                placeholder="Custom Value" 
-                value={customYogurtInput}
-                onChange={e => setCustomYogurtInput(e.target.value)}
-                onFocus={() => openTouchInput({ title: "Yogurt custom value", mode: "number", value: customYogurtInput, setValue: setCustomYogurtInput, allowDecimal: true })}
-                className="min-w-0 flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
-              />
-              <div className="flex bg-surface-1 rounded-lg p-1">
+            <div className="shrink-0 bg-white/5 p-2 rounded-xl border border-white/10 space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  placeholder={customYogurtType === "RS" ? "Amount in Rs" : "Quantity in kg"}
+                  value={customYogurtInput}
+                  onChange={e => setCustomYogurtInput(e.target.value)}
+                  onFocus={() => openTouchInput({ title: "Yogurt custom value", mode: "number", value: customYogurtInput, setValue: setCustomYogurtInput, allowDecimal: true })}
+                  className="min-w-0 flex-1 bg-transparent px-3 py-2 text-white outline-none text-lg font-mono"
+                />
+                <button onClick={handleCustomYogurtAdd} disabled={!customYogurtInput} className="min-w-[88px] bg-surface-3 hover:bg-surface-4 text-white font-bold px-5 rounded-lg transition-colors border border-surface-4 disabled:opacity-50">
+                  Add
+                </button>
+              </div>
+              <div className="flex bg-surface-1 rounded-lg p-1 max-w-[180px]" title="Choose whether the custom value is rupees or kilograms">
                 <button
                   onClick={() => setCustomYogurtType("RS")}
-                  className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customYogurtType === "RS" ? "bg-purple-500 text-white" : "text-text-secondary hover:text-white")}
+                  className={cn("flex-1 px-4 py-2 rounded-md text-sm font-bold transition-colors", customYogurtType === "RS" ? "bg-purple-500 text-white" : "text-text-secondary hover:text-white")}
                 >RS</button>
                 <button
                   onClick={() => setCustomYogurtType("KG")}
-                  className={cn("px-4 py-2 rounded-md text-sm font-bold transition-colors", customYogurtType === "KG" ? "bg-info text-white" : "text-text-secondary hover:text-white")}
+                  className={cn("flex-1 px-4 py-2 rounded-md text-sm font-bold transition-colors", customYogurtType === "KG" ? "bg-info text-white" : "text-text-secondary hover:text-white")}
                 >KG</button>
               </div>
-              <button onClick={handleCustomYogurtAdd} disabled={!customYogurtInput} className="min-w-[70px] bg-surface-3 hover:bg-surface-4 text-white font-bold px-5 rounded-lg transition-colors border border-surface-4 disabled:opacity-50">
-                Add
-              </button>
             </div>
 
             <div className="flex-1 flex gap-3 min-h-0">
@@ -1995,4 +2064,3 @@ export default function POS() {
     </div>
   );
 }
-
