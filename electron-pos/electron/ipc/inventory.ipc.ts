@@ -176,7 +176,7 @@ export function handleStockMutation(productId: string, quantityDiff: number, mov
     const stockBefore = product.stock;
     const stockAfter = movementType === 'ADJUSTMENT' ? quantityDiff : stockBefore + quantityDiff;
 
-    if (stockAfter < 0 && movementType !== 'ADJUSTMENT') {
+    if (stockAfter < 0 && movementType !== 'ADJUSTMENT' && data?.allowNegativeStock !== true) {
       throw new Error('Stock cannot be negative');
     }
 

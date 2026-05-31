@@ -188,6 +188,7 @@ export function registerRidersIPC() {
       const stockResult = handleStockMutation(milkProduct.id, -qty, 'DELIVERY_OUT', {
         userId: user?.id || 'system',
         referenceId: data.sessionId,
+        allowNegativeStock: true,
         notes: `Delivery pickup — Rider: ${rider?.name || data.riderId}${data.notes ? ` — ${data.notes}` : ''}`,
       }) as any;
 
@@ -309,6 +310,7 @@ export function registerRidersIPC() {
           {
             userId: user.id,
             referenceId: entry.session_id,
+            allowNegativeStock: stockDiff < 0,
             notes: `Delivery correction - ${entry.entry_type} ${oldQty}kg to ${nextQty}kg - Rider: ${entry.rider_name || entry.rider_id}`,
           }
         ) as any;
