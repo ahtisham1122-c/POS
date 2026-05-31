@@ -25,6 +25,58 @@ function toReceiptQuantity(value: unknown) {
   return quantity.toFixed(3).replace(/\.?0+$/, '');
 }
 
+const CODE39_PATTERNS: Record<string, string> = {
+  '0': 'nnnwwnwnn', '1': 'wnnwnnnnw', '2': 'nnwwnnnnw', '3': 'wnwwnnnnn',
+  '4': 'nnnwwnnnw', '5': 'wnnwwnnnn', '6': 'nnwwwnnnn', '7': 'nnnwnnwnw',
+  '8': 'wnnwnnwnn', '9': 'nnwwnnwnn', A: 'wnnnnwnnw', B: 'nnwnnwnnw',
+  C: 'wnwnnwnnn', D: 'nnnnwwnnw', E: 'wnnnwwnnn', F: 'nnwnwwnnn',
+  G: 'nnnnnwwnw', H: 'wnnnnwwnn', I: 'nnwnnwwnn', J: 'nnnnwwwnn',
+  K: 'wnnnnnnww', L: 'nnwnnnnww', M: 'wnwnnnnwn', N: 'nnnnwnnww',
+  O: 'wnnnwnnwn', P: 'nnwnwnnwn', Q: 'nnnnnnwww', R: 'wnnnnnwwn',
+  S: 'nnwnnnwwn', T: 'nnnnwnwwn', U: 'wwnnnnnnw', V: 'nwwnnnnnw',
+  W: 'wwwnnnnnn', X: 'nwnnwnnnw', Y: 'wwnnwnnnn', Z: 'nwwnwnnnn',
+  '-': 'nwnnnnwnw', '.': 'wwnnnnwnn', ' ': 'nwwnnnwnn', '$': 'nwnwnwnnn',
+  '/': 'nwnwnnnwn', '+': 'nwnnnwnwn', '%': 'nnnwnwnwn', '*': 'nwnnwnwnn'
+};
+
+function normalizeBarcodeValue(value: unknown) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^0-9A-Z\-. $/+%]/g, '');
+}
+
+function renderCode39Svg(value: unknown) {
+  const clean = normalizeBarcodeValue(value);
+  if (!clean) return '';
+  const encoded = `*${clean}*`;
+  const narrow = 1;
+  const wide = 2.4;
+  const gap = 1;
+  const height = 24;
+  let x = 0;
+  const rects: string[] = [];
+
+  for (const char of encoded) {
+    const pattern = CODE39_PATTERNS[char];
+    if (!pattern) continue;
+    for (let i = 0; i < pattern.length; i++) {
+      const width = pattern[i] === 'w' ? wide : narrow;
+      if (i % 2 === 0) {
+        rects.push(`<rect x="${x.toFixed(1)}" y="0" width="${width.toFixed(1)}" height="${height}" fill="#000"/>`);
+      }
+      x += width;
+    }
+    x += gap;
+  }
+
+  return `
+    <svg class="barcode-svg" viewBox="0 0 ${Math.ceil(x)} ${height}" preserveAspectRatio="none" aria-label="${escapeHtml(clean)}">
+      ${rects.join('')}
+    </svg>
+  `;
+}
+
 function normalizeReceiptData(input: any) {
   if (input?.sale) {
     const sale = input.sale;
@@ -210,6 +262,15 @@ export function registerPrinterIPC() {
       const tokenLine = receipt.tokenNumber
         ? `<div class="center" style="font-size: 30px; font-weight: 900; line-height: 1; margin-bottom: 3px;">TOKEN ${escapeHtml(receipt.tokenNumber)}</div>`
         : '';
+      const barcodeSvg = renderCode39Svg(receipt.billNumber);
+      const barcodeBlock = barcodeSvg
+        ? `
+          <div class="barcode-wrap">
+            ${barcodeSvg}
+            <div class="barcode-label">SCAN FOR RETURN / AUDIT</div>
+          </div>
+        `
+        : '';
 
       // Minimal receipt: logo, bill+date, items (name + amount only), TOTAL.
       // Owner asked to remove shop name, phone, ITEM COUNTER box, subtotal/
@@ -246,6 +307,9 @@ export function registerPrinterIPC() {
               .total-amount { font-size: 22px; font-weight: 900; }
               .payment-label { text-align: center; font-size: 15px; font-weight: 900; margin: 2px 0 1px; letter-spacing: 1px; }
               .payment-breakdown { text-align: center; font-size: 12px; font-weight: 900; margin: 0 0 2px; }
+              .barcode-wrap { margin: 3px 0 2px; text-align: center; }
+              .barcode-svg { display: block; width: 78%; height: 24px; margin: 0 auto; }
+              .barcode-label { font-family: Arial, sans-serif; font-size: 8px; line-height: 1; margin-top: 1px; font-weight: 900; letter-spacing: 0.5px; }
             </style>
           </head>
           <body>
@@ -275,7 +339,9 @@ export function registerPrinterIPC() {
               <span class="total-amount">Rs.${toReceiptAmount(receipt.grandTotal)}</span>
             </div>
 
-            <div style="height: 10px;"></div>
+            ${barcodeBlock}
+
+            <div style="height: 6px;"></div>
           </body>
         </html>
       `;

@@ -13,13 +13,22 @@ function today() {
 function parseReceiptInput(value: string) {
   return value
     .split(/[\s,;]+/)
-    .map((item) => item.trim())
+    .map(extractReceiptCode)
     .filter(Boolean);
+}
+
+function extractReceiptCode(value: string) {
+  const clean = String(value || "").trim().toUpperCase();
+  const billMatch = clean.match(/BILL-\d+/);
+  if (billMatch) return billMatch[0];
+  const parts = clean.split("|").map((part) => part.trim()).filter(Boolean);
+  return parts.find((part) => /^BILL-\d+$/.test(part)) || clean;
 }
 
 export default function ReceiptAudit() {
   const [date, setDate] = useState(today());
   const [receiptText, setReceiptText] = useState("");
+  const [scanInput, setScanInput] = useState("");
   const [notes, setNotes] = useState("");
   const [audit, setAudit] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
@@ -75,6 +84,13 @@ export default function ReceiptAudit() {
     }
   }
 
+  function addScannedReceipt() {
+    const code = extractReceiptCode(scanInput);
+    if (!code) return;
+    setReceiptText((current) => `${current.trim()}${current.trim() ? "\n" : ""}${code}`);
+    setScanInput("");
+  }
+
   const hasProblem = audit && (audit.missingCount > 0 || audit.extraCount > 0 || audit.duplicateCount > 0);
 
   return (
@@ -122,6 +138,22 @@ export default function ReceiptAudit() {
           </div>
 
           <div className="p-5 space-y-5">
+            <div>
+              <label className="text-sm font-semibold text-text-primary">Scan Receipt Barcode</label>
+              <input
+                value={scanInput}
+                onChange={(event) => setScanInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addScannedReceipt();
+                  }
+                }}
+                className="input mt-2 h-12 font-mono text-lg"
+                placeholder="Focus here, scan receipt, press Enter"
+                autoFocus
+              />
+            </div>
             <div>
               <label className="text-sm font-semibold text-text-primary">Collected Receipt Numbers</label>
               <textarea
@@ -252,9 +284,14 @@ function ProblemList({ title, items, tone }: { title: string; items: any[]; tone
       </div>
       <div className="max-h-64 overflow-y-auto divide-y divide-surface-4">
         {items.map((item) => (
-          <div key={`${item.status}-${item.billNumber}-${item.saleId || "none"}`} className="p-3 flex items-center justify-between gap-3">
-            <span className="font-mono font-bold text-text-primary">{item.billNumber}</span>
-            <span className="font-mono text-text-secondary">{toMoney(item.amount)}</span>
+          <div key={`${item.status}-${item.billNumber}-${item.saleId || "none"}`} className="p-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-mono font-bold text-text-primary">{item.billNumber}</span>
+              <span className="font-mono text-text-secondary">{toMoney(item.amount)}</span>
+            </div>
+            {item.scopeWarning && (
+              <p className="mt-1 text-xs text-warning">{item.scopeWarning}</p>
+            )}
           </div>
         ))}
         {items.length === 0 && <div className="p-6 text-center text-text-secondary">None</div>}

@@ -18,6 +18,20 @@ type SoldDaySummary = {
   otherItemsSales?: number;
 };
 
+const CODE39_PATTERNS: Record<string, string> = {
+  "0": "nnnwwnwnn", "1": "wnnwnnnnw", "2": "nnwwnnnnw", "3": "wnwwnnnnn",
+  "4": "nnnwwnnnw", "5": "wnnwwnnnn", "6": "nnwwwnnnn", "7": "nnnwnnwnw",
+  "8": "wnnwnnwnn", "9": "nnwwnnwnn", A: "wnnnnwnnw", B: "nnwnnwnnw",
+  C: "wnwnnwnnn", D: "nnnnwwnnw", E: "wnnnwwnnn", F: "nnwnwwnnn",
+  G: "nnnnnwwnw", H: "wnnnnwwnn", I: "nnwnnwwnn", J: "nnnnwwwnn",
+  K: "wnnnnnnww", L: "nnwnnnnww", M: "wnwnnnnwn", N: "nnnnwnnww",
+  O: "wnnnwnnwn", P: "nnwnwnnwn", Q: "nnnnnnwww", R: "wnnnnnwwn",
+  S: "nnwnnnwwn", T: "nnnnwnwwn", U: "wwnnnnnnw", V: "nwwnnnnnw",
+  W: "wwwnnnnnn", X: "nwnnwnnnw", Y: "wwnnwnnnn", Z: "nwwnwnnnn",
+  "-": "nwnnnnwnw", ".": "wwnnnnwnn", " ": "nwwnnnwnn", "$": "nwnwnwnnn",
+  "/": "nwnwnnnwn", "+": "nwnnnwnwn", "%": "nnnwnwnwn", "*": "nwnnwnwnn"
+};
+
 function roundMoney(value: number) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
@@ -70,6 +84,13 @@ function previousDateFromIso(iso: string) {
   const date = new Date(`${iso}T00:00:00`);
   date.setDate(date.getDate() - 1);
   return localDateString(date);
+}
+
+function normalizeBarcodeValue(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^0-9A-Z\-. $/+%]/g, "");
 }
 
 type TouchInputRequest = {
@@ -188,6 +209,42 @@ function SoldSnapshotPill({ label, summary, muted = false }: { label: string; su
         <span title="Yogurt sold">{Number(summary.yogurtSold || 0).toFixed(1)} kg Y</span>
         <span title="Other items sold">{Number(summary.otherItemsSold || 0).toFixed(1)} O</span>
       </div>
+    </div>
+  );
+}
+
+function ReceiptBarcode({ value }: { value: string }) {
+  const clean = normalizeBarcodeValue(value);
+  const encoded = `*${clean}*`;
+  const parts: Array<{ key: string; bar: boolean; width: number }> = [];
+
+  encoded.split("").forEach((char, charIndex) => {
+    const pattern = CODE39_PATTERNS[char];
+    if (!pattern) return;
+    pattern.split("").forEach((part, index) => {
+      parts.push({
+        key: `${charIndex}-${index}`,
+        bar: index % 2 === 0,
+        width: part === "w" ? 3 : 1
+      });
+    });
+    parts.push({ key: `${charIndex}-gap`, bar: false, width: 1 });
+  });
+
+  if (!clean) return null;
+
+  return (
+    <div className="mt-3 text-center">
+      <div className="mx-auto flex h-7 w-[78%] items-stretch justify-center overflow-hidden bg-white">
+        {parts.map((part) => (
+          <span
+            key={part.key}
+            className={part.bar ? "bg-black" : "bg-white"}
+            style={{ flex: `${part.width} 0 0` }}
+          />
+        ))}
+      </div>
+      <div className="mt-1 text-[8px] font-black tracking-wide text-black">SCAN FOR RETURN / AUDIT</div>
     </div>
   );
 }
@@ -1766,6 +1823,7 @@ export default function POS() {
                   </>
                 )}
               </div>
+              <ReceiptBarcode value={receiptData.billNumber} />
               <div className="text-center text-xs mt-6 font-medium">
                 <div className="border-2 border-gray-900 p-2 mb-3 font-black">
                   ITEM COUNTER: KEEP THIS RECEIPT<br />

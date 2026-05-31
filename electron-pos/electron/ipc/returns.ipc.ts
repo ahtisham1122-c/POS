@@ -80,17 +80,40 @@ export function registerReturnsIPC() {
     if (!lookup) return null;
 
     const sale = db.prepare(`
-      SELECT s.*, COALESCE(c.name, 'Walk-in') as customer_name, c.current_balance
+      SELECT
+        s.*,
+        COALESCE(c.name, 'Walk-in') as customer_name,
+        c.current_balance,
+        sh.shift_date,
+        cr.date as register_date,
+        cr.is_closed_for_day as register_closed
       FROM sales s
       LEFT JOIN customers c ON c.id = s.customer_id
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      LEFT JOIN cash_register cr ON cr.id = s.cash_register_id
       WHERE s.id = ? OR s.bill_number = ?
     `).get(lookup, lookup) as any;
 
     if (!sale) return null;
 
+    const activeDate = getActiveBusinessDate();
+    const openShift = getOpenShift();
+    const saleBusinessDate = sale.shift_date || String(sale.sale_date || '').slice(0, 10);
+    const scopeWarnings: string[] = [];
+    if (saleBusinessDate && saleBusinessDate !== activeDate) {
+      scopeWarnings.push(`This receipt belongs to ${saleBusinessDate}, not today's business day ${activeDate}.`);
+    }
+    if (openShift?.id && sale.shift_id && sale.shift_id !== openShift.id) {
+      scopeWarnings.push('This receipt belongs to a different shift/register than the current open shift.');
+    }
+    if (Number(sale.register_closed || 0) === 1) {
+      scopeWarnings.push('This receipt belongs to a register that is already closed.');
+    }
+
     const items = db.prepare('SELECT * FROM sale_items WHERE sale_id = ? ORDER BY created_at ASC').all(sale.id) as any[];
     return {
       ...sale,
+      scopeWarning: scopeWarnings.join(' '),
       items: items.map((item) => {
         const returnedQty = getAlreadyReturnedQty(item.id);
         return {

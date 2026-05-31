@@ -20,6 +20,14 @@ function toMoney(value: number) {
   return `Rs. ${Number(value || 0).toLocaleString("en-PK", { maximumFractionDigits: 2 })}`;
 }
 
+function extractReceiptLookup(value: string) {
+  const clean = String(value || "").trim().toUpperCase();
+  const billMatch = clean.match(/BILL-\d+/);
+  if (billMatch) return billMatch[0];
+  const parts = clean.split("|").map((part) => part.trim()).filter(Boolean);
+  return parts.find((part) => /^BILL-\d+$/.test(part)) || clean;
+}
+
 export default function Returns() {
   const [lookup, setLookup] = useState("");
   const [sale, setSale] = useState<any>(null);
@@ -78,7 +86,7 @@ export default function Returns() {
     setSale(null);
     setReturnQty({});
 
-    const cleanLookup = lookup.trim();
+    const cleanLookup = extractReceiptLookup(lookup);
     if (!cleanLookup) {
       setMessage({ type: "error", text: "Enter a bill number like BILL-0001 first." });
       return;
@@ -203,7 +211,7 @@ export default function Returns() {
                   onChange={(event) => setLookup(event.target.value)}
                   onKeyDown={(event) => event.key === "Enter" && findSale()}
                   className="input pl-10 h-12"
-                  placeholder="Enter bill number, e.g. BILL-0001"
+                  placeholder="Scan receipt barcode or enter BILL-0001"
                 />
               </div>
               <button onClick={findSale} disabled={isLoading} className="btn-primary h-12 min-w-36">
@@ -213,6 +221,15 @@ export default function Returns() {
 
             {sale ? (
               <div className="space-y-5">
+                {sale.scopeWarning && (
+                  <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-warning flex gap-3">
+                    <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Old or different-register receipt</p>
+                      <p className="text-sm opacity-90">{sale.scopeWarning}</p>
+                    </div>
+                  </div>
+                )}
                 <div className="grid sm:grid-cols-4 gap-3">
                   <div className="bg-surface-3 rounded-xl p-4 border border-surface-4">
                     <p className="text-xs text-text-secondary uppercase font-bold">Bill</p>

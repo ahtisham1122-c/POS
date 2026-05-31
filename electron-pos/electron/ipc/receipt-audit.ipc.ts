@@ -11,7 +11,9 @@ type AuditInput = {
 };
 
 function normalizeBillNumber(value: string) {
-  return value.trim().toUpperCase().replace(/\s+/g, '');
+  const clean = value.trim().toUpperCase().replace(/\s+/g, '');
+  const billMatch = clean.match(/BILL-\d+/);
+  return billMatch ? billMatch[0] : clean;
 }
 
 function buildAudit(input: AuditInput) {
@@ -31,6 +33,26 @@ function buildAudit(input: AuditInput) {
   `).all(...(shift?.id ? [shift.id, `${date}%`] : [`${date}%`])) as any[];
 
   const salesByBill = new Map(sales.map((sale) => [sale.bill_number.toUpperCase(), sale]));
+  const allScannedBills = input.billNumbers.map(normalizeBillNumber).filter(Boolean);
+  const knownOtherSales = allScannedBills.length
+    ? db.prepare(`
+      SELECT
+        s.id,
+        s.bill_number,
+        s.grand_total,
+        s.sale_date,
+        s.shift_id,
+        s.cash_register_id,
+        sh.shift_date,
+        cr.date as register_date,
+        cr.is_closed_for_day as register_closed
+      FROM sales s
+      LEFT JOIN shifts sh ON sh.id = s.shift_id
+      LEFT JOIN cash_register cr ON cr.id = s.cash_register_id
+      WHERE s.bill_number IN (${allScannedBills.map(() => '?').join(',')})
+    `).all(...allScannedBills) as any[]
+    : [];
+  const knownOtherByBill = new Map(knownOtherSales.map((sale) => [String(sale.bill_number || '').toUpperCase(), sale]));
   const expectedAmount = sales.reduce((sum, sale) => sum + Number(sale.grand_total || 0), 0);
 
   const seen = new Set<string>();
@@ -64,11 +86,16 @@ function buildAudit(input: AuditInput) {
         status: 'MATCHED'
       });
     } else {
+      const otherSale = knownOtherByBill.get(billNumber);
+      const otherDate = otherSale?.shift_date || String(otherSale?.sale_date || '').slice(0, 10);
       extra.push({
         billNumber,
-        saleId: null,
-        amount: 0,
-        status: 'EXTRA'
+        saleId: otherSale?.id || null,
+        amount: Number(otherSale?.grand_total || 0),
+        status: otherSale ? 'WRONG_SCOPE' : 'EXTRA',
+        scopeWarning: otherSale
+          ? `Receipt belongs to ${otherDate || 'another date'}${Number(otherSale.register_closed || 0) === 1 ? ' / closed register' : ''}, not audit date ${date}.`
+          : 'Receipt was not found in POS sales.'
       });
     }
   }

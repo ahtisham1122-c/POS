@@ -343,6 +343,16 @@ npm audit --omit=dev
   - `npm run build:renderer`
   - `npm run build:electron`
 
+## Recent Receipt Barcode / Audit Work
+- Receipts now print a compact Code 39 barcode based only on the bill number, placed directly under the total to avoid wasting paper.
+- POS receipt preview shows the same compact barcode before printing.
+- Returns search accepts scanned receipt input and warns if the receipt belongs to another business date, another open shift/register, or a closed register.
+- Receipt Audit has a scanner-focused input. Scanned old-day/closed-register receipts are marked as wrong scope instead of being treated like normal current-day receipts.
+- Verified after the change:
+  - `npm run typecheck`
+  - `npm run build:renderer`
+  - `npm run build:electron`
+
 ## UI/UX Work Completed (Session 2026-04-28)
 - `532ba4e` — Fix held bill subtotal and time format in POS hold picker
 - `dd729d4` — Settings RATES tab: real rate history from SQLite (was hardcoded fake rows). BACKUP tab: fully implemented with Backup Now / Restore from File / Open Folder / backup list table (was "coming soon").
