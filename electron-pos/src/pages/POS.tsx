@@ -234,8 +234,8 @@ function ReceiptBarcode({ value }: { value: string }) {
   if (!clean) return null;
 
   return (
-    <div className="mt-3 text-center">
-      <div className="mx-auto flex h-7 w-[78%] items-stretch justify-center overflow-hidden bg-white">
+    <div className="mt-2 text-center">
+      <div className="mx-auto flex h-5 w-[72%] items-stretch justify-center overflow-hidden bg-white">
         {parts.map((part) => (
           <span
             key={part.key}
@@ -244,7 +244,7 @@ function ReceiptBarcode({ value }: { value: string }) {
           />
         ))}
       </div>
-      <div className="mt-1 text-[8px] font-black tracking-wide text-black">SCAN FOR RETURN / AUDIT</div>
+      <div className="mt-0.5 text-[7px] font-black tracking-tight text-black">SCAN FOR RETURN / AUDIT</div>
     </div>
   );
 }
@@ -1756,34 +1756,34 @@ export default function POS() {
       {receiptData && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-slide-up">
           <div className="bg-white rounded-lg shadow-float w-full max-w-sm overflow-hidden flex flex-col">
-            <div className="p-6 text-gray-900 print-receipt font-mono text-sm leading-relaxed">
-              <div className="text-center mb-4">
-                <h2 className="text-2xl font-black tracking-tight">GUJJAR MILK SHOP</h2>
+            <div className="p-4 text-gray-900 print-receipt font-mono text-xs leading-tight">
+              <div className="text-center mb-2">
+                <h2 className="text-xl font-black tracking-tight">GUJJAR MILK SHOP</h2>
                 {receiptData.tokenNumber && (
-                  <div className="mt-2 border-2 border-black py-2 text-4xl font-black tracking-tight">
+                  <div className="mt-1 border-2 border-black py-1 text-3xl font-black tracking-tight">
                     TOKEN {receiptData.tokenNumber}
                   </div>
                 )}
-                <p className="text-xs mt-1 font-medium">Fresh. Fast. Trusted.</p>
-                <div className="border-b-2 border-dashed border-gray-400 my-3" />
+                <p className="text-[10px] mt-0.5 font-medium">Fresh. Fast. Trusted.</p>
+                <div className="border-b border-dashed border-gray-400 my-2" />
               </div>
-              <div className="mb-4 text-xs space-y-1">
+              <div className="mb-2 text-[11px] space-y-0.5">
                 <div>Bill: <span className="font-bold">{receiptData.billNumber}</span></div>
                 <div>Date: {format(receiptData.date, "dd-MMM-yyyy hh:mm a")}</div>
                 {receiptData.paymentType === "CREDIT" ? (
-                  <div className="mt-2 text-sm font-bold bg-gray-200 p-1 text-center border border-gray-400">
+                  <div className="mt-1 text-xs font-bold bg-gray-200 p-1 text-center border border-gray-400">
                     CREDIT SALE: {receiptData.customer}
                   </div>
                 ) : receiptData.paymentType === "ONLINE" || receiptData.paymentType === "SPLIT" ? (
-                  <div className="mt-2 text-sm font-bold bg-gray-200 p-1 text-center border border-gray-400">
+                  <div className="mt-1 text-xs font-bold bg-gray-200 p-1 text-center border border-gray-400">
                     {receiptData.paymentType === "ONLINE" ? "ONLINE PAYMENT" : "CASH + ONLINE SPLIT"}
                   </div>
                 ) : (
                   <div>Customer: Walk-in</div>
                 )}
-                <div className="border-b-2 border-dashed border-gray-400 my-3" />
+                <div className="border-b border-dashed border-gray-400 my-2" />
               </div>
-              <div className="space-y-2 mb-4">
+              <div className="space-y-1 mb-2">
                 {receiptData.items.map((i: any) => (
                   <div key={i.id} className="flex justify-between text-xs">
                     <span className="truncate w-32 font-bold">{i.name}</span>
@@ -1795,7 +1795,7 @@ export default function POS() {
                   </div>
                 ))}
               </div>
-              <div className="border-t-2 border-dashed border-gray-400 pt-3 mb-4 text-xs space-y-1.5">
+              <div className="border-t border-dashed border-gray-400 pt-2 mb-2 text-[11px] space-y-1">
                 <div className="flex justify-between"><span>Subtotal:</span><span>Rs. {receiptData.subtotal.toFixed(0)}</span></div>
                 {receiptData.discount > 0 && (
                   <div className="flex justify-between"><span>Discount:</span><span>-Rs. {receiptData.discount.toFixed(0)}</span></div>
@@ -1803,7 +1803,7 @@ export default function POS() {
                 {receiptData.taxAmount > 0 && (
                   <div className="flex justify-between"><span>{receiptData.taxLabel || "Tax"}:</span><span>Rs. {receiptData.taxAmount.toFixed(0)}</span></div>
                 )}
-                <div className="flex justify-between font-black text-base mt-2 pt-2 border-t border-gray-300"><span>TOTAL:</span><span>Rs. {receiptData.grandTotal.toFixed(0)}</span></div>
+                <div className="flex justify-between font-black text-sm mt-1 pt-1 border-t border-gray-300"><span>TOTAL:</span><span>Rs. {receiptData.grandTotal.toFixed(0)}</span></div>
                 
                 {receiptData.paymentType === "CASH" && receiptData.amountPaid > receiptData.grandTotal && (
                   <>
@@ -1824,8 +1824,8 @@ export default function POS() {
                 )}
               </div>
               <ReceiptBarcode value={receiptData.billNumber} />
-              <div className="text-center text-xs mt-6 font-medium">
-                <div className="border-2 border-gray-900 p-2 mb-3 font-black">
+              <div className="text-center text-[10px] mt-3 font-medium">
+                <div className="border border-gray-900 p-1 mb-2 font-black">
                   ITEM COUNTER: KEEP THIS RECEIPT<br />
                   DO NOT RETURN TO CUSTOMER
                 </div>

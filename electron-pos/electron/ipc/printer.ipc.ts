@@ -260,7 +260,7 @@ export function registerPrinterIPC() {
         paymentLabel = `PAID: ${rawPaymentType || 'CASH'}`;
       }
       const tokenLine = receipt.tokenNumber
-        ? `<div class="center" style="font-size: 30px; font-weight: 900; line-height: 1; margin-bottom: 3px;">TOKEN ${escapeHtml(receipt.tokenNumber)}</div>`
+        ? `<div class="center token-line">TOKEN ${escapeHtml(receipt.tokenNumber)}</div>`
         : '';
       const barcodeSvg = renderCode39Svg(receipt.billNumber);
       const barcodeBlock = barcodeSvg
@@ -275,8 +275,7 @@ export function registerPrinterIPC() {
       // Minimal receipt: logo, bill+date, items (name + amount only), TOTAL.
       // Owner asked to remove shop name, phone, ITEM COUNTER box, subtotal/
       // discount/tax/payment/change/due lines for maximum paper savings.
-      // Bigger fonts make it readable on a 58/80mm thermal printer at arm's
-      // length. Item names are uppercase + bold for unambiguous scanning.
+      // Keep fonts bold but compact so busy days use less receipt paper.
       const receiptHtml = `
         <!DOCTYPE html>
         <html>
@@ -290,26 +289,27 @@ export function registerPrinterIPC() {
                 background-color: white;
                 color: black !important;
                 font-family: 'Arial Black', 'Arial', sans-serif;
-                font-size: 14px;
-                line-height: 1.05;
+                font-size: 12px;
+                line-height: 1;
                 font-weight: 900;
               }
               .center { text-align: center; }
-              .hr { border-bottom: 2px solid black; margin: 2px 0; }
+              .token-line { font-size: 24px; font-weight: 900; line-height: 0.95; margin-bottom: 1px; }
+              .hr { border-bottom: 1px solid black; margin: 1px 0; }
               .flex { display: flex; justify-content: space-between; align-items: baseline; }
-              .meta { font-size: 12px; line-height: 1.1; margin: 1px 0; }
-              .item-row { margin: 0 0 2px; width: 100%; }
-              .item-name { font-size: 16px; font-weight: 900; text-transform: uppercase; flex-shrink: 0; }
-              .item-amount { font-size: 16px; font-weight: 900; flex-shrink: 0; }
-              .leader { flex-grow: 1; border-bottom: 2px dotted black; margin: 0 4px; position: relative; top: -5px; }
-              .total-row { margin-top: 4px; border-top: 3px double black; padding-top: 3px; }
-              .total-label { font-size: 18px; font-weight: 900; }
-              .total-amount { font-size: 22px; font-weight: 900; }
-              .payment-label { text-align: center; font-size: 15px; font-weight: 900; margin: 2px 0 1px; letter-spacing: 1px; }
-              .payment-breakdown { text-align: center; font-size: 12px; font-weight: 900; margin: 0 0 2px; }
-              .barcode-wrap { margin: 3px 0 2px; text-align: center; }
-              .barcode-svg { display: block; width: 78%; height: 24px; margin: 0 auto; }
-              .barcode-label { font-family: Arial, sans-serif; font-size: 8px; line-height: 1; margin-top: 1px; font-weight: 900; letter-spacing: 0.5px; }
+              .meta { font-size: 10px; line-height: 1; margin: 0; }
+              .item-row { margin: 0 0 1px; width: 100%; }
+              .item-name { font-size: 14px; font-weight: 900; text-transform: uppercase; flex-shrink: 0; }
+              .item-amount { font-size: 14px; font-weight: 900; flex-shrink: 0; }
+              .leader { flex-grow: 1; border-bottom: 1px dotted black; margin: 0 3px; position: relative; top: -4px; }
+              .total-row { margin-top: 2px; border-top: 2px double black; padding-top: 2px; }
+              .total-label { font-size: 16px; font-weight: 900; }
+              .total-amount { font-size: 19px; font-weight: 900; }
+              .payment-label { text-align: center; font-size: 12px; font-weight: 900; margin: 1px 0; letter-spacing: 0.3px; }
+              .payment-breakdown { text-align: center; font-size: 10px; font-weight: 900; margin: 0 0 1px; }
+              .barcode-wrap { margin: 2px 0 0; text-align: center; }
+              .barcode-svg { display: block; width: 72%; height: 18px; margin: 0 auto; }
+              .barcode-label { font-family: Arial, sans-serif; font-size: 7px; line-height: 1; margin-top: 1px; font-weight: 900; letter-spacing: 0.2px; }
             </style>
           </head>
           <body>
@@ -341,7 +341,7 @@ export function registerPrinterIPC() {
 
             ${barcodeBlock}
 
-            <div style="height: 6px;"></div>
+            <div style="height: 2px;"></div>
           </body>
         </html>
       `;
