@@ -679,6 +679,52 @@ export function runMigrations() {
             WHERE milk_supply_mode IS NULL OR milk_supply_mode NOT IN ('MIXED', 'SEPARATE')
           `);
         }
+      },
+      {
+        version: 25,
+        up: () => {
+          log.info('Running migration v25: Adding employee home milk allowance and slips');
+          const employeeColumns = db.prepare(`PRAGMA table_info(employees)`).all() as Array<{ name: string }>;
+          const employeeNames = new Set(employeeColumns.map((column) => column.name));
+          if (!employeeNames.has('daily_milk_allowance')) {
+            db.exec(`ALTER TABLE employees ADD COLUMN daily_milk_allowance REAL DEFAULT 0`);
+          }
+
+          const salaryPaymentColumns = db.prepare(`PRAGMA table_info(employee_salary_payments)`).all() as Array<{ name: string }>;
+          const salaryPaymentNames = new Set(salaryPaymentColumns.map((column) => column.name));
+          if (!salaryPaymentNames.has('milk_deduction')) {
+            db.exec(`ALTER TABLE employee_salary_payments ADD COLUMN milk_deduction REAL DEFAULT 0`);
+          }
+          if (!salaryPaymentNames.has('milk_benefit_amount')) {
+            db.exec(`ALTER TABLE employee_salary_payments ADD COLUMN milk_benefit_amount REAL DEFAULT 0`);
+          }
+
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS employee_milk_issues (
+              id TEXT PRIMARY KEY,
+              employee_id TEXT NOT NULL,
+              issue_date TEXT NOT NULL,
+              receipt_number TEXT UNIQUE NOT NULL,
+              quantity REAL NOT NULL,
+              daily_allowance REAL NOT NULL DEFAULT 0,
+              allowance_used_before REAL NOT NULL DEFAULT 0,
+              allowance_quantity REAL NOT NULL DEFAULT 0,
+              extra_quantity REAL NOT NULL DEFAULT 0,
+              rate REAL NOT NULL DEFAULT 0,
+              deduction_amount REAL NOT NULL DEFAULT 0,
+              stock_movement_id TEXT,
+              deducted_payment_id TEXT,
+              notes TEXT,
+              issued_by_id TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (employee_id) REFERENCES employees(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_employee_milk_issues_employee ON employee_milk_issues(employee_id);
+            CREATE INDEX IF NOT EXISTS idx_employee_milk_issues_date ON employee_milk_issues(issue_date);
+            CREATE INDEX IF NOT EXISTS idx_employee_milk_issues_payment ON employee_milk_issues(deducted_payment_id);
+          `);
+        }
       }
     ];
 

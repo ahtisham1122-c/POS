@@ -228,6 +228,7 @@ export function registerPrinterIPC() {
       // We map the DB enum (CASH | ONLINE | CREDIT | SPLIT) onto the
       // shop's local terminology: CREDIT prints as KHATA.
       const rawPaymentType = String(receipt.paymentType || '').toUpperCase();
+      const isEmployeeMilkSlip = String(receipt.receiptType || '').toUpperCase() === 'EMPLOYEE_MILK';
       // For SPLIT receipts the per-method totals can come either pre-computed
       // from POS.tsx (cashPaid/onlinePaid) or from a raw splitPayments array.
       // Sum from the array as a fallback so KHATA splits print correctly even
@@ -243,7 +244,9 @@ export function registerPrinterIPC() {
       const khataPaidAmt = Number((receipt as any).khataPaid || sumSplit('KHATA') || sumSplit('CREDIT') || 0);
       let paymentLabel = '';
       let paymentBreakdown = '';
-      if (rawPaymentType === 'CASH') {
+      if (isEmployeeMilkSlip) {
+        paymentLabel = Number(receipt.deductionAmount || 0) > 0 ? 'SALARY DEDUCTION' : 'WITHIN ALLOWANCE';
+      } else if (rawPaymentType === 'CASH') {
         paymentLabel = 'PAID: CASH';
       } else if (rawPaymentType === 'ONLINE') {
         paymentLabel = 'PAID: ONLINE';
@@ -261,6 +264,24 @@ export function registerPrinterIPC() {
       }
       const tokenLine = receipt.tokenNumber
         ? `<div class="center token-line">TOKEN ${escapeHtml(receipt.tokenNumber)}</div>`
+        : '';
+      const employeeMilkHeader = isEmployeeMilkSlip
+        ? `
+          <div class="center slip-title">EMPLOYEE MILK SLIP</div>
+          <div class="center employee-name">${escapeHtml(receipt.employeeName || '')}</div>
+          <div class="center meta">${escapeHtml(receipt.employeeCode || '')}</div>
+        `
+        : tokenLine;
+      const employeeMilkRows = isEmployeeMilkSlip
+        ? `
+          <div class="detail-row flex"><span>Milk Taken</span><b>${escapeHtml(toReceiptQuantity(receipt.quantity))} kg</b></div>
+          <div class="detail-row flex"><span>Daily Allowance</span><b>${escapeHtml(toReceiptQuantity(receipt.dailyAllowance))} kg</b></div>
+          <div class="detail-row flex"><span>Used Before</span><b>${escapeHtml(toReceiptQuantity(receipt.allowanceUsedBefore))} kg</b></div>
+          <div class="detail-row flex"><span>Free Qty This Slip</span><b>${escapeHtml(toReceiptQuantity(receipt.allowanceQuantity))} kg</b></div>
+          <div class="detail-row flex"><span>Extra Qty</span><b>${escapeHtml(toReceiptQuantity(receipt.extraQuantity))} kg</b></div>
+          <div class="detail-row flex"><span>Rate</span><b>Rs.${toReceiptAmount(receipt.rate)}/kg</b></div>
+          ${receipt.notes ? `<div class="detail-note">Note: ${escapeHtml(receipt.notes)}</div>` : ''}
+        `
         : '';
       const barcodeSvg = renderCode39Svg(receipt.billNumber);
       const barcodeBlock = barcodeSvg
@@ -307,13 +328,17 @@ export function registerPrinterIPC() {
               .total-amount { font-size: 19px; font-weight: 900; }
               .payment-label { text-align: center; font-size: 12px; font-weight: 900; margin: 1px 0; letter-spacing: 0.3px; }
               .payment-breakdown { text-align: center; font-size: 10px; font-weight: 900; margin: 0 0 1px; }
+              .slip-title { font-size: 16px; font-weight: 900; line-height: 1; margin-bottom: 1px; }
+              .employee-name { font-size: 14px; font-weight: 900; text-transform: uppercase; line-height: 1; }
+              .detail-row { font-family: Arial, sans-serif; font-size: 11px; font-weight: 900; line-height: 1.1; padding: 1px 0; }
+              .detail-note { font-family: Arial, sans-serif; font-size: 9px; font-weight: 900; line-height: 1.1; margin-top: 1px; }
               .barcode-wrap { margin: 2px 0 0; text-align: center; }
               .barcode-svg { display: block; width: 72%; height: 18px; margin: 0 auto; }
               .barcode-label { font-family: Arial, sans-serif; font-size: 7px; line-height: 1; margin-top: 1px; font-weight: 900; letter-spacing: 0.2px; }
             </style>
           </head>
           <body>
-            ${tokenLine}
+            ${employeeMilkHeader}
             <div class="flex meta">
               <span>Bill: ${escapeHtml(receipt.billNumber)}</span>
               <span>${escapeHtml(dateStr)}${dateStr && timeStr ? ' ' : ''}${escapeHtml(timeStr)}</span>
@@ -326,7 +351,7 @@ export function registerPrinterIPC() {
 
             <div class="hr"></div>
 
-            ${(receipt.items || []).map((item: any) => `
+            ${isEmployeeMilkSlip ? employeeMilkRows : (receipt.items || []).map((item: any) => `
               <div class="item-row flex">
                 <span class="item-name">${escapeHtml(item.name)}</span>
                 <span class="leader"></span>
@@ -335,7 +360,7 @@ export function registerPrinterIPC() {
             `).join('')}
 
             <div class="flex total-row">
-              <span class="total-label">TOTAL</span>
+              <span class="total-label">${isEmployeeMilkSlip ? 'DEDUCT' : 'TOTAL'}</span>
               <span class="total-amount">Rs.${toReceiptAmount(receipt.grandTotal)}</span>
             </div>
 

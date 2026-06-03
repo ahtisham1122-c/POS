@@ -177,6 +177,7 @@ export interface ElectronAPI {
     updateSalary: (id: string, salary: number, effectiveDate: string, notes?: string) => Promise<any>;
     markLeft: (id: string, leftDate: string) => Promise<any>;
     addAdvance: (data: any) => Promise<any>;
+    issueMilk: (data: any) => Promise<any>;
     addLeave: (data: any) => Promise<any>;
     calculateSalary: (employeeId: string, periodStart: string, periodEnd: string) => Promise<any>;
     paySalary: (data: any) => Promise<any>;

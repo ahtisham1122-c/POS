@@ -15,6 +15,7 @@ type EmployeeInput = {
   startDate: string;
   salary: number;
   defaultAdvanceBalance?: number;
+  dailyMilkAllowance?: number;
   notes?: string;
 };
 
@@ -39,11 +40,44 @@ type SalaryPayInput = {
   notes?: string;
 };
 
+type MilkIssueInput = {
+  employeeId: string;
+  quantity: number;
+  issueDate: string;
+  notes?: string;
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function nextEmployeeCode() {
   const row = db.prepare('SELECT COUNT(*) as count FROM employees').get() as any;
   return `EMP-${String(Number(row?.count || 0) + 1).padStart(4, '0')}`;
+}
+
+function nextEmployeeMilkReceiptNumber(issueDate: string) {
+  const safeDate = String(issueDate || formatLocalDate(new Date())).replace(/-/g, '');
+  const row = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM employee_milk_issues
+    WHERE issue_date = ?
+  `).get(issueDate) as any;
+  return `EM-${safeDate}-${String(Number(row?.count || 0) + 1).padStart(3, '0')}`;
+}
+
+function getMilkRateForDate(issueDate: string) {
+  const rateRow = db.prepare(`
+    SELECT milk_rate
+    FROM daily_rates
+    WHERE date <= ?
+    ORDER BY date DESC
+    LIMIT 1
+  `).get(issueDate) as any;
+  const productRow = db.prepare(`SELECT selling_price FROM products WHERE code = 'MILK' LIMIT 1`).get() as any;
+  const rate = Number(rateRow?.milk_rate || productRow?.selling_price || 0);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new Error('Milk rate is not set. Enter today rates before issuing employee milk.');
+  }
+  return rate;
 }
 
 // Salary is paid by shop month, not by actual calendar-day count.
@@ -136,18 +170,22 @@ function createEmployeeExpense(options: {
 
 function createSalaryExpense(paymentId: string, calc: any, notes: string | undefined, userId: string, createdAt: string) {
   const cashAmount = Number(calc.netSalary || 0);
-  if (cashAmount <= 0) return null;
+  const benefitAmount = Number(calc.milkBenefitAmount || 0);
+  const expenseAmount = cashAmount + benefitAmount;
+  if (expenseAmount <= 0) return null;
 
   const shift = getOpenShift();
   const businessDate = shift?.shift_date || getActiveBusinessDate();
   const description = `Salary payment - ${calc.employee.name} (${calc.periodStart} to ${calc.periodEnd})`;
+  const benefitNote = benefitAmount > 0 ? `incl. home milk benefit Rs.${benefitAmount.toFixed(0)}` : '';
+  const noteParts = [description, benefitNote, notes?.trim()].filter(Boolean);
 
   return createEmployeeExpense({
     code: `EXP-SAL-${paymentId.slice(0, 12).toUpperCase()}`,
-    amount: cashAmount,
+    amount: expenseAmount,
     cashAmount,
     expenseDate: calc.periodEnd || businessDate,
-    description: notes?.trim() ? `${description} - ${notes.trim()}` : description,
+    description: noteParts.join(' - '),
     userId,
     createdAt,
     shiftId: shift?.id || null,
@@ -202,7 +240,31 @@ function calculateSalaryForPeriod(employeeId: string, periodStart: string, perio
   `).get(employeeId, periodStart, periodEnd) as any;
   const advanceDeduction = Number(advRow?.total || 0);
 
-  const netSalary = Math.max(0, grossSalary - advanceDeduction);
+  const milkRow = db.prepare(`
+    SELECT
+      COALESCE(SUM(deduction_amount), 0) as total,
+      COALESCE(SUM(quantity), 0) as quantity,
+      COALESCE(SUM(extra_quantity), 0) as extra_quantity
+    FROM employee_milk_issues
+    WHERE employee_id = ?
+      AND issue_date >= ?
+      AND issue_date <= ?
+      AND deducted_payment_id IS NULL
+  `).get(employeeId, periodStart, periodEnd) as any;
+  const milkDeduction = Number(milkRow?.total || 0);
+  const milkQuantity = Number(milkRow?.quantity || 0);
+  const milkExtraQuantity = Number(milkRow?.extra_quantity || 0);
+  const milkBenefitRow = db.prepare(`
+    SELECT COALESCE(SUM(allowance_quantity * rate), 0) as total
+    FROM employee_milk_issues
+    WHERE employee_id = ?
+      AND issue_date >= ?
+      AND issue_date <= ?
+      AND deducted_payment_id IS NULL
+  `).get(employeeId, periodStart, periodEnd) as any;
+  const milkBenefitAmount = Number(milkBenefitRow?.total || 0);
+
+  const netSalary = Math.max(0, grossSalary - advanceDeduction - milkDeduction);
 
   return {
     employee,
@@ -216,6 +278,10 @@ function calculateSalaryForPeriod(employeeId: string, periodStart: string, perio
     leaveDeduction,
     grossSalary,
     advanceDeduction,
+    milkDeduction,
+    milkBenefitAmount,
+    milkQuantity,
+    milkExtraQuantity,
     netSalary,
   };
 }
@@ -254,7 +320,11 @@ export function registerEmployeesIPC() {
       SELECT * FROM employee_salary_payments WHERE employee_id = ? ORDER BY period_start DESC
     `).all(id);
 
-    return { ...employee, salaryHistory, advances, leaves, payments };
+    const milkIssues = db.prepare(`
+      SELECT * FROM employee_milk_issues WHERE employee_id = ? ORDER BY issue_date DESC, created_at DESC LIMIT 300
+    `).all(id);
+
+    return { ...employee, salaryHistory, advances, leaves, payments, milkIssues };
   });
 
   // Create employee
@@ -271,9 +341,9 @@ export function registerEmployeesIPC() {
 
       db.transaction(() => {
         db.prepare(`
-          INSERT INTO employees (id, code, name, phone, address, start_date, salary, default_advance_balance, is_active, notes, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-        `).run(id, code, data.name.trim(), data.phone || null, data.address || null, data.startDate, Number(data.salary), Number(data.defaultAdvanceBalance || 0), data.notes || null, now, now);
+          INSERT INTO employees (id, code, name, phone, address, start_date, salary, default_advance_balance, daily_milk_allowance, is_active, notes, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+        `).run(id, code, data.name.trim(), data.phone || null, data.address || null, data.startDate, Number(data.salary), Number(data.defaultAdvanceBalance || 0), Number(data.dailyMilkAllowance || 0), data.notes || null, now, now);
 
         // Record the starting salary in history
         db.prepare(`
@@ -299,6 +369,7 @@ export function registerEmployeesIPC() {
             address = ?,
             start_date = COALESCE(?, start_date),
             default_advance_balance = COALESCE(?, default_advance_balance),
+            daily_milk_allowance = COALESCE(?, daily_milk_allowance),
             notes = ?,
             updated_at = ?
         WHERE id = ?
@@ -308,11 +379,142 @@ export function registerEmployeesIPC() {
         data.address || null,
         data.startDate || null,
         data.defaultAdvanceBalance === undefined ? null : Number(data.defaultAdvanceBalance || 0),
+        data.dailyMilkAllowance === undefined ? null : Number(data.dailyMilkAllowance || 0),
         data.notes || null,
         now,
         id
       );
       return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Issue daily employee home milk slip. Allowed milk is only recorded and
+  // deducted from stock; only quantity above the employee's daily allowance is
+  // deducted from salary.
+  ipcMain.handle('employees:issueMilk', (_event, data: MilkIssueInput) => {
+    try {
+      if (!data.employeeId) return { success: false, error: 'Employee is required' };
+      const quantity = Number(data.quantity || 0);
+      if (!Number.isFinite(quantity) || quantity <= 0) return { success: false, error: 'Milk quantity must be greater than zero' };
+      if (!data.issueDate) return { success: false, error: 'Date is required' };
+
+      const user = getCurrentUser();
+      const now = new Date().toISOString();
+      const employee = db.prepare('SELECT * FROM employees WHERE id = ? AND is_active = 1').get(data.employeeId) as any;
+      if (!employee) return { success: false, error: 'Employee not found or inactive' };
+
+      const milkProduct = db.prepare(`SELECT * FROM products WHERE code = 'MILK' AND is_active = 1`).get() as any;
+      if (!milkProduct) return { success: false, error: 'Milk product not found' };
+
+      const rate = getMilkRateForDate(data.issueDate);
+      const receiptNumber = nextEmployeeMilkReceiptNumber(data.issueDate);
+      const dailyAllowance = Math.max(0, Number(employee.daily_milk_allowance || 0));
+      const alreadyIssuedRow = db.prepare(`
+        SELECT COALESCE(SUM(quantity), 0) as issued
+        FROM employee_milk_issues
+        WHERE employee_id = ? AND issue_date = ?
+      `).get(data.employeeId, data.issueDate) as any;
+      const allowanceUsedBefore = Math.max(0, Number(alreadyIssuedRow?.issued || 0));
+      const allowanceRemaining = Math.max(0, dailyAllowance - allowanceUsedBefore);
+      const allowanceQuantity = Math.min(quantity, allowanceRemaining);
+      const extraQuantity = Math.max(0, quantity - allowanceQuantity);
+      const deductionAmount = Number((extraQuantity * rate).toFixed(2));
+
+      const issueId = crypto.randomUUID();
+      const movementId = crypto.randomUUID();
+      const stockBefore = Number(milkProduct.stock || 0);
+      const stockAfter = stockBefore - quantity;
+      if (stockAfter < 0) {
+        return { success: false, error: `Not enough milk stock. Need ${quantity} kg but only ${stockBefore.toFixed(2)} kg available.` };
+      }
+
+      db.transaction(() => {
+        db.prepare('UPDATE products SET stock = ?, updated_at = ?, synced = 0 WHERE id = ?').run(stockAfter, now, milkProduct.id);
+        createOutboxEntry('products', 'UPDATE', milkProduct.id, { id: milkProduct.id, stock: stockAfter, updated_at: now });
+
+        db.prepare(`
+          INSERT INTO stock_movements (id, product_id, movement_type, quantity, stock_before, stock_after, supplier, notes, reference_id, created_by_id, created_at, synced)
+          VALUES (?, ?, 'STOCK_OUT', ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        `).run(
+          movementId,
+          milkProduct.id,
+          quantity,
+          stockBefore,
+          stockAfter,
+          employee.name,
+          `Employee home milk slip ${receiptNumber}`,
+          issueId,
+          user?.id || 'system',
+          now
+        );
+        createOutboxEntry('stock_movements', 'INSERT', movementId, {
+          id: movementId,
+          product_id: milkProduct.id,
+          movement_type: 'STOCK_OUT',
+          quantity,
+          stock_before: stockBefore,
+          stock_after: stockAfter,
+          supplier: employee.name,
+          notes: `Employee home milk slip ${receiptNumber}`,
+          reference_id: issueId,
+          created_by_id: user?.id || 'system',
+          created_at: now
+        });
+
+        db.prepare(`
+          INSERT INTO employee_milk_issues (
+            id, employee_id, issue_date, receipt_number, quantity,
+            daily_allowance, allowance_used_before, allowance_quantity,
+            extra_quantity, rate, deduction_amount, stock_movement_id,
+            notes, issued_by_id, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          issueId,
+          data.employeeId,
+          data.issueDate,
+          receiptNumber,
+          quantity,
+          dailyAllowance,
+          allowanceUsedBefore,
+          allowanceQuantity,
+          extraQuantity,
+          rate,
+          deductionAmount,
+          movementId,
+          data.notes || null,
+          user?.id || 'system',
+          now
+        );
+      })();
+
+      return {
+        success: true,
+        id: issueId,
+        receiptNumber,
+        deductionAmount,
+        extraQuantity,
+        allowanceQuantity,
+        slip: {
+          receiptType: 'EMPLOYEE_MILK',
+          billNumber: receiptNumber,
+          date: now,
+          employeeName: employee.name,
+          employeeCode: employee.code,
+          quantity,
+          dailyAllowance,
+          allowanceUsedBefore,
+          allowanceQuantity,
+          extraQuantity,
+          rate,
+          deductionAmount,
+          notes: data.notes || '',
+          paymentType: deductionAmount > 0 ? 'SALARY DEDUCTION' : 'ALLOWANCE',
+          grandTotal: deductionAmount,
+          items: [{ name: 'Employee Milk', quantity, price: rate, lineTotal: deductionAmount }]
+        }
+      };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -442,12 +644,12 @@ export function registerEmployeesIPC() {
           INSERT INTO employee_salary_payments (
             id, employee_id, period_start, period_end, base_salary,
             days_in_period, days_worked, days_off, gross_salary,
-            advance_deduction, net_salary, paid_date, paid_by_id, notes, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            advance_deduction, milk_deduction, milk_benefit_amount, net_salary, paid_date, paid_by_id, notes, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           paymentId, data.employeeId, data.periodStart, data.periodEnd,
           calc.salary, calc.daysInPeriod, calc.daysWorked, calc.daysOff,
-          calc.grossSalary, calc.advanceDeduction, calc.netSalary,
+          calc.grossSalary, calc.advanceDeduction, calc.milkDeduction, calc.milkBenefitAmount, calc.netSalary,
           now.split('T')[0], user?.id || 'system', data.notes || null, now
         );
 
@@ -456,6 +658,16 @@ export function registerEmployeesIPC() {
           UPDATE employee_advances
           SET status = 'DEDUCTED', deducted_payment_id = ?
           WHERE employee_id = ? AND advance_date >= ? AND advance_date <= ? AND status = 'PENDING'
+        `).run(paymentId, data.employeeId, data.periodStart, data.periodEnd);
+
+        db.prepare(`
+          UPDATE employee_milk_issues
+          SET deducted_payment_id = ?
+          WHERE employee_id = ?
+            AND issue_date >= ?
+            AND issue_date <= ?
+            AND deduction_amount > 0
+            AND deducted_payment_id IS NULL
         `).run(paymentId, data.employeeId, data.periodStart, data.periodEnd);
 
         const expenseId = createSalaryExpense(paymentId, calc, data.notes, user?.id || 'system', now);

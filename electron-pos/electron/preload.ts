@@ -185,6 +185,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateSalary: (id: string, salary: number, effectiveDate: string, notes?: string) => ipcRenderer.invoke('employees:updateSalary', id, salary, effectiveDate, notes),
     markLeft: (id: string, leftDate: string) => ipcRenderer.invoke('employees:markLeft', id, leftDate),
     addAdvance: (data: any) => ipcRenderer.invoke('employees:addAdvance', data),
+    issueMilk: (data: any) => ipcRenderer.invoke('employees:issueMilk', data),
     addLeave: (data: any) => ipcRenderer.invoke('employees:addLeave', data),
     calculateSalary: (employeeId: string, periodStart: string, periodEnd: string) => ipcRenderer.invoke('employees:calculateSalary', employeeId, periodStart, periodEnd),
     paySalary: (data: any) => ipcRenderer.invoke('employees:paySalary', data),

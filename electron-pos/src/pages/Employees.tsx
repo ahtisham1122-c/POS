@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   UserRound, Plus, Banknote, CalendarDays, TrendingUp,
-  AlertTriangle, CheckCircle2, ChevronRight, X, Save
+  AlertTriangle, CheckCircle2, ChevronRight, X, Save, Milk, Printer
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -37,6 +37,7 @@ type Employee = {
   start_date: string;
   salary: number;
   default_advance_balance?: number;
+  daily_milk_allowance?: number;
   is_active: number;
   left_date?: string;
   notes?: string;
@@ -44,6 +45,7 @@ type Employee = {
   advances?: any[];
   leaves?: any[];
   payments?: any[];
+  milkIssues?: any[];
 };
 
 type Msg = { type: "success" | "error"; text: string } | null;
@@ -75,18 +77,18 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 export default function Employees() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selected, setSelected] = useState<Employee | null>(null);
-  const [tab, setTab] = useState<"overview" | "advances" | "leaves" | "salary">("overview");
+  const [tab, setTab] = useState<"overview" | "milk" | "advances" | "leaves" | "salary">("overview");
   const [showInactive, setShowInactive] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
   const [loading, setLoading] = useState(true);
 
   // Add employee form
   const [showAddForm, setShowAddForm] = useState(false);
-  const [empForm, setEmpForm] = useState({ name: "", phone: "", address: "", startDate: today(), salary: "", defaultAdvanceBalance: "0", notes: "" });
+  const [empForm, setEmpForm] = useState({ name: "", phone: "", address: "", startDate: today(), salary: "", defaultAdvanceBalance: "0", dailyMilkAllowance: "0", notes: "" });
 
   // Edit form
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: "", phone: "", address: "", startDate: today(), defaultAdvanceBalance: "0", notes: "" });
+  const [editForm, setEditForm] = useState({ name: "", phone: "", address: "", startDate: today(), defaultAdvanceBalance: "0", dailyMilkAllowance: "0", notes: "" });
 
   // Salary update
   const [showSalaryUpdate, setShowSalaryUpdate] = useState(false);
@@ -98,6 +100,12 @@ export default function Employees() {
   const [advAmount, setAdvAmount] = useState("");
   const [advDate, setAdvDate] = useState(today());
   const [advDesc, setAdvDesc] = useState("");
+
+  // Employee home milk
+  const [milkQty, setMilkQty] = useState("");
+  const [milkDate, setMilkDate] = useState(today());
+  const [milkNotes, setMilkNotes] = useState("");
+  const [milkSaving, setMilkSaving] = useState(false);
 
   // Leave form
   const [leaveDate, setLeaveDate] = useState(today());
@@ -156,13 +164,14 @@ export default function Employees() {
       startDate: empForm.startDate,
       salary: Number(empForm.salary),
       defaultAdvanceBalance: Number(empForm.defaultAdvanceBalance || 0),
+      dailyMilkAllowance: Number(empForm.dailyMilkAllowance || 0),
       notes: empForm.notes,
     });
 
     if (res?.success) {
       flash("success", "Employee added");
       setShowAddForm(false);
-      setEmpForm({ name: "", phone: "", address: "", startDate: today(), salary: "", defaultAdvanceBalance: "0", notes: "" });
+      setEmpForm({ name: "", phone: "", address: "", startDate: today(), salary: "", defaultAdvanceBalance: "0", dailyMilkAllowance: "0", notes: "" });
       await loadEmployees();
       await loadPayrollSummary();
     } else {
@@ -218,6 +227,32 @@ export default function Employees() {
     } else {
       flash("error", res?.error || "Failed to record kharcha");
     }
+  }
+
+  async function handleIssueMilk() {
+    if (!selected) return;
+    if (!milkQty || Number(milkQty) <= 0) return flash("error", "Enter milk quantity");
+    setMilkSaving(true);
+    const res = await window.electronAPI?.employees?.issueMilk?.({
+      employeeId: selected.id,
+      quantity: Number(milkQty),
+      issueDate: milkDate,
+      notes: milkNotes,
+    });
+    if (res?.success) {
+      const printRes = await window.electronAPI?.printer?.printReceipt?.(res.slip);
+      setMilkQty("");
+      setMilkNotes("");
+      await selectEmployee(selected);
+      if (printRes?.success) {
+        flash("success", `Milk slip printed. Salary deduction: ${toMoney(res.deductionAmount || 0)}`);
+      } else {
+        flash("error", `Milk recorded, but print failed: ${printRes?.error || "printer error"}`);
+      }
+    } else {
+      flash("error", res?.error || "Failed to issue milk");
+    }
+    setMilkSaving(false);
   }
 
   // ── Add Leave ───────────────────────────────────────────────────────────────
@@ -406,8 +441,9 @@ export default function Employees() {
             </div>
 
             {/* Stat cards */}
-            <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-4 gap-4 mb-6">
               <StatCard label="Monthly Salary" value={toMoney(selected.salary)} sub="Current" />
+              <StatCard label="Home Milk" value={`${Number(selected.daily_milk_allowance || 0).toFixed(2)} kg`} sub="daily free allowance" />
               <StatCard label="Daily Rate" value={toMoney(selected.salary / 30)} sub="salary ÷ 30" />
               <StatCard
                 label="Pending Kharcha"
@@ -427,7 +463,7 @@ export default function Employees() {
 
             {/* Tabs */}
             <div className="flex border-b border-surface-4 mb-6 gap-1">
-              {(["overview", "advances", "leaves", "salary"] as const).map(t => (
+              {(["overview", "milk", "advances", "leaves", "salary"] as const).map(t => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -451,7 +487,7 @@ export default function Employees() {
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-semibold text-text-primary">Employee Info</h3>
                     {!editing ? (
-                      <button onClick={() => { setEditing(true); setEditForm({ name: selected.name, phone: selected.phone || "", address: selected.address || "", startDate: selected.start_date, defaultAdvanceBalance: String(selected.default_advance_balance || 0), notes: selected.notes || "" }); }} className="btn-secondary px-3 py-1.5 text-sm">Edit</button>
+                      <button onClick={() => { setEditing(true); setEditForm({ name: selected.name, phone: selected.phone || "", address: selected.address || "", startDate: selected.start_date, defaultAdvanceBalance: String(selected.default_advance_balance || 0), dailyMilkAllowance: String(selected.daily_milk_allowance || 0), notes: selected.notes || "" }); }} className="btn-secondary px-3 py-1.5 text-sm">Edit</button>
                     ) : (
                       <div className="flex gap-2">
                         <button onClick={handleUpdateInfo} className="btn-primary px-3 py-1.5 text-sm flex gap-1"><Save className="w-4 h-4" /> Save</button>
@@ -477,6 +513,10 @@ export default function Employees() {
                         <label className="label">Permanent Advance</label>
                         <input type="number" className="input" value={editForm.defaultAdvanceBalance} onChange={e => setEditForm(f => ({ ...f, defaultAdvanceBalance: e.target.value }))} />
                       </div>
+                      <div>
+                        <label className="label">Daily Home Milk Allowance (kg)</label>
+                        <input type="number" className="input" value={editForm.dailyMilkAllowance} onChange={e => setEditForm(f => ({ ...f, dailyMilkAllowance: e.target.value }))} min="0" step="0.25" />
+                      </div>
                       <div className="col-span-2">
                         <label className="label">Address</label>
                         <input className="input" value={editForm.address} onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))} />
@@ -492,6 +532,7 @@ export default function Employees() {
                       <div><span className="text-text-secondary">Address:</span> <span className="text-text-primary ml-2">{selected.address || "-"}</span></div>
                       <div><span className="text-text-secondary">Start Date:</span> <span className="text-text-primary ml-2">{formatDate(selected.start_date)}</span></div>
                       <div><span className="text-text-secondary">Permanent Advance:</span> <span className="text-text-primary ml-2">{toMoney(selected.default_advance_balance || 0)}</span></div>
+                      <div><span className="text-text-secondary">Daily Home Milk:</span> <span className="text-text-primary ml-2">{Number(selected.daily_milk_allowance || 0).toFixed(2)} kg</span></div>
                       <div><span className="text-text-secondary">Notes:</span> <span className="text-text-primary ml-2">{selected.notes || "-"}</span></div>
                     </div>
                   )}
@@ -543,6 +584,94 @@ export default function Employees() {
             )}
 
             {/* ── Advances Tab ─────────────────────────────────────────────── */}
+            {tab === "milk" && (
+              <div className="space-y-5">
+                {selected.is_active && (
+                  <div className="bg-surface-2 rounded-lg p-5 border border-surface-4">
+                    <h3 className="font-semibold text-text-primary mb-2 flex items-center gap-2">
+                      <Milk className="w-4 h-4 text-info" /> Issue Home Milk & Print Slip
+                    </h3>
+                    <p className="text-xs text-text-secondary mb-4">
+                      Daily allowance is free only when milk is actually taken. Any extra milk above the daily allowance is deducted from salary.
+                    </p>
+                    <div className="grid grid-cols-4 gap-3">
+                      <div>
+                        <label className="label">Date</label>
+                        <input type="date" className="input" value={milkDate} onChange={e => setMilkDate(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="label">Milk Taken (kg)</label>
+                        <input type="number" className="input text-lg font-bold" value={milkQty} onChange={e => setMilkQty(e.target.value)} min="0.25" step="0.25" placeholder="0" />
+                      </div>
+                      <div>
+                        <label className="label">Daily Allowance</label>
+                        <div className="h-11 px-3 rounded-lg bg-surface-3 border border-surface-4 flex items-center font-bold text-text-primary">
+                          {Number(selected.daily_milk_allowance || 0).toFixed(2)} kg
+                        </div>
+                      </div>
+                      <div>
+                        <label className="label">Expected Extra</label>
+                        <div className="h-11 px-3 rounded-lg bg-surface-3 border border-surface-4 flex items-center font-bold text-warning">
+                          {Math.max(0, Number(milkQty || 0) - Number(selected.daily_milk_allowance || 0)).toFixed(2)} kg
+                        </div>
+                      </div>
+                      <div className="col-span-4">
+                        <label className="label">Notes</label>
+                        <input className="input" value={milkNotes} onChange={e => setMilkNotes(e.target.value)} placeholder="Optional note" />
+                      </div>
+                    </div>
+                    <button onClick={handleIssueMilk} disabled={milkSaving} className="btn-primary mt-4 h-12 px-5 flex items-center gap-2">
+                      <Printer className="w-4 h-4" />
+                      {milkSaving ? "Saving..." : "Issue & Print Slip"}
+                    </button>
+                  </div>
+                )}
+
+                <div className="bg-surface-2 rounded-lg border border-surface-4 overflow-hidden">
+                  <div className="p-4 border-b border-surface-4 flex items-center justify-between">
+                    <h3 className="font-semibold text-text-primary">Home Milk History</h3>
+                    <span className="text-sm text-text-secondary">
+                      Pending milk deduction: {toMoney(selected.milkIssues?.filter((m: any) => !m.deducted_payment_id).reduce((s: number, m: any) => s + Number(m.deduction_amount || 0), 0) || 0)}
+                    </span>
+                  </div>
+                  {!selected.milkIssues?.length ? (
+                    <div className="p-6 text-center text-text-secondary text-sm">No employee milk slips yet</div>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead className="bg-surface-3">
+                        <tr>
+                          <th className="text-left px-4 py-2 text-text-secondary font-medium">Date</th>
+                          <th className="text-left px-4 py-2 text-text-secondary font-medium">Slip</th>
+                          <th className="text-right px-4 py-2 text-text-secondary font-medium">Taken</th>
+                          <th className="text-right px-4 py-2 text-text-secondary font-medium">Free</th>
+                          <th className="text-right px-4 py-2 text-text-secondary font-medium">Extra</th>
+                          <th className="text-right px-4 py-2 text-text-secondary font-medium">Deduction</th>
+                          <th className="text-left px-4 py-2 text-text-secondary font-medium">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selected.milkIssues.map((m: any) => (
+                          <tr key={m.id} className="border-t border-surface-4">
+                            <td className="px-4 py-3 text-text-secondary">{formatDate(m.issue_date)}</td>
+                            <td className="px-4 py-3 font-semibold text-text-primary">{m.receipt_number}</td>
+                            <td className="px-4 py-3 text-right">{Number(m.quantity || 0).toFixed(2)} kg</td>
+                            <td className="px-4 py-3 text-right text-success">{Number(m.allowance_quantity || 0).toFixed(2)} kg</td>
+                            <td className="px-4 py-3 text-right text-warning">{Number(m.extra_quantity || 0).toFixed(2)} kg</td>
+                            <td className="px-4 py-3 text-right font-bold text-danger">{toMoney(m.deduction_amount || 0)}</td>
+                            <td className="px-4 py-3">
+                              <span className={cn("badge text-xs", m.deducted_payment_id ? "badge-success" : Number(m.deduction_amount || 0) > 0 ? "badge-warning" : "badge-success")}>
+                                {m.deducted_payment_id ? "DEDUCTED" : Number(m.deduction_amount || 0) > 0 ? "PENDING" : "FREE"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
+
             {tab === "advances" && (
               <div className="space-y-5">
                 {selected.is_active && (
@@ -684,7 +813,7 @@ export default function Employees() {
                     <p className="text-xs text-text-secondary mb-4">
                       Period is the calendar month. Salary stays fixed for 28, 30, or 31 day months.
                       Leave deduction is always salary / 30 per leave day.
-                      Formula: monthly salary minus leave deduction minus kharcha paid during the month.
+                      Formula: monthly salary minus leave deduction minus kharcha paid during the month minus extra employee milk.
                     </p>
                     <div className="flex items-end gap-3">
                       <div>
@@ -713,6 +842,9 @@ export default function Employees() {
                           <div className="flex justify-between"><span className="text-text-secondary">Days Worked</span><span className="text-success">{salaryCalc.daysWorked} days</span></div>
                           <div className="flex justify-between font-semibold"><span className="text-text-secondary">Salary After Leave</span><span>{toMoney(salaryCalc.grossSalary)}</span></div>
                           <div className="flex justify-between text-danger"><span>Kharcha / Paid Deduction</span><span>— {toMoney(salaryCalc.advanceDeduction)}</span></div>
+                          <div className="flex justify-between text-danger"><span>Extra Milk Deduction</span><span>- {toMoney(salaryCalc.milkDeduction || 0)}</span></div>
+                          <div className="flex justify-between text-info"><span>Milk Benefit Expense</span><span>+ {toMoney(salaryCalc.milkBenefitAmount || 0)}</span></div>
+                          <div className="flex justify-between text-text-secondary"><span>Milk Taken This Period</span><span>{Number(salaryCalc.milkQuantity || 0).toFixed(2)} kg ({Number(salaryCalc.milkExtraQuantity || 0).toFixed(2)} kg extra)</span></div>
                           <div className="flex justify-between font-bold text-base border-t border-surface-4 pt-2 mt-2">
                             <span className="text-text-primary">Net Salary to Pay</span>
                             <span className="text-success text-lg">{toMoney(salaryCalc.netSalary)}</span>
@@ -748,6 +880,8 @@ export default function Employees() {
                           <th className="text-left px-4 py-2 text-text-secondary font-medium">Period</th>
                           <th className="text-right px-4 py-2 text-text-secondary font-medium">Gross</th>
                           <th className="text-right px-4 py-2 text-text-secondary font-medium">Kharcha</th>
+                          <th className="text-right px-4 py-2 text-text-secondary font-medium">Benefit</th>
+                          <th className="text-right px-4 py-2 text-text-secondary font-medium">Milk</th>
                           <th className="text-right px-4 py-2 text-text-secondary font-medium">Net Paid</th>
                           <th className="text-left px-4 py-2 text-text-secondary font-medium">Paid On</th>
                         </tr>
@@ -758,6 +892,8 @@ export default function Employees() {
                             <td className="px-4 py-3 text-text-secondary">{formatDate(p.period_start)} → {formatDate(p.period_end)}</td>
                             <td className="px-4 py-3 text-right">{toMoney(p.gross_salary)}</td>
                             <td className="px-4 py-3 text-right text-danger">{p.advance_deduction > 0 ? `— ${toMoney(p.advance_deduction)}` : "-"}</td>
+                            <td className="px-4 py-3 text-right text-info">{p.milk_benefit_amount > 0 ? `+ ${toMoney(p.milk_benefit_amount)}` : "-"}</td>
+                            <td className="px-4 py-3 text-right text-danger">{p.milk_deduction > 0 ? `- ${toMoney(p.milk_deduction)}` : "-"}</td>
                             <td className="px-4 py-3 text-right font-bold text-success">{toMoney(p.net_salary)}</td>
                             <td className="px-4 py-3 text-text-secondary">{formatDate(p.paid_date)}</td>
                           </tr>
@@ -801,6 +937,10 @@ export default function Employees() {
                 <div>
                   <label className="label">Permanent Advance</label>
                   <input type="number" className="input" value={empForm.defaultAdvanceBalance} onChange={e => setEmpForm(f => ({ ...f, defaultAdvanceBalance: e.target.value }))} placeholder="0" />
+                </div>
+                <div>
+                  <label className="label">Daily Home Milk Allowance (kg)</label>
+                  <input type="number" className="input" value={empForm.dailyMilkAllowance} onChange={e => setEmpForm(f => ({ ...f, dailyMilkAllowance: e.target.value }))} placeholder="0" min="0" step="0.25" />
                 </div>
                 <div>
                   <label className="label">Address</label>
