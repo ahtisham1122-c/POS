@@ -1,6 +1,7 @@
-import { Controller, Get, Header, Injectable, Module, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, Injectable, Module, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { PaymentType, Role, SaleStatus } from '@prisma/client';
+import { PaymentType, Prisma, Role, SaleStatus, StockMovementType } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -40,9 +41,161 @@ function minutesAgo(date: Date | null | undefined) {
   return Math.floor((Date.now() - date.getTime()) / 60000);
 }
 
+function normalizeMilkType(value?: string) {
+  const milkType = String(value || 'MIXED').toUpperCase();
+  return ['COW', 'BUFFALO', 'MIXED'].includes(milkType) ? milkType : 'MIXED';
+}
+
+function collectionRate(supplier: { defaultRate: Prisma.Decimal; cowRate: Prisma.Decimal; buffaloRate: Prisma.Decimal }, milkType: string) {
+  const defaultRate = Number(supplier.defaultRate || 0);
+  if (milkType === 'COW') return Number(supplier.cowRate || defaultRate || 0);
+  if (milkType === 'BUFFALO') return Number(supplier.buffaloRate || defaultRate || 0);
+  return defaultRate;
+}
+
 @Injectable()
 export class OwnerDashboardService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async getSupplierEntryData() {
+    const suppliers = await this.prisma.supplier.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        allowedShifts: true,
+        milkSupplyMode: true,
+        defaultRate: true,
+        cowRate: true,
+        buffaloRate: true,
+        currentBalance: true,
+      },
+    });
+
+    return {
+      date: pakistanDateString(),
+      suppliers: suppliers.map((supplier) => ({
+        ...supplier,
+        defaultRate: money(supplier.defaultRate),
+        cowRate: money(supplier.cowRate),
+        buffaloRate: money(supplier.buffaloRate),
+        currentBalance: money(supplier.currentBalance),
+      })),
+    };
+  }
+
+  async createSupplierMilkEntry(dto: any, user: any) {
+    const supplierId = String(dto?.supplierId || '').trim();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dto?.date || '')) ? String(dto.date) : pakistanDateString();
+    const shift = String(dto?.shift || '').toUpperCase();
+    const milkType = normalizeMilkType(dto?.milkType);
+    const qty = Number(dto?.quantity || 0);
+    const notes = String(dto?.notes || '').trim() || null;
+
+    if (!supplierId) throw new Error('Supplier is required');
+    if (!['MORNING', 'EVENING'].includes(shift)) throw new Error('Shift must be MORNING or EVENING');
+    if (!Number.isFinite(qty) || qty <= 0) throw new Error('Milk quantity must be greater than zero');
+
+    return this.prisma.$transaction(async (tx) => {
+      const supplier = await tx.supplier.findFirst({ where: { id: supplierId, isActive: true } });
+      if (!supplier) throw new Error('Supplier not found or inactive');
+      if (supplier.allowedShifts !== 'BOTH' && supplier.allowedShifts !== shift) {
+        throw new Error(`${supplier.name} is not configured for ${shift.toLowerCase()} collection`);
+      }
+      const supplyMode = supplier.milkSupplyMode === 'SEPARATE' ? 'SEPARATE' : 'MIXED';
+      if (supplyMode === 'MIXED' && milkType !== 'MIXED') {
+        throw new Error(`${supplier.name} is configured for mixed milk. Use mixed entry only.`);
+      }
+      if (supplyMode === 'SEPARATE' && milkType === 'MIXED') {
+        throw new Error(`${supplier.name} is configured for separate cow/buffalo milk.`);
+      }
+
+      const duplicate = await tx.milkCollection.findFirst({
+        where: { supplierId, collectionDate: new Date(`${date}T00:00:00.000+05:00`), shift, milkType },
+        select: { id: true },
+      });
+      if (duplicate) {
+        throw new Error(`${supplier.name} ${milkType.toLowerCase()} milk is already entered for ${shift.toLowerCase()} on ${date}.`);
+      }
+
+      const rate = collectionRate(supplier, milkType);
+      if (rate <= 0) throw new Error(`Set ${milkType.toLowerCase()} milk rate for ${supplier.name} first`);
+      const totalAmount = money(qty * rate);
+      const now = new Date();
+      const userId = user?.id || 'system';
+      const collection = await tx.milkCollection.create({
+        data: {
+          id: randomUUID(),
+          supplierId,
+          collectionDate: new Date(`${date}T00:00:00.000+05:00`),
+          shift,
+          milkType,
+          quantity: qty,
+          rate,
+          totalAmount,
+          notes,
+          createdById: userId,
+          createdAt: now,
+        },
+      });
+
+      const newBalance = money(Number(supplier.currentBalance || 0) + totalAmount);
+      await tx.supplier.update({
+        where: { id: supplierId },
+        data: { currentBalance: newBalance, updatedAt: now },
+      });
+
+      await tx.supplierLedgerEntry.create({
+        data: {
+          id: randomUUID(),
+          supplierId,
+          collectionId: collection.id,
+          entryType: 'MILK_COLLECTION',
+          amount: totalAmount,
+          balanceAfter: newBalance,
+          description: `${shift} ${milkType.toLowerCase()} milk collection ${qty} kg @ Rs. ${rate}`,
+          entryDate: now,
+          createdAt: now,
+        },
+      });
+
+      const milkProduct = await tx.product.findFirst({ where: { code: 'MILK', isActive: true } });
+      if (milkProduct) {
+        const stockBefore = Number(milkProduct.stock || 0);
+        const stockAfter = quantity(stockBefore + qty);
+        await tx.product.update({
+          where: { id: milkProduct.id },
+          data: { stock: stockAfter, costPrice: rate, updatedAt: now },
+        });
+        await tx.stockMovement.create({
+          data: {
+            productId: milkProduct.id,
+            movementType: StockMovementType.MILK_COLLECTION,
+            quantity: qty,
+            stockBefore,
+            stockAfter,
+            referenceId: collection.id,
+            supplier: supplier.name,
+            notes: `${shift} ${milkType.toLowerCase()} milk collection from ${supplier.name} - online owner entry`,
+            createdById: userId,
+            createdAt: now,
+          },
+        });
+      }
+
+      return {
+        success: true,
+        collectionId: collection.id,
+        supplierName: supplier.name,
+        quantity: qty,
+        rate,
+        totalAmount,
+        supplierBalance: newBalance,
+      };
+    });
+  }
 
   async getSummary(dateQuery?: string) {
     const { date, start, end } = makePakistanDayRange(dateQuery);
@@ -279,12 +432,14 @@ export class OwnerDashboardController {
     :root { color-scheme: dark; --bg:#101418; --panel:#171d23; --muted:#94a3b8; --text:#f8fafc; --line:#2b3642; --good:#22c55e; --warn:#f59e0b; --bad:#ef4444; --brand:#38bdf8; }
     * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; background:var(--bg); color:var(--text); }
     header { padding:18px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:12px; align-items:center; }
+    nav { display:flex; gap:8px; padding:10px 14px 0; max-width:1100px; margin:0 auto; }
     h1 { font-size:18px; margin:0; } .muted { color:var(--muted); font-size:12px; } main { padding:14px; max-width:1100px; margin:0 auto; }
     .login, .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
     .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; } .wide { grid-column:span 2; }
     .card b { display:block; font-size:22px; margin-top:6px; } .label { color:var(--muted); font-size:12px; text-transform:uppercase; font-weight:700; }
     input, button { width:100%; height:44px; border-radius:8px; border:1px solid var(--line); background:#0b1015; color:var(--text); padding:0 12px; font-weight:700; }
     button { background:var(--brand); color:#041018; border:0; cursor:pointer; } button.secondary { background:#253241; color:var(--text); }
+    select { width:100%; height:44px; border-radius:8px; border:1px solid var(--line); background:#0b1015; color:var(--text); padding:0 12px; font-weight:700; }
     .row { display:flex; justify-content:space-between; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; }
     .row:last-child { border-bottom:0; } .status { font-weight:900; } .online { color:var(--good); } .stale { color:var(--warn); } .offline, .revoked { color:var(--bad); }
     .hidden { display:none; } .error { color:#fecaca; background:#451a1a; border:1px solid #7f1d1d; border-radius:8px; padding:10px; margin-top:10px; }
@@ -296,6 +451,10 @@ export class OwnerDashboardController {
     <div><h1>Noon Dairy Owner Dashboard</h1><div class="muted" id="stamp">Private VPS view</div></div>
     <button class="secondary" style="max-width:150px" onclick="loadSummary()">Refresh</button>
   </header>
+  <nav id="nav" class="hidden">
+    <button class="secondary" onclick="showTab('dashboard')">Dashboard</button>
+    <button class="secondary" onclick="showTab('supplierEntry')">Supplier Entry</button>
+  </nav>
   <main>
     <section id="login" class="login">
       <div class="grid">
@@ -312,17 +471,39 @@ export class OwnerDashboardController {
         <div class="card wide"><div class="label">Recent Sales</div><div id="recentSales"></div></div>
       </div>
     </section>
+    <section id="supplierEntry" class="hidden">
+      <div class="card">
+        <div class="label">Online Supplier Milk Entry</div>
+        <div class="grid" style="margin-top:10px">
+          <select id="supplierId" onchange="supplierChanged()"></select>
+          <input id="entryDate" type="date" />
+          <select id="entryShift"><option value="MORNING">Morning</option><option value="EVENING">Evening</option></select>
+          <select id="entryMilkType"><option value="MIXED">Mixed</option><option value="COW">Cow</option><option value="BUFFALO">Buffalo</option></select>
+          <input id="entryQuantity" type="number" step="0.25" min="0.25" placeholder="Milk kg" />
+          <input id="entryNotes" placeholder="Notes optional" />
+          <button onclick="saveSupplierEntry()">Save Milk Entry</button>
+        </div>
+        <div class="muted" id="supplierHint" style="margin-top:10px"></div>
+        <div id="entryMessage"></div>
+      </div>
+    </section>
   </main>
   <script>
     let token = localStorage.getItem('ownerAccessToken') || '';
-    if (token) { document.getElementById('login').classList.add('hidden'); document.getElementById('dashboard').classList.remove('hidden'); loadSummary(); }
+    let supplierRows = [];
+    if (token) { document.getElementById('login').classList.add('hidden'); document.getElementById('nav').classList.remove('hidden'); showTab('dashboard'); loadSummary(); loadSupplierEntryData(); }
     const money = (n) => 'Rs. ' + Math.round(Number(n || 0)).toLocaleString('en-PK');
+    function showTab(id) {
+      dashboard.classList.add('hidden'); supplierEntry.classList.add('hidden');
+      document.getElementById(id).classList.remove('hidden');
+      if (id === 'supplierEntry') loadSupplierEntryData();
+    }
     async function login() {
       document.getElementById('loginError').innerHTML = '';
       const res = await fetch('auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ username:username.value, password:password.value }) });
       if (!res.ok) { document.getElementById('loginError').innerHTML = '<div class="error">Login failed. Use backend admin/manager login.</div>'; return; }
       const data = await res.json(); token = data.accessToken; localStorage.setItem('ownerAccessToken', token);
-      document.getElementById('login').classList.add('hidden'); document.getElementById('dashboard').classList.remove('hidden'); loadSummary();
+      document.getElementById('login').classList.add('hidden'); document.getElementById('nav').classList.remove('hidden'); showTab('dashboard'); loadSummary(); loadSupplierEntryData();
     }
     async function loadSummary() {
       if (!token) return;
@@ -342,6 +523,32 @@ export class OwnerDashboardController {
       devices.innerHTML = (d.devices || []).map(x => '<div class="row"><span>'+x.deviceName+'</span><span class="status '+x.health+'">'+x.health+' '+(x.minutesSinceSeen ?? '-')+'m</span></div>').join('') || '<div class="muted">No devices</div>';
       recentSales.innerHTML = (d.recentSales || []).map(x => '<div class="row"><span>'+x.billNumber+' '+x.paymentType+'</span><b>'+money(x.grandTotal)+'</b></div>').join('') || '<div class="muted">No sales today</div>';
     }
+    async function loadSupplierEntryData() {
+      if (!token) return;
+      const res = await fetch('owner-dashboard/supplier-entry-data', { headers:{ Authorization:'Bearer ' + token } });
+      if (!res.ok) return;
+      const data = await res.json(); supplierRows = data.suppliers || []; entryDate.value = data.date || '';
+      supplierId.innerHTML = supplierRows.map(s => '<option value="'+s.id+'">'+s.name+' ('+s.milkSupplyMode+')</option>').join('');
+      supplierChanged();
+    }
+    function supplierChanged() {
+      const s = supplierRows.find(x => x.id === supplierId.value);
+      if (!s) { supplierHint.textContent = ''; return; }
+      entryMilkType.value = s.milkSupplyMode === 'SEPARATE' ? 'COW' : 'MIXED';
+      entryMilkType.disabled = s.milkSupplyMode !== 'SEPARATE';
+      supplierHint.textContent = s.milkSupplyMode === 'SEPARATE'
+        ? 'Separate supplier: enter cow and buffalo separately. Cow Rs.'+s.cowRate+', buffalo Rs.'+s.buffaloRate+'. Balance '+money(s.currentBalance)
+        : 'Mixed supplier: one mixed milk entry. Rate Rs.'+s.defaultRate+'. Balance '+money(s.currentBalance);
+    }
+    async function saveSupplierEntry() {
+      entryMessage.innerHTML = '';
+      const payload = { supplierId:supplierId.value, date:entryDate.value, shift:entryShift.value, milkType:entryMilkType.value, quantity:Number(entryQuantity.value || 0), notes:entryNotes.value };
+      const res = await fetch('owner-dashboard/supplier-entries', { method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer ' + token }, body:JSON.stringify(payload) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) { entryMessage.innerHTML = '<div class="error">'+(data.message || data.error || 'Could not save entry')+'</div>'; return; }
+      entryMessage.innerHTML = '<div class="card" style="margin-top:10px;border-color:var(--good)">Saved '+data.supplierName+': '+data.quantity+' kg @ Rs.'+data.rate+' = '+money(data.totalAmount)+'</div>';
+      entryQuantity.value = ''; entryNotes.value = ''; loadSummary(); loadSupplierEntryData();
+    }
   </script>
 </body>
 </html>`;
@@ -353,6 +560,22 @@ export class OwnerDashboardController {
   @Roles(Role.ADMIN, Role.MANAGER)
   summary(@Query('date') date?: string) {
     return this.service.getSummary(date);
+  }
+
+  @Get('supplier-entry-data')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.MANAGER)
+  supplierEntryData() {
+    return this.service.getSupplierEntryData();
+  }
+
+  @Post('supplier-entries')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.MANAGER)
+  supplierEntry(@Body() dto: any, @Req() req: any) {
+    return this.service.createSupplierMilkEntry(dto, req.user);
   }
 }
 
