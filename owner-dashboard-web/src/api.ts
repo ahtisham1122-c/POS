@@ -78,11 +78,33 @@ export type Summary = {
     customerName: string;
   }>;
   charts: {
-    salesTrend: Array<{ date: string; bills: number; grossSales: number; refunds: number; netSales: number; milkKg: number; yogurtKg: number }>;
+    salesTrend: Array<{ date: string; bills: number; grossSales: number; refunds: number; netSales: number; expenses: number; milkKg: number; yogurtKg: number }>;
+    weeklyTrend: Array<{ label: string; bills: number; grossSales: number; refunds: number; netSales: number; expenses: number; milkKg: number; milkPurchase: number; operatingResult: number }>;
+    monthlyTrend: Array<{ label: string; bills: number; grossSales: number; refunds: number; netSales: number; expenses: number; milkKg: number; milkPurchase: number; operatingResult: number }>;
+    hourlySales: Array<{ hour: number; label: string; sales: number; bills: number }>;
     paymentMix: Array<{ name: string; value: number }>;
     topProducts: Array<{ name: string; unit: string; quantity: number; revenue: number }>;
     expenseByCategory: Array<{ category: string; amount: number }>;
     supplierBalances: Array<{ name: string; balance: number; mode: string; defaultRate: number; cowRate: number; buffaloRate: number }>;
+    productContribution: Array<{ name: string; unit: string; quantity: number; revenue: number; grossProfit: number; marginPercent: number }>;
+    topCustomers: Array<{ name: string; sales: number; bills: number; currentBalance: number }>;
+  };
+  analytics: {
+    grossProfit: number;
+    grossMarginPercent: number;
+    estimatedOperatingProfit: number;
+    expenseRatio: number;
+    dayChangePercent: number;
+    weekChangePercent: number;
+    monthChangePercent: number;
+    busiestHour: { hour: number; label: string; sales: number; bills: number };
+    topProduct: null | { name: string; unit: string; quantity: number; revenue: number };
+    selectedPeriod: {
+      day: Summary['charts']['salesTrend'][number] | null;
+      week: Summary['charts']['weeklyTrend'][number] | null;
+      month: Summary['charts']['monthlyTrend'][number] | null;
+    };
+    insights: Array<{ tone: 'good' | 'warn' | 'danger' | 'info'; title: string; value: string; detail: string }>;
   };
 };
 

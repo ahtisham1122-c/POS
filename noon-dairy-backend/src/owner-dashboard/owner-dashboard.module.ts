@@ -41,6 +41,18 @@ function makePakistanRangeFromDate(date: Date) {
   return makePakistanDayRange(dateString);
 }
 
+function addUtcDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function addUtcMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setUTCMonth(next.getUTCMonth() + months);
+  return next;
+}
+
 function minutesAgo(date: Date | null | undefined) {
   if (!date) return null;
   return Math.floor((Date.now() - date.getTime()) / 60000);
@@ -230,6 +242,8 @@ export class OwnerDashboardService {
       topProducts,
       expenseByCategory,
       supplierSnapshots,
+      selectedSaleItems,
+      topCustomerSales,
     ] = await Promise.all([
       this.prisma.sale.aggregate({
         where: { saleDate: { gte: start, lt: end }, status: { in: saleStatuses } },
@@ -341,11 +355,72 @@ export class OwnerDashboardService {
           milkSupplyMode: true,
         },
       }),
+      this.prisma.saleItem.findMany({
+        where: { sale: { saleDate: { gte: start, lt: end }, status: { in: saleStatuses } } },
+        select: {
+          productName: true,
+          unit: true,
+          quantity: true,
+          unitPrice: true,
+          costPrice: true,
+          lineTotal: true,
+        },
+      }),
+      this.prisma.sale.groupBy({
+        by: ['customerId'],
+        where: { saleDate: { gte: start, lt: end }, status: { in: saleStatuses }, customerId: { not: null } },
+        _sum: { grandTotal: true },
+        _count: { id: true },
+        orderBy: { _sum: { grandTotal: 'desc' } },
+        take: 8,
+      }),
     ]);
 
-    const trendRanges = Array.from({ length: 7 }, (_, index) => {
+    const summarizeRange = async (rangeStart: Date, rangeEnd: Date) => {
+      const [saleAgg, count, refundAgg, expenseForRange, milkForRange] = await Promise.all([
+        this.prisma.sale.aggregate({
+          where: { saleDate: { gte: rangeStart, lt: rangeEnd }, status: { in: saleStatuses } },
+          _sum: { grandTotal: true },
+        }),
+        this.prisma.sale.count({
+          where: { saleDate: { gte: rangeStart, lt: rangeEnd }, status: { in: saleStatuses } },
+        }),
+        this.prisma.return.aggregate({
+          where: {
+            returnDate: { gte: rangeStart, lt: rangeEnd },
+            status: 'COMPLETED',
+            correctionType: { not: 'CORRECTION' },
+          },
+          _sum: { refundAmount: true },
+        }),
+        this.prisma.expense.aggregate({
+          where: { expenseDate: { gte: rangeStart, lt: rangeEnd } },
+          _sum: { amount: true },
+        }),
+        this.prisma.milkCollection.aggregate({
+          where: { collectionDate: { gte: rangeStart, lt: rangeEnd } },
+          _sum: { quantity: true, totalAmount: true },
+        }),
+      ]);
+      const gross = money(saleAgg._sum.grandTotal);
+      const refundsForRange = money(refundAgg._sum.refundAmount);
+      const expensesForRange = money(expenseForRange._sum.amount);
+      const milkPurchaseForRange = money(milkForRange._sum.totalAmount);
+      return {
+        bills: count,
+        grossSales: gross,
+        refunds: refundsForRange,
+        netSales: money(gross - refundsForRange),
+        expenses: expensesForRange,
+        milkKg: quantity(milkForRange._sum.quantity),
+        milkPurchase: milkPurchaseForRange,
+        operatingResult: money(gross - refundsForRange - expensesForRange - milkPurchaseForRange),
+      };
+    };
+
+    const trendRanges = Array.from({ length: 30 }, (_, index) => {
       const day = new Date(start);
-      day.setUTCDate(day.getUTCDate() - (6 - index));
+      day.setUTCDate(day.getUTCDate() - (29 - index));
       return makePakistanRangeFromDate(day);
     });
 
@@ -390,11 +465,94 @@ export class OwnerDashboardService {
           grossSales: gross,
           refunds: refundsForDay,
           netSales: money(gross - refundsForDay),
+          expenses: money((await this.prisma.expense.aggregate({
+            where: { expenseDate: { gte: range.start, lt: range.end } },
+            _sum: { amount: true },
+          }))._sum.amount),
           milkKg: quantity(milkSold._sum.quantity),
           yogurtKg: quantity(yogurtSold._sum.quantity),
         };
       }),
     );
+
+    const weeklyTrend = await Promise.all(
+      Array.from({ length: 8 }, async (_, index) => {
+        const rangeEnd = addUtcDays(end, -7 * (7 - index));
+        const rangeStart = addUtcDays(rangeEnd, -7);
+        const summary = await summarizeRange(rangeStart, rangeEnd);
+        return {
+          label: `${pakistanDateString(rangeStart)} to ${pakistanDateString(addUtcDays(rangeEnd, -1))}`,
+          ...summary,
+        };
+      }),
+    );
+
+    const monthlyTrend = await Promise.all(
+      Array.from({ length: 12 }, async (_, index) => {
+        const monthStart = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() - (11 - index), 1, 19, 0, 0));
+        const nextMonthStart = addUtcMonths(monthStart, 1);
+        const summary = await summarizeRange(monthStart, nextMonthStart);
+        return {
+          label: pakistanDateString(monthStart).slice(0, 7),
+          ...summary,
+        };
+      }),
+    );
+
+    const hourlySales = await Promise.all(
+      Array.from({ length: 24 }, async (_, hour) => {
+        const hourStart = new Date(start);
+        hourStart.setUTCHours(start.getUTCHours() + hour, 0, 0, 0);
+        const hourEnd = new Date(hourStart);
+        hourEnd.setUTCHours(hourEnd.getUTCHours() + 1);
+        const [saleAgg, count] = await Promise.all([
+          this.prisma.sale.aggregate({
+            where: { saleDate: { gte: hourStart, lt: hourEnd }, status: { in: saleStatuses } },
+            _sum: { grandTotal: true },
+          }),
+          this.prisma.sale.count({
+            where: { saleDate: { gte: hourStart, lt: hourEnd }, status: { in: saleStatuses } },
+          }),
+        ]);
+        return {
+          hour,
+          label: `${String(hour).padStart(2, '0')}:00`,
+          sales: money(saleAgg._sum.grandTotal),
+          bills: count,
+        };
+      }),
+    );
+
+    const customerIds = topCustomerSales.map((row) => row.customerId).filter(Boolean) as string[];
+    const topCustomers = customerIds.length
+      ? await this.prisma.customer.findMany({
+          where: { id: { in: customerIds } },
+          select: { id: true, name: true, currentBalance: true },
+        })
+      : [];
+    const customerNameById = new Map(topCustomers.map((customer) => [customer.id, customer]));
+
+    const productContributionMap = new Map<string, { name: string; unit: string; quantity: number; revenue: number; grossProfit: number }>();
+    for (const item of selectedSaleItems) {
+      const name = item.productName || 'Product';
+      const existing = productContributionMap.get(name) || { name, unit: item.unit, quantity: 0, revenue: 0, grossProfit: 0 };
+      const itemQuantity = Number(item.quantity || 0);
+      const revenue = Number(item.lineTotal || 0);
+      existing.quantity += itemQuantity;
+      existing.revenue += revenue;
+      existing.grossProfit += revenue - itemQuantity * Number(item.costPrice || 0);
+      productContributionMap.set(name, existing);
+    }
+    const productContribution = Array.from(productContributionMap.values())
+      .map((item) => ({
+        ...item,
+        quantity: quantity(item.quantity),
+        revenue: money(item.revenue),
+        grossProfit: money(item.grossProfit),
+        marginPercent: item.revenue > 0 ? money((item.grossProfit / item.revenue) * 100) : 0,
+      }))
+      .sort((a, b) => b.grossProfit - a.grossProfit)
+      .slice(0, 8);
 
     const splitByMethod = splitPayments.reduce<Record<string, number>>((acc, row) => {
       acc[String(row.method).toUpperCase()] = money(row._sum.amount);
@@ -404,6 +562,32 @@ export class OwnerDashboardService {
     const grossSales = money(salesAgg._sum.grandTotal);
     const refunds = money(realRefundAgg._sum.refundAmount);
     const netSales = money(grossSales - refunds);
+    const grossProfit = money(
+      selectedSaleItems.reduce((sum, item) => {
+        const itemQuantity = Number(item.quantity || 0);
+        return sum + Number(item.lineTotal || 0) - itemQuantity * Number(item.costPrice || 0);
+      }, 0),
+    );
+    const estimatedOperatingProfit = money(grossProfit - money(expenseAgg._sum.amount));
+    const expenseRatio = netSales > 0 ? money((money(expenseAgg._sum.amount) / netSales) * 100) : 0;
+    const grossMarginPercent = grossSales > 0 ? money((grossProfit / grossSales) * 100) : 0;
+    const selectedDayTrend = salesTrend[salesTrend.length - 1] || null;
+    const previousDayTrend = salesTrend[salesTrend.length - 2] || null;
+    const selectedDayNet = Number(selectedDayTrend?.netSales || 0);
+    const previousDayNet = Number(previousDayTrend?.netSales || 0);
+    const dayChangePercent = previousDayNet > 0 ? money(((selectedDayNet - previousDayNet) / previousDayNet) * 100) : 0;
+    const currentWeek = weeklyTrend[weeklyTrend.length - 1] || null;
+    const previousWeek = weeklyTrend[weeklyTrend.length - 2] || null;
+    const weekChangePercent = Number(previousWeek?.netSales || 0) > 0
+      ? money(((Number(currentWeek?.netSales || 0) - Number(previousWeek?.netSales || 0)) / Number(previousWeek?.netSales || 1)) * 100)
+      : 0;
+    const currentMonth = monthlyTrend[monthlyTrend.length - 1] || null;
+    const previousMonth = monthlyTrend[monthlyTrend.length - 2] || null;
+    const monthChangePercent = Number(previousMonth?.netSales || 0) > 0
+      ? money(((Number(currentMonth?.netSales || 0) - Number(previousMonth?.netSales || 0)) / Number(previousMonth?.netSales || 1)) * 100)
+      : 0;
+    const busiestHour = hourlySales.reduce((best, row) => Number(row.sales) > Number(best.sales) ? row : best, hourlySales[0] || { label: '00:00', sales: 0, bills: 0 });
+    const topProductByRevenue = topProducts[0];
     const milkProduct = products.find((p) => p.code === 'MILK');
     const yogurtProduct = products.find((p) => p.code === 'YOGT');
     const lowStockCount = products.filter((p) => Number(p.stock) > 0 && Number(p.stock) <= Number(p.lowStockThreshold)).length;
@@ -413,6 +597,67 @@ export class OwnerDashboardService {
       .filter((p) => Number(p.stock) <= 0 || Number(p.stock) <= Number(p.lowStockThreshold))
       .sort((a, b) => Number(a.stock) - Number(b.stock))
       .slice(0, 8);
+    const deviceHealth = devices.map((device) => {
+      const seenMinutesAgo = minutesAgo(device.lastSeenAt);
+      return {
+        deviceId: device.deviceId,
+        deviceName: device.deviceName,
+        terminalNumber: device.terminalNumber,
+        lastSeenAt: device.lastSeenAt?.toISOString() || null,
+        lastSyncedAt: device.lastSyncedAt?.toISOString() || null,
+        revoked: Boolean(device.revokedAt),
+        health: device.revokedAt
+          ? 'revoked'
+          : seenMinutesAgo === null
+            ? 'never_seen'
+            : seenMinutesAgo <= 15
+              ? 'online'
+              : seenMinutesAgo <= 120
+                ? 'stale'
+                : 'offline',
+        minutesSinceSeen: seenMinutesAgo,
+      };
+    });
+    const insights = [
+      {
+        tone: dayChangePercent >= 0 ? 'good' : 'warn',
+        title: 'Day trend',
+        value: `${dayChangePercent >= 0 ? '+' : ''}${dayChangePercent}%`,
+        detail: previousDayNet > 0
+          ? `Net sales compared with ${previousDayTrend?.date || 'previous day'}.`
+          : 'No previous-day cloud sales to compare yet.',
+      },
+      {
+        tone: weekChangePercent >= 0 ? 'good' : 'warn',
+        title: 'Weekly momentum',
+        value: `${weekChangePercent >= 0 ? '+' : ''}${weekChangePercent}%`,
+        detail: 'Current 7-day period compared with previous 7-day period.',
+      },
+      {
+        tone: expenseRatio <= 18 ? 'good' : expenseRatio <= 30 ? 'warn' : 'danger',
+        title: 'Expense pressure',
+        value: `${expenseRatio}%`,
+        detail: 'Selected-day expenses as a percentage of net sales.',
+      },
+      {
+        tone: deviceHealth.some((device) => device.health === 'online') ? 'good' : 'danger',
+        title: 'POS cloud status',
+        value: deviceHealth.some((device) => device.health === 'online') ? 'Online' : 'Needs check',
+        detail: 'At least one POS should contact the cloud during shop hours.',
+      },
+      {
+        tone: lowStockCount + outOfStockCount === 0 ? 'good' : 'warn',
+        title: 'Stock control',
+        value: `${lowStockCount + outOfStockCount} alerts`,
+        detail: 'Low or empty stock items based on current cloud inventory.',
+      },
+      {
+        tone: 'info',
+        title: 'Peak hour',
+        value: busiestHour?.label || 'N/A',
+        detail: `${money(busiestHour?.sales)} sales from ${Number(busiestHour?.bills || 0)} bills.`,
+      },
+    ];
 
     return {
       date,
@@ -481,27 +726,7 @@ export class OwnerDashboardService {
           unit: product.unit,
         })),
       },
-      devices: devices.map((device) => {
-        const seenMinutesAgo = minutesAgo(device.lastSeenAt);
-        return {
-          deviceId: device.deviceId,
-          deviceName: device.deviceName,
-          terminalNumber: device.terminalNumber,
-          lastSeenAt: device.lastSeenAt?.toISOString() || null,
-          lastSyncedAt: device.lastSyncedAt?.toISOString() || null,
-          revoked: Boolean(device.revokedAt),
-          health: device.revokedAt
-            ? 'revoked'
-            : seenMinutesAgo === null
-              ? 'never_seen'
-              : seenMinutesAgo <= 15
-                ? 'online'
-                : seenMinutesAgo <= 120
-                  ? 'stale'
-                  : 'offline',
-          minutesSinceSeen: seenMinutesAgo,
-        };
-      }),
+      devices: deviceHealth,
       recentSales: recentSales.map((sale) => ({
         billNumber: sale.billNumber,
         saleDate: sale.saleDate.toISOString(),
@@ -511,6 +736,9 @@ export class OwnerDashboardService {
       })),
       charts: {
         salesTrend,
+        weeklyTrend,
+        monthlyTrend,
+        hourlySales,
         paymentMix: [
           { name: 'Cash', value: money(cashSalesAgg._sum.grandTotal) + money(splitByMethod.CASH) },
           { name: 'Online', value: money(onlineSalesAgg._sum.grandTotal) + money(splitByMethod.ONLINE) },
@@ -534,6 +762,40 @@ export class OwnerDashboardService {
           cowRate: money(supplier.cowRate),
           buffaloRate: money(supplier.buffaloRate),
         })),
+        productContribution,
+        topCustomers: topCustomerSales.map((row) => {
+          const customer = row.customerId ? customerNameById.get(row.customerId) : null;
+          return {
+            name: customer?.name || 'Customer',
+            sales: money(row._sum.grandTotal),
+            bills: Number(row._count.id || 0),
+            currentBalance: money(customer?.currentBalance),
+          };
+        }),
+      },
+      analytics: {
+        grossProfit,
+        grossMarginPercent,
+        estimatedOperatingProfit,
+        expenseRatio,
+        dayChangePercent,
+        weekChangePercent,
+        monthChangePercent,
+        busiestHour,
+        topProduct: topProductByRevenue
+          ? {
+              name: topProductByRevenue.productName,
+              unit: topProductByRevenue.unit,
+              quantity: quantity(topProductByRevenue._sum.quantity),
+              revenue: money(topProductByRevenue._sum.lineTotal),
+            }
+          : null,
+        selectedPeriod: {
+          day: selectedDayTrend,
+          week: currentWeek,
+          month: currentMonth,
+        },
+        insights,
       },
     };
   }
