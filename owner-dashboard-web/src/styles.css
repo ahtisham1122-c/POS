@@ -1,0 +1,117 @@
+:root {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --ink: #102026;
+  --muted: #687b84;
+  --line: #dbe5e9;
+  --brand: #047d75;
+  --blue: #1265c7;
+  --danger: #c2414b;
+  --good: #168a4a;
+  --warn: #b7791f;
+  --shadow: 0 20px 45px rgba(15, 32, 38, .10);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: Inter, Segoe UI, Roboto, Arial, sans-serif; }
+button, input, select { min-height: 42px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); padding: 0 11px; font-weight: 850; }
+button { cursor: pointer; }
+button.primary, .primary { background: linear-gradient(135deg, var(--brand), var(--blue)); color: white; border: 0; }
+button.danger { background: #fff1f2; color: var(--danger); border-color: #fecdd3; }
+button:disabled { opacity: .6; cursor: not-allowed; }
+
+.shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
+.sidebar { position: sticky; top: 0; height: 100vh; background: #0f2428; color: #fff; padding: 22px; display: flex; flex-direction: column; gap: 22px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brandMark { width: 50px; height: 50px; border-radius: 15px; display: grid; place-items: center; background: linear-gradient(135deg, #39d6c5, #75a9ff); color: #062326; font-weight: 1000; }
+.brand h1, .brand p, h2, h3, p { margin: 0; }
+.brand h1 { font-size: 21px; }
+.brand p, .serverPill { color: #b7c9ce; font-size: 13px; }
+.nav { display: grid; gap: 8px; }
+.nav button { min-height: 46px; border: 0; border-radius: 12px; background: rgba(255,255,255,.07); color: #d8e7eb; text-align: left; padding: 0 14px; font-weight: 900; }
+.nav button.active { background: #fff; color: #0f2428; }
+.serverPill { margin-top: auto; word-break: break-word; }
+.serverPill span { display: inline-block; width: 9px; height: 9px; border-radius: 999px; background: #31d47d; box-shadow: 0 0 0 4px rgba(49,212,125,.18); margin-right: 8px; }
+
+.main { min-width: 0; padding: 22px; }
+.topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.eyebrow { color: var(--brand); text-transform: uppercase; letter-spacing: .09em; font-size: 11px; font-weight: 1000; margin-bottom: 5px; }
+.topbar h2 { font-size: 30px; letter-spacing: -.04em; }
+.topbar p, .card p, .hint { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.toolbar { display: grid; grid-template-columns: 150px repeat(5, minmax(76px, auto)); gap: 8px; }
+
+.loginPage { min-height: 100vh; padding: 24px; display: grid; place-items: center; background: radial-gradient(circle at top left, #d9fbf5, transparent 35%), var(--bg); }
+.loginHero { max-width: 1050px; display: grid; grid-template-columns: 1.1fr .9fr; gap: 22px; align-items: center; background: linear-gradient(135deg, #fff, #eef9f8); border: 1px solid var(--line); border-radius: 24px; box-shadow: var(--shadow); padding: 34px; }
+.loginHero h1 { font-size: 44px; line-height: 1.04; letter-spacing: -.05em; margin: 0 0 12px; }
+.loginHero p:last-child { color: var(--muted); font-size: 16px; line-height: 1.55; }
+.loginCard { display: grid; gap: 12px; background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); }
+label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; }
+
+.view { display: grid; gap: 14px; }
+.heroGrid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(320px, .75fr); gap: 14px; }
+.hero, .card, .metric { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
+.hero { min-height: 235px; padding: 24px; background: linear-gradient(135deg, #073f3c, #0d5a84); color: white; position: relative; overflow: hidden; }
+.hero:after { content: ""; position: absolute; right: -90px; bottom: -120px; width: 300px; height: 300px; border-radius: 50%; border: 58px solid rgba(255,255,255,.08); }
+.hero .eyebrow, .hero p { color: #c9fbf4; }
+.hero strong { display: block; font-size: 56px; line-height: 1; font-weight: 1000; letter-spacing: -.06em; margin: 10px 0; position: relative; z-index: 1; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; position: relative; z-index: 1; }
+.chips span, .badge { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 900; background: rgba(255,255,255,.16); }
+.badge { background: #f6fafb; color: var(--muted); border: 1px solid var(--line); }
+.badge.good { color: var(--good); background: #ecfdf3; border-color: #bbf7d0; }
+.badge.warn { color: var(--warn); background: #fffbeb; border-color: #fde68a; }
+
+.card { padding: 16px; }
+.cardHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.card h3 { font-size: 18px; }
+.big { display: block; font-size: 36px; letter-spacing: -.04em; margin-bottom: 8px; }
+.row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.row:last-child { border-bottom: 0; }
+.row strong { text-align: right; }
+.row small { display: block; color: var(--muted); margin-top: 3px; }
+
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.metric { padding: 15px; }
+.metricTitle { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; font-weight: 1000; }
+.metric strong { display: block; font-size: 27px; font-weight: 1000; letter-spacing: -.04em; margin-top: 8px; }
+.metric span { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.wide { grid-column: span 2; }
+.chart { min-height: 270px; border-radius: 14px; background: #f8fbfc; border: 1px solid var(--line); overflow: hidden; }
+svg { display: block; width: 100%; height: 100%; }
+.mix { display: grid; gap: 6px; }
+.mixRow { display: grid; grid-template-columns: 74px 1fr 88px; gap: 10px; align-items: center; padding: 8px 0; font-size: 13px; }
+.track { height: 12px; border-radius: 999px; background: #edf3f5; overflow: hidden; }
+.fill { display: block; height: 100%; border-radius: 999px; }
+.fill0 { background: var(--brand); }
+.fill1 { background: var(--blue); }
+.fill2 { background: #d89523; }
+.supplierForm { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: #102026; color: white; padding: 12px 14px; border-radius: 12px; box-shadow: var(--shadow); max-width: 92vw; }
+.error { color: var(--danger); background: #fff1f2; border: 1px solid #fecdd3; border-radius: 10px; padding: 10px; margin: 10px 0; }
+.success { color: var(--good); background: #ecfdf3; border: 1px solid #bbf7d0; border-radius: 10px; padding: 10px; margin: 10px 0; }
+.skeleton { min-height: 100px; border-radius: 18px; background: linear-gradient(90deg, #fff, #edf3f5, #fff); background-size: 220% 100%; animation: pulse 1.2s infinite linear; border: 1px solid var(--line); }
+@keyframes pulse { to { background-position: -220% 0; } }
+
+@media (max-width: 1050px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; }
+  .nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .topbar { flex-direction: column; }
+  .toolbar { width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .toolbar input { grid-column: 1 / -1; }
+  .heroGrid, .grid { grid-template-columns: 1fr; }
+  .wide { grid-column: auto; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .main { padding: 12px; }
+  .sidebar { padding: 14px; }
+  .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .topbar h2 { font-size: 24px; }
+  .toolbar, .kpis, .supplierForm, .loginHero { grid-template-columns: 1fr; }
+  .loginPage { padding: 12px; }
+  .loginHero { padding: 18px; }
+  .loginHero h1 { font-size: 32px; }
+  .hero strong { font-size: 40px; }
+  .mixRow { grid-template-columns: 64px 1fr 74px; }
+}
