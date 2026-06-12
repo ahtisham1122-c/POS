@@ -101,7 +101,7 @@ export type Summary = {
     paymentMix: Array<{ name: string; value: number }>;
     topProducts: Array<{ name: string; unit: string; quantity: number; revenue: number }>;
     expenseByCategory: Array<{ category: string; amount: number }>;
-    supplierBalances: Array<{ name: string; balance: number; mode: string; defaultRate: number; cowRate: number; buffaloRate: number }>;
+    supplierBalances: Array<{ name: string; balance: number; mode: string; defaultRate: number; cowRate: number; buffaloRate: number; isActive: boolean }>;
     productContribution: Array<{ name: string; unit: string; quantity: number; revenue: number; grossProfit: number; marginPercent: number }>;
     topCustomers: Array<{ name: string; sales: number; bills: number; currentBalance: number }>;
   };

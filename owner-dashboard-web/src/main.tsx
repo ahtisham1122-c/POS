@@ -346,8 +346,12 @@ function Operations({ summary }: { summary: Summary }) {
       <Panel title="Inventory Alerts" eyebrow="Stock">
         <Rows rows={summary.inventory.alerts.map((x) => [x.name, `${qty(x.stock)} ${x.unit}`, `Threshold ${qty(x.threshold)}`])} empty="No low stock alerts." />
       </Panel>
-      <Panel title="Supplier Balances" eyebrow="Farmers">
-        <Rows rows={summary.charts.supplierBalances.map((x) => [x.name, money(x.balance), x.mode === 'SEPARATE' ? `Cow ${money(x.cowRate)} / Buffalo ${money(x.buffaloRate)}` : `Mixed ${money(x.defaultRate)}`])} empty="No suppliers." />
+      <Panel title="All Farmer Balances" eyebrow={`${summary.charts.supplierBalances.length} farmers`}>
+        <Rows rows={summary.charts.supplierBalances.map((x) => [
+          x.isActive ? x.name : `${x.name} (inactive)`,
+          money(x.balance),
+          x.mode === 'SEPARATE' ? `Cow ${money(x.cowRate)} / Buffalo ${money(x.buffaloRate)}` : `Mixed ${money(x.defaultRate)}`,
+        ])} empty="No suppliers." />
       </Panel>
       <Panel title="Milk / Yogurt Volume" eyebrow="30 day volume" wide>
         <StackedVolume rows={summary.charts.salesTrend} />

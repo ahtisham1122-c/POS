@@ -343,9 +343,7 @@ export class OwnerDashboardService {
         orderBy: { _sum: { amount: 'desc' } },
       }),
       this.prisma.supplier.findMany({
-        where: { isActive: true },
-        orderBy: { currentBalance: 'desc' },
-        take: 8,
+        orderBy: [{ isActive: 'desc' }, { currentBalance: 'desc' }, { name: 'asc' }],
         select: {
           name: true,
           currentBalance: true,
@@ -353,6 +351,7 @@ export class OwnerDashboardService {
           cowRate: true,
           buffaloRate: true,
           milkSupplyMode: true,
+          isActive: true,
         },
       }),
       this.prisma.saleItem.findMany({
@@ -822,6 +821,7 @@ export class OwnerDashboardService {
           defaultRate: money(supplier.defaultRate),
           cowRate: money(supplier.cowRate),
           buffaloRate: money(supplier.buffaloRate),
+          isActive: supplier.isActive,
         })),
         productContribution,
         topCustomers: topCustomerSales.map((row) => {
