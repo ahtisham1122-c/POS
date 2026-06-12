@@ -601,6 +601,13 @@ export class SyncService {
     if (recordId && !normalizedPayload.id) normalizedPayload.id = recordId;
 
     try {
+      if (deviceId) {
+        await (db as any).device?.update({
+          where: { deviceId },
+          data: { lastSeenAt: new Date(), lastSyncedAt: new Date() }
+        }).catch(() => null);
+      }
+
       // 1. Immutable logic for sales
       if ((table === 'sale_items' || table === 'saleItems') && operation !== 'INSERT') {
         return { success: true, action: 'skipped', reason: 'Sales are immutable' };

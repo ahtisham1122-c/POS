@@ -17,6 +17,7 @@ import { CashRegisterModule } from './cash-register/cash-register.module';
 import { SyncModule } from './sync/sync.module';
 import { RolesModule } from './roles/roles.module';
 import { HealthModule } from './health/health.module';
+import { OwnerDashboardModule } from './owner-dashboard/owner-dashboard.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { HealthModule } from './health/health.module';
     SyncModule,
     RolesModule,
     HealthModule,
+    OwnerDashboardModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
