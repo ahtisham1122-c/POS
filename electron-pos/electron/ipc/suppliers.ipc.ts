@@ -5,6 +5,8 @@ import { createOutboxEntry } from '../sync/outboxHelper';
 import { addCashOut, addCashIn } from '../database/cashRegister';
 import { getCurrentUser, requireCurrentUser } from './auth.ipc';
 import { logAudit } from '../audit/auditLog';
+import { fetchWithTimeout, getApiBaseUrl } from '../sync/apiConfig';
+import { networkMonitor } from '../sync/networkMonitor';
 
 type SupplierInput = {
   name: string;
@@ -128,6 +130,29 @@ function nextSupplierCode() {
   return `SUP-${String(Number(row?.count || 0) + 1).padStart(4, '0')}`;
 }
 
+async function requireSupplierCloudOnline() {
+  if (!networkMonitor.isOnline) {
+    throw new Error('Supplier entries require internet/VPS connection. Internet appears offline. Please wait and try again.');
+  }
+
+  const apiUrl = getApiBaseUrl();
+  if (!apiUrl) {
+    throw new Error('Supplier entries require VPS sync configuration. Set API URL in Settings > Sync first.');
+  }
+
+  const healthUrl = `${apiUrl.replace(/\/+$/, '')}/health`;
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(healthUrl, { method: 'GET' }, 5000);
+  } catch {
+    throw new Error('Supplier entries require VPS connection. Backend is not reachable right now.');
+  }
+
+  if (!response.ok) {
+    throw new Error(`Supplier entries require VPS connection. Backend health check failed (${response.status}).`);
+  }
+}
+
 export function registerSuppliersIPC() {
   ipcMain.handle('suppliers:getAll', (_event, showInactive = false) => {
     return db.prepare(`
@@ -138,9 +163,10 @@ export function registerSuppliersIPC() {
     `).all();
   });
 
-  ipcMain.handle('suppliers:create', (_event, data: SupplierInput) => {
+  ipcMain.handle('suppliers:create', async (_event, data: SupplierInput) => {
     try {
       requireCurrentUser(['ADMIN', 'MANAGER']);
+      await requireSupplierCloudOnline();
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
       const code = nextSupplierCode();
@@ -206,9 +232,10 @@ export function registerSuppliersIPC() {
     }
   });
 
-  ipcMain.handle('suppliers:update', (_event, id: string, data: SupplierInput) => {
+  ipcMain.handle('suppliers:update', async (_event, id: string, data: SupplierInput) => {
     try {
       requireCurrentUser(['ADMIN', 'MANAGER']);
+      await requireSupplierCloudOnline();
       const now = new Date().toISOString();
       if (!data.name?.trim()) return { success: false, error: 'Supplier name is required' };
       const paymentCycle = normalizePaymentCycle(data.paymentCycle);
@@ -262,9 +289,10 @@ export function registerSuppliersIPC() {
     }
   });
 
-  ipcMain.handle('suppliers:deactivate', (_event, id: string, options?: { reason?: string }) => {
+  ipcMain.handle('suppliers:deactivate', async (_event, id: string, options?: { reason?: string }) => {
     try {
       const actor = requireCurrentUser(['ADMIN', 'MANAGER']);
+      await requireSupplierCloudOnline();
       const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as any;
       if (!supplier) return { success: false, error: 'Supplier not found' };
       if (Number(supplier.is_active || 0) === 0) return { success: true };
@@ -290,9 +318,10 @@ export function registerSuppliersIPC() {
     }
   });
 
-  ipcMain.handle('suppliers:collectMilk', (_event, data: CollectionInput) => {
+  ipcMain.handle('suppliers:collectMilk', async (_event, data: CollectionInput) => {
     try {
       requireCurrentUser();
+      await requireSupplierCloudOnline();
       return db.transaction(() => {
         const now = new Date().toISOString();
         const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ? AND is_active = 1').get(data.supplierId) as any;
@@ -455,9 +484,10 @@ export function registerSuppliersIPC() {
     }
   });
 
-  ipcMain.handle('suppliers:updateCollection', (_event, collectionId: string, data: Partial<CollectionInput>) => {
+  ipcMain.handle('suppliers:updateCollection', async (_event, collectionId: string, data: Partial<CollectionInput>) => {
     try {
       requireCurrentUser(['ADMIN', 'MANAGER']);
+      await requireSupplierCloudOnline();
       return db.transaction(() => {
         const now = new Date().toISOString();
         const existing = db.prepare(`
@@ -579,9 +609,10 @@ export function registerSuppliersIPC() {
     }
   });
 
-  ipcMain.handle('suppliers:collectPayment', (_event, supplierId: string, data: { amount: number; notes?: string }) => {
+  ipcMain.handle('suppliers:collectPayment', async (_event, supplierId: string, data: { amount: number; notes?: string }) => {
     try {
       requireCurrentUser(['ADMIN', 'MANAGER']);
+      await requireSupplierCloudOnline();
       return db.transaction(() => {
         const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(supplierId) as any;
         if (!supplier) throw new Error('Supplier not found');
@@ -650,9 +681,10 @@ export function registerSuppliersIPC() {
   // original payment's effect on the running balance and applies the new one,
   // then records a REVERSAL + new PAYMENT pair in the supplier ledger so the
   // audit trail stays intact.
-  ipcMain.handle('suppliers:updatePayment', (_event, paymentId: string, data: { amount: number; notes?: string }) => {
+  ipcMain.handle('suppliers:updatePayment', async (_event, paymentId: string, data: { amount: number; notes?: string }) => {
     try {
       const actor = requireCurrentUser(['ADMIN']);
+      await requireSupplierCloudOnline();
       return db.transaction(() => {
         const payment = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(paymentId) as any;
         if (!payment) throw new Error('Payment not found');
@@ -727,9 +759,10 @@ export function registerSuppliersIPC() {
     }
   });
 
-  ipcMain.handle('suppliers:deletePayment', (_event, paymentId: string, opts?: { reason?: string }) => {
+  ipcMain.handle('suppliers:deletePayment', async (_event, paymentId: string, opts?: { reason?: string }) => {
     try {
       const actor = requireCurrentUser(['ADMIN']);
+      await requireSupplierCloudOnline();
       return db.transaction(() => {
         const payment = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(paymentId) as any;
         if (!payment) throw new Error('Payment not found');
