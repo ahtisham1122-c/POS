@@ -13,6 +13,7 @@ export class SyncEngine {
   private compactInterval: NodeJS.Timeout | null = null;
   private retryFailedInterval: NodeJS.Timeout | null = null;
   private isSyncing = false;
+  private supplierMasterSnapshotQueued = false;
   // Last time we ran the (expensive at scale) parent-repair scan. Throttled
   // so it doesn't fire on every 5-sec cycle when there's a 10K-row backlog.
   private lastRepairAtMs = 0;
@@ -220,6 +221,42 @@ export class SyncEngine {
     }
   }
 
+  private queueSupplierMasterSnapshot() {
+    if (this.supplierMasterSnapshotQueued) return;
+    this.supplierMasterSnapshotQueued = true;
+
+    try {
+      const suppliers = db.prepare(`
+        SELECT *
+        FROM suppliers
+        ORDER BY updated_at ASC, name ASC
+      `).all() as any[];
+
+      let queued = 0;
+      for (const supplier of suppliers) {
+        if (!supplier?.id) continue;
+        const existingPending = db.prepare(`
+          SELECT id
+          FROM sync_outbox
+          WHERE table_name = 'suppliers'
+            AND record_id = ?
+            AND status = 'pending'
+          LIMIT 1
+        `).get(supplier.id);
+        if (existingPending) continue;
+
+        createOutboxEntry('suppliers', 'UPDATE', supplier.id, supplier);
+        queued += 1;
+      }
+
+      if (queued > 0) {
+        logger.info(`SyncEngine queued ${queued} supplier master record(s) for cloud refresh.`);
+      }
+    } catch (err: any) {
+      logger.warn('Supplier master snapshot queue skipped:', err?.message || err);
+    }
+  }
+
   start() {
     if (this.interval) return;
     console.log('SyncEngine started');
@@ -230,6 +267,10 @@ export class SyncEngine {
     // Also recover any rows that were stuck in 'failed' from a previous run
     // (e.g. owner restarted the app the day after a backend hiccup).
     this.retryStuckFailedRows();
+    // Push complete supplier master data once per app run. Older installs sent
+    // milk collection rows before the real supplier rows, leaving the cloud
+    // dashboard with placeholder farmer names.
+    this.queueSupplierMasterSnapshot();
 
     this.interval = setInterval(() => {
       // Same crash protection here: setInterval doesn't catch promise

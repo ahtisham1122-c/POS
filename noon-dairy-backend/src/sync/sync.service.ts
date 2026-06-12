@@ -181,6 +181,21 @@ export class SyncService {
     }
 
     if (modelName === 'supplier') {
+      const hasSupplierIdentity = Boolean(
+        data.code ||
+        data.name ||
+        data.phone !== undefined ||
+        data.address !== undefined ||
+        data.allowedShifts ||
+        data.milkSupplyMode ||
+        data.defaultRate !== undefined ||
+        data.cowRate !== undefined ||
+        data.buffaloRate !== undefined ||
+        data.paymentCycle
+      );
+      if (!hasSupplierIdentity) {
+        return data;
+      }
       const supplierId = String(data.id || 'unknown');
       if (!data.code) data.code = `SYNC-SUP-${supplierId.slice(0, 12)}`;
       if (!data.name) data.name = `Synced Supplier ${supplierId.slice(0, 8)}`;
@@ -193,7 +208,7 @@ export class SyncService {
       if (!data.paymentCycle) data.paymentCycle = 'MONTHLY';
       if (data.paymentCycleDays === undefined || data.paymentCycleDays === null) data.paymentCycleDays = 30;
       if (data.currentBalance === undefined || data.currentBalance === null) data.currentBalance = 0;
-      if (data.isActive === undefined || data.isActive === null) data.isActive = false;
+      if (data.isActive === undefined || data.isActive === null) data.isActive = true;
     }
 
     if (modelName === 'milkCollection') {

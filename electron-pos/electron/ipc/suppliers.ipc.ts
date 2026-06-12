@@ -222,6 +222,7 @@ export function registerSuppliersIPC() {
         payment_cycle_days: paymentCycleDays,
         payment_cycle_notes: data.paymentCycleNotes || null,
         current_balance: 0,
+        is_active: 1,
         created_at: now,
         updated_at: now
       });
@@ -280,6 +281,7 @@ export function registerSuppliersIPC() {
         payment_cycle: paymentCycle,
         payment_cycle_days: paymentCycleDays,
         payment_cycle_notes: data.paymentCycleNotes || null,
+        is_active: 1,
         updated_at: now
       });
 
