@@ -237,7 +237,7 @@ function Overview({ summary }: { summary: Summary }) {
       </div>
 
       <div className="grid">
-        <Panel title="30 Day Sales and Expense Trend" eyebrow="Trend" wide action={`${pct(summary.analytics.monthChangePercent)} month`}>
+        <Panel title="30 Day Sales, Expense and Profit Trend" eyebrow="Trend" wide action={`${pct(summary.analytics.monthChangePercent)} month`}>
           <TrendChart rows={summary.charts.salesTrend} />
         </Panel>
         <Panel title="Payment Collection Mix" eyebrow="Cash / online / khata">
@@ -260,11 +260,14 @@ function Analytics({ summary }: { summary: Summary }) {
       <div className="executiveStrip">
         <Metric title="Weekly Growth" value={pct(summary.analytics.weekChangePercent)} note="vs previous 7 days" tone={summary.analytics.weekChangePercent >= 0 ? 'good' : 'warn'} />
         <Metric title="Monthly Growth" value={pct(summary.analytics.monthChangePercent)} note="vs previous month" tone={summary.analytics.monthChangePercent >= 0 ? 'good' : 'warn'} />
+        <Metric title="COGS" value={money(summary.analytics.cogs)} note="Net product cost after real returns" tone="warn" />
         <Metric title="Gross Margin" value={`${qty(summary.analytics.grossMarginPercent)}%`} note={money(summary.analytics.grossProfit)} tone="info" />
         <Metric title="Operating Result" value={money(summary.analytics.estimatedOperatingProfit)} note="Gross profit minus expenses" tone={summary.analytics.estimatedOperatingProfit >= 0 ? 'good' : 'danger'} />
       </div>
 
       <div className="grid">
+        <Panel title="30 Day Profit Quality" eyebrow="Net sales / gross profit / operating profit" wide><ProfitChart rows={summary.charts.salesTrend} /></Panel>
+        <Panel title="Cash and Online Position" eyebrow="Register trend" wide><CashTrendChart rows={summary.charts.salesTrend} /></Panel>
         <Panel title="Weekly Net Sales" eyebrow="8 week view" wide><BarChart rows={weeklyRows} /></Panel>
         <Panel title="Monthly Net Sales" eyebrow="12 month view" wide><BarChart rows={monthlyRows} /></Panel>
         <Panel title="Product Profit Contribution" eyebrow="Margin">
@@ -284,6 +287,15 @@ function Analytics({ summary }: { summary: Summary }) {
         </Panel>
         <Panel title="Decision Notes" eyebrow="Owner insights">
           <Rows rows={summary.analytics.insights.map((x) => [x.title, x.value, x.detail])} />
+        </Panel>
+        <Panel title="Data Accuracy" eyebrow="Source and confidence">
+          <Rows rows={[
+            ['Source', summary.analytics.dataQuality.source, `${summary.analytics.dataQuality.saleRows} sale rows`],
+            ['Returns checked', `${summary.analytics.dataQuality.returnRows} returns`, `${summary.analytics.dataQuality.returnedItemRows} return item rows`],
+            ['Sale item cost', summary.analytics.dataQuality.usesOriginalSaleItemCost ? 'Original cost saved' : 'Missing', 'Profit uses sale item cost where possible'],
+            ['Return item cost', summary.analytics.dataQuality.returnedItemCostIsEstimated ? 'Estimated' : 'No real returns', 'Return items do not store original cost yet'],
+            ['Last POS seen', summary.analytics.dataQuality.lastDeviceSeenMinutes === null ? 'No device' : `${summary.analytics.dataQuality.lastDeviceSeenMinutes} min ago`, 'Cloud freshness check'],
+          ]} />
         </Panel>
       </div>
     </div>
@@ -450,7 +462,7 @@ function TrendChart({ rows }: { rows: Summary['charts']['salesTrend'] }) {
   const width = 960;
   const height = 320;
   const pad = 42;
-  const max = Math.max(1, ...rows.flatMap((row) => [Number(row.netSales || 0), Number(row.expenses || 0)]));
+  const max = Math.max(1, ...rows.flatMap((row) => [Number(row.netSales || 0), Number(row.expenses || 0), Number(row.grossProfit || 0)]));
   const toPoint = (value: number, index: number) => ({
     x: pad + (index * (width - pad * 2)) / Math.max(1, rows.length - 1),
     y: height - pad - (value / max) * (height - pad * 2),
@@ -465,8 +477,52 @@ function TrendChart({ rows }: { rows: Summary['charts']['salesTrend'] }) {
     <polygon points={area} fill="url(#netFill)" />
     <polyline points={netLine} fill="none" stroke="#0f9f8f" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
     <polyline points={expenseLine} fill="none" stroke="#d24b5a" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="10 9" />
+    <polyline points={rows.map((row, index) => toPoint(Number(row.grossProfit || 0), index)).map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')} fill="none" stroke="#246bfe" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
     {rows.map((row, index) => index % 4 === 0 || index === rows.length - 1 ? <text key={row.date} x={toPoint(Number(row.netSales || 0), index).x} y={height - 10} textAnchor="middle" fill="#60747c" fontSize="12" fontWeight="800">{row.date.slice(5)}</text> : null)}
-  </svg><div className="legend"><span className="legendNet" /> Net sales <span className="legendExpense" /> Expenses</div></div>;
+  </svg><div className="legend"><span className="legendNet" /> Net <span className="legendProfit" /> Gross profit <span className="legendExpense" /> Expenses</div></div>;
+}
+
+function ProfitChart({ rows }: { rows: Summary['charts']['salesTrend'] }) {
+  return <LineCompareChart rows={rows.map((row) => ({
+    label: row.date.slice(5),
+    a: row.netSales,
+    b: row.grossProfit,
+    c: row.operatingProfit,
+  }))} labels={['Net sales', 'Gross profit', 'Operating']} />;
+}
+
+function CashTrendChart({ rows }: { rows: Summary['charts']['salesTrend'] }) {
+  return <LineCompareChart rows={rows.map((row) => ({
+    label: row.date.slice(5),
+    a: row.expectedCash,
+    b: row.expectedOnline,
+    c: row.milkPurchase,
+  }))} labels={['Expected cash', 'Expected online', 'Milk purchase']} />;
+}
+
+function LineCompareChart({ rows, labels }: { rows: Array<{ label: string; a: number; b: number; c: number }>; labels: [string, string, string] }) {
+  if (!rows.length) return <div className="chart empty">No chart data.</div>;
+  const width = 960;
+  const height = 300;
+  const pad = 42;
+  const min = Math.min(0, ...rows.flatMap((row) => [Number(row.a || 0), Number(row.b || 0), Number(row.c || 0)]));
+  const max = Math.max(1, ...rows.flatMap((row) => [Number(row.a || 0), Number(row.b || 0), Number(row.c || 0)]));
+  const span = Math.max(1, max - min);
+  const toPoint = (value: number, index: number) => ({
+    x: pad + (index * (width - pad * 2)) / Math.max(1, rows.length - 1),
+    y: height - pad - ((value - min) / span) * (height - pad * 2),
+  });
+  const line = (key: 'a' | 'b' | 'c') => rows.map((row, index) => toPoint(Number(row[key] || 0), index)).map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
+  const zeroY = toPoint(0, 0).y;
+  return <div className="chart"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={labels.join(', ')}>
+    <rect width={width} height={height} fill="#ffffff" />
+    {[0, 1, 2, 3].map((i) => <line key={i} x1={pad} y1={pad + i * ((height - pad * 2) / 3)} x2={width - pad} y2={pad + i * ((height - pad * 2) / 3)} stroke="#dfe8ec" />)}
+    {min < 0 && <line x1={pad} y1={zeroY} x2={width - pad} y2={zeroY} stroke="#9aaeb6" strokeDasharray="7 7" />}
+    <polyline points={line('a')} fill="none" stroke="#0f9f8f" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+    <polyline points={line('b')} fill="none" stroke="#246bfe" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+    <polyline points={line('c')} fill="none" stroke="#d59622" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="9 8" />
+    {rows.map((row, index) => index % 4 === 0 || index === rows.length - 1 ? <text key={`${row.label}-${index}`} x={toPoint(Number(row.a || 0), index).x} y={height - 10} textAnchor="middle" fill="#60747c" fontSize="12" fontWeight="800">{row.label}</text> : null)}
+  </svg><div className="legend"><span className="legendNet" /> {labels[0]} <span className="legendProfit" /> {labels[1]} <span className="legendAmber" /> {labels[2]}</div></div>;
 }
 
 function BarChart({ rows }: { rows: Array<{ label: string; value: number; note?: string }> }) {

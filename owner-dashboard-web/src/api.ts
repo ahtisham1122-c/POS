@@ -78,7 +78,23 @@ export type Summary = {
     customerName: string;
   }>;
   charts: {
-    salesTrend: Array<{ date: string; bills: number; grossSales: number; refunds: number; netSales: number; expenses: number; milkKg: number; yogurtKg: number }>;
+    salesTrend: Array<{
+      date: string;
+      bills: number;
+      grossSales: number;
+      refunds: number;
+      netSales: number;
+      expenses: number;
+      cogs: number;
+      grossProfit: number;
+      operatingProfit: number;
+      milkKg: number;
+      yogurtKg: number;
+      milkPurchasedKg: number;
+      milkPurchase: number;
+      expectedCash: number;
+      expectedOnline: number;
+    }>;
     weeklyTrend: Array<{ label: string; bills: number; grossSales: number; refunds: number; netSales: number; expenses: number; milkKg: number; milkPurchase: number; operatingResult: number }>;
     monthlyTrend: Array<{ label: string; bills: number; grossSales: number; refunds: number; netSales: number; expenses: number; milkKg: number; milkPurchase: number; operatingResult: number }>;
     hourlySales: Array<{ hour: number; label: string; sales: number; bills: number }>;
@@ -90,6 +106,7 @@ export type Summary = {
     topCustomers: Array<{ name: string; sales: number; bills: number; currentBalance: number }>;
   };
   analytics: {
+    cogs: number;
     grossProfit: number;
     grossMarginPercent: number;
     estimatedOperatingProfit: number;
@@ -103,6 +120,15 @@ export type Summary = {
       day: Summary['charts']['salesTrend'][number] | null;
       week: Summary['charts']['weeklyTrend'][number] | null;
       month: Summary['charts']['monthlyTrend'][number] | null;
+    };
+    dataQuality: {
+      source: string;
+      saleRows: number;
+      returnRows: number;
+      returnedItemRows: number;
+      usesOriginalSaleItemCost: boolean;
+      returnedItemCostIsEstimated: boolean;
+      lastDeviceSeenMinutes: number | null;
     };
     insights: Array<{ tone: 'good' | 'warn' | 'danger' | 'info'; title: string; value: string; detail: string }>;
   };

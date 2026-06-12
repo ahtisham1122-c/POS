@@ -196,7 +196,9 @@ svg { display: block; width: 100%; height: 100%; }
 .legend { position: absolute; left: 14px; top: 12px; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; font-weight: 900; background: rgba(255,255,255,.84); padding: 6px 9px; border-radius: 999px; border: 1px solid var(--line); }
 .legend span { width: 22px; height: 4px; border-radius: 999px; display: inline-block; }
 .legendNet { background: var(--brand); }
+.legendProfit { background: var(--blue); }
 .legendExpense { background: var(--danger); }
+.legendAmber { background: var(--amber); }
 
 .mix { display: grid; gap: 6px; }
 .mixRow { display: grid; grid-template-columns: 74px 1fr 88px; gap: 10px; align-items: center; padding: 8px 0; font-size: 13px; }
