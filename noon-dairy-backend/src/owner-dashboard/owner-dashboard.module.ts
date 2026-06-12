@@ -36,6 +36,11 @@ function makePakistanDayRange(dateString?: string) {
   return { date, start, end };
 }
 
+function makePakistanRangeFromDate(date: Date) {
+  const dateString = pakistanDateString(date);
+  return makePakistanDayRange(dateString);
+}
+
 function minutesAgo(date: Date | null | undefined) {
   if (!date) return null;
   return Math.floor((Date.now() - date.getTime()) / 60000);
@@ -222,6 +227,9 @@ export class OwnerDashboardService {
       openShift,
       devices,
       recentSales,
+      topProducts,
+      expenseByCategory,
+      supplierSnapshots,
     ] = await Promise.all([
       this.prisma.sale.aggregate({
         where: { saleDate: { gte: start, lt: end }, status: { in: saleStatuses } },
@@ -290,7 +298,7 @@ export class OwnerDashboardService {
       this.prisma.supplier.count({ where: { isActive: true } }),
       this.prisma.product.findMany({
         where: { isActive: true },
-        select: { code: true, name: true, stock: true, lowStockThreshold: true, costPrice: true },
+        select: { code: true, name: true, stock: true, lowStockThreshold: true, costPrice: true, unit: true },
       }),
       this.prisma.cashRegister.findFirst({
         where: { date: { gte: start, lt: end } },
@@ -307,7 +315,86 @@ export class OwnerDashboardService {
         take: 8,
         select: { billNumber: true, saleDate: true, paymentType: true, grandTotal: true, customer: { select: { name: true } } },
       }),
+      this.prisma.saleItem.groupBy({
+        by: ['productName', 'unit'],
+        where: { sale: { saleDate: { gte: start, lt: end }, status: { in: saleStatuses } } },
+        _sum: { quantity: true, lineTotal: true },
+        orderBy: { _sum: { lineTotal: 'desc' } },
+        take: 8,
+      }),
+      this.prisma.expense.groupBy({
+        by: ['category'],
+        where: { expenseDate: { gte: start, lt: end } },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: 'desc' } },
+      }),
+      this.prisma.supplier.findMany({
+        where: { isActive: true },
+        orderBy: { currentBalance: 'desc' },
+        take: 8,
+        select: {
+          name: true,
+          currentBalance: true,
+          defaultRate: true,
+          cowRate: true,
+          buffaloRate: true,
+          milkSupplyMode: true,
+        },
+      }),
     ]);
+
+    const trendRanges = Array.from({ length: 7 }, (_, index) => {
+      const day = new Date(start);
+      day.setUTCDate(day.getUTCDate() - (6 - index));
+      return makePakistanRangeFromDate(day);
+    });
+
+    const salesTrend = await Promise.all(
+      trendRanges.map(async (range) => {
+        const [saleAgg, count, refundAgg, milkSold, yogurtSold] = await Promise.all([
+          this.prisma.sale.aggregate({
+            where: { saleDate: { gte: range.start, lt: range.end }, status: { in: saleStatuses } },
+            _sum: { grandTotal: true },
+          }),
+          this.prisma.sale.count({
+            where: { saleDate: { gte: range.start, lt: range.end }, status: { in: saleStatuses } },
+          }),
+          this.prisma.return.aggregate({
+            where: {
+              returnDate: { gte: range.start, lt: range.end },
+              status: 'COMPLETED',
+              correctionType: { not: 'CORRECTION' },
+            },
+            _sum: { refundAmount: true },
+          }),
+          this.prisma.saleItem.aggregate({
+            where: {
+              product: { code: 'MILK' },
+              sale: { saleDate: { gte: range.start, lt: range.end }, status: { in: saleStatuses } },
+            },
+            _sum: { quantity: true },
+          }),
+          this.prisma.saleItem.aggregate({
+            where: {
+              product: { code: 'YOGT' },
+              sale: { saleDate: { gte: range.start, lt: range.end }, status: { in: saleStatuses } },
+            },
+            _sum: { quantity: true },
+          }),
+        ]);
+        const gross = money(saleAgg._sum.grandTotal);
+        const refundsForDay = money(refundAgg._sum.refundAmount);
+        return {
+          date: range.date,
+          bills: count,
+          grossSales: gross,
+          refunds: refundsForDay,
+          netSales: money(gross - refundsForDay),
+          milkKg: quantity(milkSold._sum.quantity),
+          yogurtKg: quantity(yogurtSold._sum.quantity),
+        };
+      }),
+    );
 
     const splitByMethod = splitPayments.reduce<Record<string, number>>((acc, row) => {
       acc[String(row.method).toUpperCase()] = money(row._sum.amount);
@@ -322,6 +409,10 @@ export class OwnerDashboardService {
     const lowStockCount = products.filter((p) => Number(p.stock) > 0 && Number(p.stock) <= Number(p.lowStockThreshold)).length;
     const outOfStockCount = products.filter((p) => Number(p.stock) <= 0).length;
     const stockValue = products.reduce((sum, p) => sum + Number(p.stock) * Number(p.costPrice), 0);
+    const lowStockProducts = products
+      .filter((p) => Number(p.stock) <= 0 || Number(p.stock) <= Number(p.lowStockThreshold))
+      .sort((a, b) => Number(a.stock) - Number(b.stock))
+      .slice(0, 8);
 
     return {
       date,
@@ -338,6 +429,7 @@ export class OwnerDashboardService {
         cashSales: money(cashSalesAgg._sum.grandTotal) + money(splitByMethod.CASH),
         onlineSales: money(onlineSalesAgg._sum.grandTotal) + money(splitByMethod.ONLINE),
         khataSales: money(khataSalesAgg._sum.grandTotal) + money(splitByMethod.CREDIT) + money(splitByMethod.KHATA),
+        avgBill: salesCount > 0 ? money(netSales / salesCount) : 0,
       },
       register: latestRegister
         ? {
@@ -381,6 +473,13 @@ export class OwnerDashboardService {
         outOfStockCount,
         milkKg: quantity(milkProduct?.stock),
         yogurtKg: quantity(yogurtProduct?.stock),
+        alerts: lowStockProducts.map((product) => ({
+          code: product.code,
+          name: product.name,
+          stock: quantity(product.stock),
+          threshold: quantity(product.lowStockThreshold),
+          unit: product.unit,
+        })),
       },
       devices: devices.map((device) => {
         const seenMinutesAgo = minutesAgo(device.lastSeenAt);
@@ -410,6 +509,32 @@ export class OwnerDashboardService {
         grandTotal: money(sale.grandTotal),
         customerName: sale.customer?.name || 'Walk-in',
       })),
+      charts: {
+        salesTrend,
+        paymentMix: [
+          { name: 'Cash', value: money(cashSalesAgg._sum.grandTotal) + money(splitByMethod.CASH) },
+          { name: 'Online', value: money(onlineSalesAgg._sum.grandTotal) + money(splitByMethod.ONLINE) },
+          { name: 'Khata', value: money(khataSalesAgg._sum.grandTotal) + money(splitByMethod.CREDIT) + money(splitByMethod.KHATA) },
+        ],
+        topProducts: topProducts.map((item) => ({
+          name: item.productName,
+          unit: item.unit,
+          quantity: quantity(item._sum.quantity),
+          revenue: money(item._sum.lineTotal),
+        })),
+        expenseByCategory: expenseByCategory.map((item) => ({
+          category: item.category,
+          amount: money(item._sum.amount),
+        })),
+        supplierBalances: supplierSnapshots.map((supplier) => ({
+          name: supplier.name,
+          balance: money(supplier.currentBalance),
+          mode: supplier.milkSupplyMode,
+          defaultRate: money(supplier.defaultRate),
+          cowRate: money(supplier.cowRate),
+          buffaloRate: money(supplier.buffaloRate),
+        })),
+      },
     };
   }
 }
@@ -429,34 +554,129 @@ export class OwnerDashboardController {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Noon Dairy Owner Dashboard</title>
   <style>
-    :root { color-scheme: dark; --bg:#101418; --panel:#171d23; --muted:#94a3b8; --text:#f8fafc; --line:#2b3642; --good:#22c55e; --warn:#f59e0b; --bad:#ef4444; --brand:#38bdf8; }
-    * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; background:var(--bg); color:var(--text); }
-    header { padding:18px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:12px; align-items:center; }
-    nav { display:flex; gap:8px; padding:10px 14px 0; max-width:1100px; margin:0 auto; }
-    h1 { font-size:18px; margin:0; } .muted { color:var(--muted); font-size:12px; } main { padding:14px; max-width:1100px; margin:0 auto; }
-    .login, .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
-    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; } .wide { grid-column:span 2; }
-    .card b { display:block; font-size:22px; margin-top:6px; } .label { color:var(--muted); font-size:12px; text-transform:uppercase; font-weight:700; }
-    input, button { width:100%; height:44px; border-radius:8px; border:1px solid var(--line); background:#0b1015; color:var(--text); padding:0 12px; font-weight:700; }
-    button { background:var(--brand); color:#041018; border:0; cursor:pointer; } button.secondary { background:#253241; color:var(--text); }
-    select { width:100%; height:44px; border-radius:8px; border:1px solid var(--line); background:#0b1015; color:var(--text); padding:0 12px; font-weight:700; }
-    .row { display:flex; justify-content:space-between; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; }
-    .row:last-child { border-bottom:0; } .status { font-weight:900; } .online { color:var(--good); } .stale { color:var(--warn); } .offline, .revoked { color:var(--bad); }
-    .hidden { display:none; } .error { color:#fecaca; background:#451a1a; border:1px solid #7f1d1d; border-radius:8px; padding:10px; margin-top:10px; }
-    @media (max-width:800px){ .grid{grid-template-columns:repeat(2,minmax(0,1fr));}.wide{grid-column:span 2;} header{align-items:flex-start; flex-direction:column;} }
+    :root {
+      color-scheme: dark;
+      --bg:#071012; --panel:#101a1d; --panel2:#142226; --line:#26383d;
+      --text:#f7fbfc; --muted:#91a8ae; --soft:#c7d7db;
+      --brand:#2dd4bf; --brand2:#60a5fa; --good:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+      --cash:#2dd4bf; --online:#60a5fa; --khata:#f59e0b; --expense:#fb7185;
+      --shadow:0 14px 40px rgba(0,0,0,.28);
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0;
+      font-family:Inter,Segoe UI,Roboto,Arial,sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(45,212,191,.16), transparent 34%),
+        linear-gradient(160deg, #071012 0%, #0b1519 50%, #101318 100%);
+      color:var(--text);
+    }
+    header {
+      position:sticky; top:0; z-index:20;
+      padding:14px 16px 10px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      background:rgba(7,16,18,.9);
+      backdrop-filter: blur(14px);
+    }
+    .topbar { max-width:1180px; margin:0 auto; display:flex; justify-content:space-between; gap:12px; align-items:center; }
+    h1 { font-size:19px; margin:0; letter-spacing:.2px; }
+    .subhead { color:var(--muted); font-size:12px; margin-top:4px; }
+    main { padding:14px; max-width:1180px; margin:0 auto 32px; }
+    nav { max-width:1180px; margin:10px auto 0; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+    .navbtn { background:var(--panel2); color:var(--soft); border:1px solid var(--line); }
+    .navbtn.active { background:linear-gradient(135deg,var(--brand),var(--brand2)); color:#031214; border:0; }
+    .toolbar { display:grid; grid-template-columns:1fr 120px 120px; gap:8px; align-items:center; margin-top:12px; }
+    .login, .card {
+      background:linear-gradient(180deg, rgba(20,34,38,.96), rgba(14,24,27,.96));
+      border:1px solid rgba(255,255,255,.09);
+      border-radius:14px;
+      padding:14px;
+      box-shadow:var(--shadow);
+    }
+    .hero {
+      display:grid; grid-template-columns:1.3fr .7fr; gap:12px; margin-bottom:12px;
+    }
+    .hero-main {
+      min-height:160px; padding:18px; border-radius:18px; overflow:hidden; position:relative;
+      background:linear-gradient(135deg, rgba(45,212,191,.22), rgba(96,165,250,.14)), var(--panel);
+      border:1px solid rgba(255,255,255,.1); box-shadow:var(--shadow);
+    }
+    .hero-main:after {
+      content:""; position:absolute; right:-40px; top:-50px; width:180px; height:180px;
+      border-radius:50%; background:rgba(45,212,191,.16);
+    }
+    .hero-title { color:var(--muted); font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.8px; }
+    .hero-value { font-size:42px; line-height:1; font-weight:900; margin:10px 0 8px; }
+    .hero-row { display:flex; gap:10px; flex-wrap:wrap; color:var(--soft); font-size:13px; }
+    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .two { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .wide { grid-column:span 2; }
+    .label { color:var(--muted); font-size:11px; text-transform:uppercase; font-weight:900; letter-spacing:.7px; }
+    .value { display:block; font-size:25px; font-weight:900; margin-top:7px; }
+    .hint { color:var(--muted); font-size:12px; margin-top:4px; }
+    input, button, select {
+      width:100%; min-height:46px; border-radius:11px; border:1px solid var(--line);
+      background:#081114; color:var(--text); padding:0 12px; font-weight:800; font-size:14px;
+    }
+    button { background:linear-gradient(135deg,var(--brand),var(--brand2)); color:#041314; border:0; cursor:pointer; }
+    button.secondary { background:#17262b; color:var(--text); border:1px solid var(--line); }
+    button.danger { background:#442026; color:#fecdd3; border:1px solid #7f1d1d; }
+    .row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid rgba(255,255,255,.08); font-size:13px; }
+    .row:last-child { border-bottom:0; }
+    .row strong { font-size:13px; }
+    .pill { display:inline-flex; align-items:center; gap:5px; min-height:26px; padding:0 9px; border-radius:999px; background:#0b1417; border:1px solid var(--line); font-size:11px; font-weight:900; color:var(--soft); }
+    .online { color:var(--good); } .stale { color:var(--warn); } .offline, .revoked, .never_seen { color:var(--bad); }
+    .bar-wrap { display:flex; align-items:end; gap:7px; height:160px; padding-top:12px; }
+    .bar { flex:1; min-width:0; border-radius:7px 7px 3px 3px; background:linear-gradient(180deg,var(--brand2),var(--brand)); position:relative; }
+    .bar span { position:absolute; left:50%; bottom:-22px; transform:translateX(-50%); color:var(--muted); font-size:10px; font-weight:800; white-space:nowrap; }
+    .mix { display:grid; gap:9px; margin-top:10px; }
+    .mix-row { display:grid; grid-template-columns:70px 1fr 84px; gap:8px; align-items:center; font-size:12px; }
+    .track { height:10px; border-radius:999px; background:#0b1417; overflow:hidden; border:1px solid var(--line); }
+    .fill { height:100%; width:0%; border-radius:999px; background:var(--brand); }
+    .cash { background:var(--cash); } .online-bg { background:var(--online); } .khata-bg { background:var(--khata); }
+    .section-title { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
+    .hidden { display:none !important; }
+    .error { color:#fecaca; background:#451a1a; border:1px solid #7f1d1d; border-radius:10px; padding:10px; margin-top:10px; }
+    .success { color:#bbf7d0; background:#13341f; border:1px solid #166534; border-radius:10px; padding:10px; margin-top:10px; }
+    @media (max-width:900px){
+      .hero{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,minmax(0,1fr));}.wide{grid-column:span 2;}
+      .toolbar{grid-template-columns:1fr 1fr}.toolbar button{grid-column:span 1;}
+    }
+    @media (max-width:560px){
+      header{padding:12px 10px 9px}.topbar{align-items:flex-start; flex-direction:column;}
+      main{padding:10px}.grid,.two{grid-template-columns:1fr}.wide{grid-column:span 1;}
+      nav{grid-template-columns:repeat(2,minmax(0,1fr)); padding:0 10px;}
+      .hero-value{font-size:34px}.toolbar{grid-template-columns:1fr}.mix-row{grid-template-columns:64px 1fr 72px;}
+    }
   </style>
 </head>
 <body>
   <header>
-    <div><h1>Noon Dairy Owner Dashboard</h1><div class="muted" id="stamp">Private VPS view</div></div>
-    <button class="secondary" style="max-width:150px" onclick="loadSummary()">Refresh</button>
+    <div class="topbar">
+      <div>
+        <h1>Noon Dairy Owner Dashboard</h1>
+        <div class="subhead" id="stamp">Private VPS view</div>
+      </div>
+      <div style="display:flex;gap:8px;width:100%;max-width:360px">
+        <button class="secondary" onclick="loadSummary()">Refresh</button>
+        <button class="danger" onclick="logout()">Logout</button>
+      </div>
+    </div>
+    <nav id="nav" class="hidden">
+      <button id="tabDashboard" class="navbtn" onclick="showTab('dashboard')">Dashboard</button>
+      <button id="tabMoney" class="navbtn" onclick="showTab('money')">Money</button>
+      <button id="tabOperations" class="navbtn" onclick="showTab('operations')">Operations</button>
+      <button id="tabSupplierEntry" class="navbtn" onclick="showTab('supplierEntry')">Supplier Entry</button>
+    </nav>
   </header>
-  <nav id="nav" class="hidden">
-    <button class="secondary" onclick="showTab('dashboard')">Dashboard</button>
-    <button class="secondary" onclick="showTab('supplierEntry')">Supplier Entry</button>
-  </nav>
   <main>
     <section id="login" class="login">
+      <div class="section-title">
+        <div>
+          <div class="label">Owner Login</div>
+          <div class="hint">Use admin or manager login. This page is for mobile monitoring.</div>
+        </div>
+      </div>
       <div class="grid">
         <input id="username" placeholder="Username" autocomplete="username" />
         <input id="password" placeholder="Password/PIN" type="password" autocomplete="current-password" />
@@ -465,15 +685,70 @@ export class OwnerDashboardController {
       <div id="loginError"></div>
     </section>
     <section id="dashboard" class="hidden">
+      <div class="toolbar">
+        <input id="summaryDate" type="date" onchange="loadSummary()" />
+        <button class="secondary" onclick="moveDate(-1)">Previous</button>
+        <button class="secondary" onclick="moveDate(1)">Next</button>
+      </div>
+      <div class="hero" style="margin-top:12px">
+        <div class="hero-main">
+          <div class="hero-title">Net Sales Today</div>
+          <div class="hero-value" id="heroNet">Rs. 0</div>
+          <div class="hero-row">
+            <span class="pill" id="heroBills">0 bills</span>
+            <span class="pill" id="heroAvg">Avg Rs. 0</span>
+            <span class="pill" id="heroShift">Shift status</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="label">Cash Register</div>
+          <span class="value" id="heroCash">Rs. 0</span>
+          <div class="hint" id="heroCashHint">Expected cash</div>
+          <div class="mix" id="registerLines"></div>
+        </div>
+      </div>
       <div class="grid" id="cards"></div>
       <div class="grid" style="margin-top:10px">
-        <div class="card wide"><div class="label">Devices</div><div id="devices"></div></div>
+        <div class="card wide">
+          <div class="section-title"><div class="label">7 Day Sales Trend</div><span class="pill">Net sales</span></div>
+          <div class="bar-wrap" id="salesTrend"></div>
+        </div>
+        <div class="card wide">
+          <div class="section-title"><div class="label">Payment Mix</div><span class="pill">Cash / Online / Khata</span></div>
+          <div id="paymentMix"></div>
+        </div>
+      </div>
+    </section>
+    <section id="money" class="hidden">
+      <div class="toolbar">
+        <input id="moneyDate" type="date" onchange="syncDateFrom('moneyDate')" />
+        <button class="secondary" onclick="moveDate(-1)">Previous</button>
+        <button class="secondary" onclick="moveDate(1)">Next</button>
+      </div>
+      <div class="grid" style="margin-top:12px">
+        <div class="card wide"><div class="label">Top Products</div><div id="topProducts"></div></div>
+        <div class="card wide"><div class="label">Expense Categories</div><div id="expenseCategories"></div></div>
         <div class="card wide"><div class="label">Recent Sales</div><div id="recentSales"></div></div>
+        <div class="card wide"><div class="label">Khata / Supplier Money</div><div id="moneyRows"></div></div>
+      </div>
+    </section>
+    <section id="operations" class="hidden">
+      <div class="grid">
+        <div class="card wide"><div class="label">Device Health</div><div id="devices"></div></div>
+        <div class="card wide"><div class="label">Inventory Alerts</div><div id="inventoryAlerts"></div></div>
+        <div class="card wide"><div class="label">Supplier Balances</div><div id="supplierBalances"></div></div>
+        <div class="card wide"><div class="label">Milk / Yogurt Volume</div><div id="volumeTrend"></div></div>
       </div>
     </section>
     <section id="supplierEntry" class="hidden">
       <div class="card">
-        <div class="label">Online Supplier Milk Entry</div>
+        <div class="section-title">
+          <div>
+            <div class="label">Online Supplier Milk Entry</div>
+            <div class="hint">This writes directly to VPS cloud. POS supplier tab will pull it.</div>
+          </div>
+          <button class="secondary" style="max-width:150px" onclick="loadSupplierEntryData()">Refresh</button>
+        </div>
         <div class="grid" style="margin-top:10px">
           <select id="supplierId" onchange="supplierChanged()"></select>
           <input id="entryDate" type="date" />
@@ -491,12 +766,26 @@ export class OwnerDashboardController {
   <script>
     let token = localStorage.getItem('ownerAccessToken') || '';
     let supplierRows = [];
+    let currentSummary = null;
     if (token) { document.getElementById('login').classList.add('hidden'); document.getElementById('nav').classList.remove('hidden'); showTab('dashboard'); loadSummary(); loadSupplierEntryData(); }
     const money = (n) => 'Rs. ' + Math.round(Number(n || 0)).toLocaleString('en-PK');
+    const qty = (n) => Number(n || 0).toLocaleString('en-PK', { maximumFractionDigits: 2 });
+    function safe(text) {
+      return String(text ?? '').replace(/[&<>"']/g, function(ch) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]);
+      });
+    }
     function showTab(id) {
-      dashboard.classList.add('hidden'); supplierEntry.classList.add('hidden');
+      ['dashboard','money','operations','supplierEntry'].forEach(function(section){ document.getElementById(section).classList.add('hidden'); });
+      ['tabDashboard','tabMoney','tabOperations','tabSupplierEntry'].forEach(function(tab){ document.getElementById(tab).classList.remove('active'); });
+      const activeMap = { dashboard:'tabDashboard', money:'tabMoney', operations:'tabOperations', supplierEntry:'tabSupplierEntry' };
+      document.getElementById(activeMap[id]).classList.add('active');
       document.getElementById(id).classList.remove('hidden');
       if (id === 'supplierEntry') loadSupplierEntryData();
+    }
+    function logout() {
+      localStorage.removeItem('ownerAccessToken');
+      location.reload();
     }
     async function login() {
       document.getElementById('loginError').innerHTML = '';
@@ -505,11 +794,43 @@ export class OwnerDashboardController {
       const data = await res.json(); token = data.accessToken; localStorage.setItem('ownerAccessToken', token);
       document.getElementById('login').classList.add('hidden'); document.getElementById('nav').classList.remove('hidden'); showTab('dashboard'); loadSummary(); loadSupplierEntryData();
     }
+    function selectedDate() {
+      return summaryDate.value || moneyDate.value || '';
+    }
+    function syncDateControls(date) {
+      summaryDate.value = date || '';
+      moneyDate.value = date || '';
+    }
+    function syncDateFrom(id) {
+      syncDateControls(document.getElementById(id).value);
+      loadSummary();
+    }
+    function moveDate(days) {
+      const base = selectedDate() ? new Date(selectedDate() + 'T00:00:00') : new Date();
+      base.setDate(base.getDate() + days);
+      const next = base.toISOString().slice(0, 10);
+      syncDateControls(next);
+      loadSummary();
+    }
     async function loadSummary() {
       if (!token) return;
-      const res = await fetch('owner-dashboard/summary', { headers:{ Authorization:'Bearer ' + token } });
+      const query = selectedDate() ? '?date=' + encodeURIComponent(selectedDate()) : '';
+      const res = await fetch('owner-dashboard/summary' + query, { headers:{ Authorization:'Bearer ' + token } });
       if (res.status === 401 || res.status === 403) { localStorage.removeItem('ownerAccessToken'); location.reload(); return; }
-      const d = await res.json(); stamp.textContent = 'Date ' + d.date + ' | Updated ' + new Date(d.generatedAt).toLocaleString();
+      const d = await res.json(); currentSummary = d; syncDateControls(d.date);
+      stamp.textContent = 'Date ' + d.date + ' | Updated ' + new Date(d.generatedAt).toLocaleString();
+      heroNet.textContent = money(d.sales.netSales);
+      heroBills.textContent = d.sales.billCount + ' bills';
+      heroAvg.textContent = 'Avg ' + money(d.sales.avgBill);
+      heroShift.textContent = d.shift ? 'Open ' + Math.floor(d.shift.minutesOpen / 60) + 'h ' + (d.shift.minutesOpen % 60) + 'm' : 'No open shift';
+      heroCash.textContent = money(d.register?.expectedCash);
+      heroCashHint.textContent = d.register?.isClosed ? 'Register closed' : 'Expected cash in drawer';
+      registerLines.innerHTML = [
+        ['Opening', money(d.register?.openingCash)],
+        ['Cash In', money(d.register?.cashIn)],
+        ['Cash Out', money(d.register?.cashOut)],
+        ['Online Expected', money(d.register?.expectedOnline)]
+      ].map(function(row){ return '<div class="row"><span>'+row[0]+'</span><strong>'+row[1]+'</strong></div>'; }).join('');
       cards.innerHTML = [
         ['Gross Sales', money(d.sales.grossSales), d.sales.billCount + ' bills'],
         ['Net Sales', money(d.sales.netSales), 'refunds ' + money(d.sales.refunds)],
@@ -519,9 +840,59 @@ export class OwnerDashboardController {
         ['Milk Bought', d.suppliers.milkKgToday + ' kg', money(d.suppliers.milkPurchaseToday)],
         ['Expenses', money(d.expenses.today), 'today'],
         ['Milk Stock', d.inventory.milkKg + ' kg', 'yogurt ' + d.inventory.yogurtKg + ' kg'],
-      ].map(([a,b,c]) => '<div class="card"><div class="label">'+a+'</div><b>'+b+'</b><div class="muted">'+c+'</div></div>').join('');
-      devices.innerHTML = (d.devices || []).map(x => '<div class="row"><span>'+x.deviceName+'</span><span class="status '+x.health+'">'+x.health+' '+(x.minutesSinceSeen ?? '-')+'m</span></div>').join('') || '<div class="muted">No devices</div>';
-      recentSales.innerHTML = (d.recentSales || []).map(x => '<div class="row"><span>'+x.billNumber+' '+x.paymentType+'</span><b>'+money(x.grandTotal)+'</b></div>').join('') || '<div class="muted">No sales today</div>';
+      ].map(function(row){ return '<div class="card"><div class="label">'+row[0]+'</div><span class="value">'+row[1]+'</span><div class="hint">'+row[2]+'</div></div>'; }).join('');
+      renderTrend(d.charts.salesTrend || []);
+      renderPaymentMix(d.charts.paymentMix || []);
+      renderRows('devices', d.devices || [], function(x) {
+        return '<div class="row"><span>'+safe(x.deviceName)+'</span><span class="pill '+x.health+'">'+safe(x.health)+' '+(x.minutesSinceSeen ?? '-')+'m</span></div>';
+      }, 'No devices');
+      renderRows('recentSales', d.recentSales || [], function(x) {
+        return '<div class="row"><span><strong>'+safe(x.billNumber)+'</strong><br><span class="hint">'+safe(x.paymentType)+' · '+safe(x.customerName)+'</span></span><strong>'+money(x.grandTotal)+'</strong></div>';
+      }, 'No sales for this date');
+      renderRows('topProducts', d.charts.topProducts || [], function(x) {
+        return '<div class="row"><span>'+safe(x.name)+'<br><span class="hint">'+qty(x.quantity)+' '+safe(x.unit)+'</span></span><strong>'+money(x.revenue)+'</strong></div>';
+      }, 'No product sales');
+      renderRows('expenseCategories', d.charts.expenseByCategory || [], function(x) {
+        return '<div class="row"><span>'+safe(x.category).replaceAll('_',' ')+'</span><strong>'+money(x.amount)+'</strong></div>';
+      }, 'No expenses');
+      renderRows('inventoryAlerts', d.inventory.alerts || [], function(x) {
+        const tone = Number(x.stock) <= 0 ? 'offline' : 'stale';
+        return '<div class="row"><span>'+safe(x.name)+'<br><span class="hint">threshold '+qty(x.threshold)+' '+safe(x.unit)+'</span></span><span class="pill '+tone+'">'+qty(x.stock)+' '+safe(x.unit)+'</span></div>';
+      }, 'No low stock alerts');
+      renderRows('supplierBalances', d.charts.supplierBalances || [], function(x) {
+        const rateText = x.mode === 'SEPARATE' ? 'Cow '+money(x.cowRate)+' · Buffalo '+money(x.buffaloRate) : 'Mixed '+money(x.defaultRate);
+        return '<div class="row"><span>'+safe(x.name)+'<br><span class="hint">'+safe(rateText)+'</span></span><strong>'+money(x.balance)+'</strong></div>';
+      }, 'No active suppliers');
+      moneyRows.innerHTML = [
+        ['Customer Khata Due', money(d.khata.totalDue), d.khata.customersOwing + ' customers'],
+        ['Supplier Payable', money(d.suppliers.payableToSuppliers), d.suppliers.activeSuppliers + ' suppliers'],
+        ['Supplier Paid Today', money(d.suppliers.supplierPaymentsToday), 'cash out'],
+        ['Correction Returns', money(d.sales.correctionReturns.amount), d.sales.correctionReturns.count + ' entries']
+      ].map(function(row){ return '<div class="row"><span>'+row[0]+'<br><span class="hint">'+row[2]+'</span></span><strong>'+row[1]+'</strong></div>'; }).join('');
+      renderVolumeTrend(d.charts.salesTrend || []);
+    }
+    function renderRows(id, rows, render, emptyText) {
+      document.getElementById(id).innerHTML = rows.length ? rows.map(render).join('') : '<div class="hint">'+emptyText+'</div>';
+    }
+    function renderTrend(rows) {
+      const max = Math.max(1, ...rows.map(function(x){ return Number(x.netSales || 0); }));
+      salesTrend.innerHTML = rows.map(function(x) {
+        const h = Math.max(4, Math.round((Number(x.netSales || 0) / max) * 135));
+        return '<div class="bar" style="height:'+h+'px"><span>'+x.date.slice(5)+'</span></div>';
+      }).join('');
+    }
+    function renderPaymentMix(rows) {
+      const total = rows.reduce(function(sum, x){ return sum + Number(x.value || 0); }, 0) || 1;
+      const classes = ['cash', 'online-bg', 'khata-bg'];
+      paymentMix.innerHTML = '<div class="mix">' + rows.map(function(x, i) {
+        const pct = Math.round((Number(x.value || 0) / total) * 100);
+        return '<div class="mix-row"><strong>'+safe(x.name)+'</strong><div class="track"><div class="fill '+classes[i]+'" style="width:'+pct+'%"></div></div><span>'+money(x.value)+'</span></div>';
+      }).join('') + '</div>';
+    }
+    function renderVolumeTrend(rows) {
+      volumeTrend.innerHTML = rows.map(function(x) {
+        return '<div class="row"><span>'+x.date+'</span><strong>Milk '+qty(x.milkKg)+' kg · Yogurt '+qty(x.yogurtKg)+' kg</strong></div>';
+      }).join('') || '<div class="hint">No volume data</div>';
     }
     async function loadSupplierEntryData() {
       if (!token) return;
