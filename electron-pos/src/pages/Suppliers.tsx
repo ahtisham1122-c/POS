@@ -142,6 +142,7 @@ export default function Suppliers() {
   
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [cloudRefreshNote, setCloudRefreshNote] = useState("");
   const [showInactive, setShowInactive] = useState(false);
 
   // Admin-only payment correction state. We keep the current user in renderer
@@ -280,7 +281,14 @@ export default function Suppliers() {
 
   async function loadData() {
     setIsLoading(true);
+    setCloudRefreshNote("Refreshing supplier data from VPS...");
     try {
+      const pullResult = await window.electronAPI?.sync?.pullNow?.();
+      setCloudRefreshNote(
+        pullResult?.success
+          ? "Supplier data refreshed from VPS."
+          : "VPS refresh skipped. Showing local supplier data."
+      );
       const [supplierData, collectionData] = await Promise.all([
         window.electronAPI?.suppliers?.getAll(showInactive),
         window.electronAPI?.suppliers?.getCollections({ date: collectionDate }),
@@ -289,6 +297,7 @@ export default function Suppliers() {
       setCollections(collectionData || []);
     } finally {
       setIsLoading(false);
+      setTimeout(() => setCloudRefreshNote(""), 3500);
     }
   }
 
@@ -456,6 +465,12 @@ export default function Suppliers() {
           </button>
         </div>
       </div>
+
+      {cloudRefreshNote && (
+        <div className="rounded-xl border border-info/30 bg-info/10 px-4 py-2 text-sm text-info shrink-0">
+          {cloudRefreshNote}
+        </div>
+      )}
 
       {message && (
         <div className={cn("rounded-xl border px-4 py-3 flex items-center gap-3 shrink-0", message.type === "success" ? "border-success/30 bg-success/10 text-success" : "border-danger/30 bg-danger/10 text-danger")}>

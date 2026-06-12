@@ -4,6 +4,67 @@ import { networkMonitor } from './networkMonitor';
 import { getDeviceInfo } from './deviceInfo';
 import { fetchWithTimeout, getApiBaseUrl, getSyncHeaders } from './apiConfig';
 
+function dateOnly(value: any) {
+  if (!value) return '';
+  const text = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return text.slice(0, 10);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function iso(value: any) {
+  if (!value) return new Date().toISOString();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
+}
+
+function boolInt(value: any) {
+  return value ? 1 : 0;
+}
+
+function applyPulledStockMovement(movement: any) {
+  const movementId = movement.id;
+  if (!movementId) return false;
+
+  const existing = db.prepare(`SELECT id FROM stock_movements WHERE id = ?`).get(movementId) as any;
+  if (existing) return false;
+
+  const productId = movement.productId ?? movement.product_id;
+  const product = db.prepare(`SELECT * FROM products WHERE id = ?`).get(productId) as any;
+  if (!product) return false;
+
+  const movementType = String((movement.movementType ?? movement.movement_type) || '').toUpperCase();
+  const qty = Number(movement.quantity || 0);
+  const stockBefore = Number(product.stock || 0);
+  const addsStock = ['STOCK_IN', 'OPENING', 'RETURN_IN', 'VOID_RESTOCK', 'MILK_COLLECTION', 'DELIVERY_RETURN'].includes(movementType);
+  const stockAfter = addsStock ? stockBefore + qty : stockBefore - qty;
+  const createdAt = iso(movement.createdAt ?? movement.created_at);
+
+  db.prepare(`
+    INSERT INTO stock_movements (
+      id, product_id, movement_type, quantity, stock_before, stock_after,
+      reference_id, supplier, notes, created_by_id, created_at, synced
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `).run(
+    movementId,
+    productId,
+    movementType,
+    qty,
+    stockBefore,
+    stockAfter,
+    movement.referenceId ?? movement.reference_id ?? null,
+    movement.supplier || null,
+    movement.notes || '',
+    movement.createdById ?? movement.created_by_id ?? 'system',
+    createdAt
+  );
+
+  db.prepare(`UPDATE products SET stock = ?, updated_at = ?, synced = 1 WHERE id = ?`)
+    .run(stockAfter, createdAt, productId);
+  return true;
+}
+
 export async function pullSync(mainWindow?: BrowserWindow) {
   if (!networkMonitor.isOnline) return;
 
@@ -21,6 +82,11 @@ export async function pullSync(mainWindow?: BrowserWindow) {
     let customers: any[] = [];
     let dailyRates: any[] = [];
     let settings: any[] = [];
+    let suppliers: any[] = [];
+    let milkCollections: any[] = [];
+    let supplierPayments: any[] = [];
+    let supplierLedgerEntries: any[] = [];
+    let stockMovements: any[] = [];
 
     const response = await fetchWithTimeout(`${apiUrl}/sync/pull?deviceId=${deviceId}&since=${since}`, {
       headers: syncHeaders
@@ -36,6 +102,11 @@ export async function pullSync(mainWindow?: BrowserWindow) {
     customers = payload?.customers || [];
     dailyRates = payload?.dailyRates || [];
     settings = payload?.settings || [];
+    suppliers = payload?.suppliers || [];
+    milkCollections = payload?.milkCollections || [];
+    supplierPayments = payload?.supplierPayments || [];
+    supplierLedgerEntries = payload?.supplierLedgerEntries || [];
+    stockMovements = payload?.stockMovements || [];
     
     const SYSTEM_PRODUCT_CODES = new Set(['MILK', 'YOGT']);
     const SYSTEM_PRODUCT_IDS = new Set(['p1', 'p2']);
@@ -149,6 +220,157 @@ export async function pullSync(mainWindow?: BrowserWindow) {
           updatedAt: setting.updatedAt || new Date().toISOString()
         });
         hasUpdates = true;
+      }
+
+      const upsertSupplier = db.prepare(`
+        INSERT INTO suppliers (
+          id, code, name, phone, address, allowed_shifts, milk_supply_mode,
+          default_rate, cow_rate, buffalo_rate, guaranteed_advance_balance,
+          payment_cycle, payment_cycle_days, payment_cycle_notes, current_balance,
+          is_active, created_at, updated_at, synced
+        ) VALUES (@id, @code, @name, @phone, @address, @allowedShifts, @milkSupplyMode,
+          @defaultRate, @cowRate, @buffaloRate, @guaranteedAdvanceBalance,
+          @paymentCycle, @paymentCycleDays, @paymentCycleNotes, @currentBalance,
+          @isActive, @createdAt, @updatedAt, 1)
+        ON CONFLICT(id) DO UPDATE SET
+          name = @name,
+          phone = @phone,
+          address = @address,
+          allowed_shifts = @allowedShifts,
+          milk_supply_mode = @milkSupplyMode,
+          default_rate = @defaultRate,
+          cow_rate = @cowRate,
+          buffalo_rate = @buffaloRate,
+          guaranteed_advance_balance = @guaranteedAdvanceBalance,
+          payment_cycle = @paymentCycle,
+          payment_cycle_days = @paymentCycleDays,
+          payment_cycle_notes = @paymentCycleNotes,
+          current_balance = CASE WHEN suppliers.synced = 1 THEN @currentBalance ELSE suppliers.current_balance END,
+          is_active = @isActive,
+          updated_at = @updatedAt,
+          synced = CASE WHEN suppliers.synced = 1 THEN 1 ELSE suppliers.synced END
+      `);
+
+      for (const s of suppliers) {
+        upsertSupplier.run({
+          id: s.id,
+          code: s.code,
+          name: s.name,
+          phone: s.phone || null,
+          address: s.address || null,
+          allowedShifts: s.allowedShifts ?? s.allowed_shifts ?? 'BOTH',
+          milkSupplyMode: s.milkSupplyMode ?? s.milk_supply_mode ?? 'MIXED',
+          defaultRate: s.defaultRate ?? s.default_rate ?? 0,
+          cowRate: s.cowRate ?? s.cow_rate ?? 0,
+          buffaloRate: s.buffaloRate ?? s.buffalo_rate ?? 0,
+          guaranteedAdvanceBalance: s.guaranteedAdvanceBalance ?? s.guaranteed_advance_balance ?? 0,
+          paymentCycle: s.paymentCycle ?? s.payment_cycle ?? 'MONTHLY',
+          paymentCycleDays: s.paymentCycleDays ?? s.payment_cycle_days ?? 30,
+          paymentCycleNotes: s.paymentCycleNotes ?? s.payment_cycle_notes ?? null,
+          currentBalance: s.currentBalance ?? s.current_balance ?? 0,
+          isActive: boolInt(s.isActive ?? s.is_active ?? true),
+          createdAt: iso(s.createdAt ?? s.created_at),
+          updatedAt: iso(s.updatedAt ?? s.updated_at)
+        });
+        hasUpdates = true;
+      }
+
+      const upsertCollection = db.prepare(`
+        INSERT INTO milk_collections (
+          id, supplier_id, collection_date, shift, milk_type, quantity, rate,
+          total_amount, notes, created_by_id, created_at, synced
+        ) VALUES (@id, @supplierId, @collectionDate, @shift, @milkType, @quantity, @rate,
+          @totalAmount, @notes, @createdById, @createdAt, 1)
+        ON CONFLICT(id) DO UPDATE SET
+          supplier_id = @supplierId,
+          collection_date = @collectionDate,
+          shift = @shift,
+          milk_type = @milkType,
+          quantity = @quantity,
+          rate = @rate,
+          total_amount = @totalAmount,
+          notes = @notes,
+          synced = 1
+      `);
+
+      for (const c of milkCollections) {
+        upsertCollection.run({
+          id: c.id,
+          supplierId: c.supplierId ?? c.supplier_id,
+          collectionDate: dateOnly(c.collectionDate ?? c.collection_date),
+          shift: c.shift,
+          milkType: c.milkType ?? c.milk_type ?? 'MIXED',
+          quantity: c.quantity,
+          rate: c.rate,
+          totalAmount: c.totalAmount ?? c.total_amount,
+          notes: c.notes || null,
+          createdById: c.createdById ?? c.created_by_id ?? 'system',
+          createdAt: iso(c.createdAt ?? c.created_at)
+        });
+        hasUpdates = true;
+      }
+
+      const upsertSupplierPayment = db.prepare(`
+        INSERT INTO supplier_payments (id, supplier_id, amount, payment_date, paid_by_id, notes, created_at, synced)
+        VALUES (@id, @supplierId, @amount, @paymentDate, @paidById, @notes, @createdAt, 1)
+        ON CONFLICT(id) DO UPDATE SET
+          supplier_id = @supplierId,
+          amount = @amount,
+          payment_date = @paymentDate,
+          paid_by_id = @paidById,
+          notes = @notes,
+          synced = 1
+      `);
+
+      for (const p of supplierPayments) {
+        upsertSupplierPayment.run({
+          id: p.id,
+          supplierId: p.supplierId ?? p.supplier_id,
+          amount: p.amount,
+          paymentDate: dateOnly(p.paymentDate ?? p.payment_date),
+          paidById: p.paidById ?? p.paid_by_id ?? 'system',
+          notes: p.notes || null,
+          createdAt: iso(p.createdAt ?? p.created_at)
+        });
+        hasUpdates = true;
+      }
+
+      const upsertSupplierLedger = db.prepare(`
+        INSERT INTO supplier_ledger_entries (
+          id, supplier_id, collection_id, payment_id, entry_type, amount,
+          balance_after, description, entry_date, created_at, synced
+        ) VALUES (@id, @supplierId, @collectionId, @paymentId, @entryType, @amount,
+          @balanceAfter, @description, @entryDate, @createdAt, 1)
+        ON CONFLICT(id) DO UPDATE SET
+          supplier_id = @supplierId,
+          collection_id = @collectionId,
+          payment_id = @paymentId,
+          entry_type = @entryType,
+          amount = @amount,
+          balance_after = @balanceAfter,
+          description = @description,
+          entry_date = @entryDate,
+          synced = 1
+      `);
+
+      for (const l of supplierLedgerEntries) {
+        upsertSupplierLedger.run({
+          id: l.id,
+          supplierId: l.supplierId ?? l.supplier_id,
+          collectionId: l.collectionId ?? l.collection_id ?? null,
+          paymentId: l.paymentId ?? l.payment_id ?? null,
+          entryType: l.entryType ?? l.entry_type,
+          amount: l.amount,
+          balanceAfter: l.balanceAfter ?? l.balance_after,
+          description: l.description,
+          entryDate: iso(l.entryDate ?? l.entry_date),
+          createdAt: iso(l.createdAt ?? l.created_at)
+        });
+        hasUpdates = true;
+      }
+
+      for (const movement of stockMovements) {
+        if (applyPulledStockMovement(movement)) hasUpdates = true;
       }
 
       // Update sync timestamp

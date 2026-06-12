@@ -135,6 +135,7 @@ export interface ElectronAPI {
   sync: {
     getStatus: () => Promise<any>;
     syncNow: () => Promise<any>;
+    pullNow: () => Promise<any>;
     getPendingCount: () => Promise<number>;
     getFailedRows: () => Promise<Array<{ id: string; table_name: string; record_id: string; operation: string; error_message: string; attempt_count: number; last_attempted_at: string | null; created_at: string }>>;
     dismissRow: (id: string) => Promise<{ success: boolean }>;

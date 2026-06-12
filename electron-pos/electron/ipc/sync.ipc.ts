@@ -115,6 +115,17 @@ export function registerSyncIPC(syncEngine: SyncEngine, getMainWindow: () => Bro
     }
   });
 
+  ipcMain.handle('sync:pullNow', async () => {
+    try {
+      await registerDeviceWithCloud().catch(() => null);
+      await pullSync(getMainWindow() || undefined);
+      const lastPull = db.prepare(`SELECT value FROM settings WHERE key = 'last_pull_timestamp'`).get() as any;
+      return { success: true, lastPulledAt: lastPull?.value || null };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
   ipcMain.handle('sync:getFailedRows', () => {
     return db.prepare(`
       SELECT id, table_name, record_id, operation, error_message, attempt_count,

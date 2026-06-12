@@ -137,6 +137,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sync: {
     getStatus: () => ipcRenderer.invoke('sync:getStatus'),
     syncNow: () => ipcRenderer.invoke('sync:syncNow'),
+    pullNow: () => ipcRenderer.invoke('sync:pullNow'),
     getPendingCount: () => ipcRenderer.invoke('sync:getPendingCount'),
     getFailedRows: () => ipcRenderer.invoke('sync:getFailedRows'),
     dismissRow: (id: string) => ipcRenderer.invoke('sync:dismissRow', id),
