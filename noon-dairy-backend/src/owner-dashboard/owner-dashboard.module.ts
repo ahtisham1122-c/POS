@@ -540,6 +540,7 @@ export class OwnerDashboardService {
 }
 
 function ownerDashboardHtml() {
+  return ownerDashboardWebsiteHtml();
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -595,6 +596,165 @@ function ownerDashboardHtml() {
 </html>`;
 }
 
+function ownerDashboardWebsiteHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f6f8fb" />
+  <title>Noon Dairy Owner Dashboard</title>
+  <link rel="stylesheet" href="/api/owner-dashboard/assets/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">ND</div><div><h1>Noon Dairy</h1><p>Owner Dashboard</p></div></div>
+      <nav id="nav" class="nav hidden">
+        <button class="nav-btn active" data-view="overview">Overview</button>
+        <button class="nav-btn" data-view="sales">Sales</button>
+        <button class="nav-btn" data-view="operations">Operations</button>
+        <button class="nav-btn" data-view="supplier">Supplier Entry</button>
+      </nav>
+      <div class="server-pill"><span></span><b id="serverStatus">VPS online</b></div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div><div class="eyebrow">Private cloud control room</div><h2 id="pageTitle">Business Overview</h2><p id="stamp">Login to view live shop data.</p></div>
+        <div id="toolbar" class="toolbar hidden">
+          <input id="datePicker" type="date" />
+          <button id="prevDate" class="btn subtle">Previous</button>
+          <button id="nextDate" class="btn subtle">Next</button>
+          <button id="todayDate" class="btn subtle">Today</button>
+          <button id="refreshBtn" class="btn primary">Refresh</button>
+          <button id="logoutBtn" class="btn danger">Logout</button>
+        </div>
+      </header>
+
+      <section id="loginView" class="login">
+        <div class="login-copy"><div class="eyebrow">Owner access</div><h2>Professional dashboard for your dairy shop.</h2><p>Live cloud view for sales, cash, khata, stock, suppliers, device health, and online supplier milk entry.</p></div>
+        <form id="loginForm" class="login-form"><label>Username<input id="username" autocomplete="username" required /></label><label>Password / PIN<input id="password" type="password" autocomplete="current-password" required /></label><button class="btn primary" type="submit">Open Dashboard</button><div id="loginError"></div></form>
+      </section>
+
+      <section id="overview" class="view">
+        <div class="hero-grid">
+          <article class="hero"><div class="eyebrow">Net sales</div><strong id="heroNet">Rs. 0</strong><p>Real refunds are subtracted. Accidental corrections are shown separately.</p><div class="chips"><span id="heroBills">0 bills</span><span id="heroAvg">Avg Rs. 0</span><span id="heroShift">No shift</span><span id="heroSync">Cloud status</span></div></article>
+          <article class="card"><div class="card-head"><div><div class="eyebrow">Cash Register</div><h3 id="cashState">Register</h3></div><span id="registerBadge" class="badge">Open</span></div><strong id="heroCash" class="big">Rs. 0</strong><div id="registerLines"></div></article>
+        </div>
+        <div id="kpis" class="kpis"></div>
+        <div class="grid"><article class="card wide"><div class="card-head"><div><div class="eyebrow">Sales trend</div><h3>Last 7 Days</h3></div><span class="badge">Net</span></div><div id="salesChart" class="chart"></div></article><article class="card"><div class="card-head"><div><div class="eyebrow">Payments</div><h3>Payment Mix</h3></div></div><div id="paymentMix"></div></article></div>
+      </section>
+
+      <section id="sales" class="view hidden"><div class="grid"><article class="card"><div class="card-head"><div><div class="eyebrow">Products</div><h3>Top Products</h3></div></div><div id="topProducts"></div></article><article class="card"><div class="card-head"><div><div class="eyebrow">Expenses</div><h3>Categories</h3></div></div><div id="expenseCategories"></div></article><article class="card wide"><div class="card-head"><div><div class="eyebrow">Receipts</div><h3>Recent Sales</h3></div></div><div id="recentSales"></div></article><article class="card wide"><div class="card-head"><div><div class="eyebrow">Money</div><h3>Khata and Supplier Money</h3></div></div><div id="moneyRows"></div></article></div></section>
+
+      <section id="operations" class="view hidden"><div class="grid"><article class="card"><div class="card-head"><div><div class="eyebrow">Sync</div><h3>Device Health</h3></div></div><div id="devices"></div></article><article class="card"><div class="card-head"><div><div class="eyebrow">Stock</div><h3>Inventory Alerts</h3></div></div><div id="inventoryAlerts"></div></article><article class="card"><div class="card-head"><div><div class="eyebrow">Farmers</div><h3>Supplier Balances</h3></div></div><div id="supplierBalances"></div></article><article class="card"><div class="card-head"><div><div class="eyebrow">Volume</div><h3>Milk / Yogurt Sold</h3></div></div><div id="volumeTrend"></div></article></div></section>
+
+      <section id="supplier" class="view hidden"><article class="card"><div class="card-head"><div><div class="eyebrow">Cloud entry</div><h3>Supplier Milk Entry</h3><p>Saved directly on VPS. POS pulls this data before supplier work.</p></div><button id="reloadSuppliers" class="btn subtle compact">Reload Suppliers</button></div><form id="supplierForm" class="supplier-form"><label>Supplier<select id="supplierId"></select></label><label>Date<input id="entryDate" type="date" /></label><label>Shift<select id="entryShift"><option value="MORNING">Morning</option><option value="EVENING">Evening</option></select></label><label>Milk Type<select id="entryMilkType"><option value="MIXED">Mixed</option><option value="COW">Cow</option><option value="BUFFALO">Buffalo</option></select></label><label>Quantity kg<input id="entryQuantity" type="number" step="0.25" min="0.25" /></label><label>Notes<input id="entryNotes" /></label><button class="btn primary" type="submit">Save Milk Entry</button></form><p id="supplierHint"></p><div id="entryMessage"></div></article></section>
+    </main>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/api/owner-dashboard/assets/app.js"></script>
+</body>
+</html>`;
+}
+
+function ownerDashboardCss() {
+  return `
+:root{--bg:#f5f7fa;--surface:#fff;--ink:#102026;--muted:#687b84;--line:#dbe5e9;--brand:#047d75;--blue:#1265c7;--danger:#c2414b;--good:#168a4a;--warn:#b7791f;--shadow:0 20px 45px rgba(15,32,38,.1)}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Roboto,Arial,sans-serif}.shell{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;background:#0f2428;color:white;padding:22px;display:flex;flex-direction:column;gap:22px}.brand{display:flex;align-items:center;gap:12px}.brand-mark{width:50px;height:50px;border-radius:15px;display:grid;place-items:center;background:linear-gradient(135deg,#39d6c5,#75a9ff);color:#062326;font-weight:1000}.brand h1,.brand p,h2,h3,p{margin:0}.brand h1{font-size:21px}.brand p,.server-pill{color:#b7c9ce;font-size:13px}.nav{display:grid;gap:8px}.nav-btn{min-height:46px;border:0;border-radius:12px;background:rgba(255,255,255,.07);color:#d8e7eb;text-align:left;padding:0 14px;font-weight:900;cursor:pointer}.nav-btn.active{background:white;color:#0f2428}.server-pill{margin-top:auto;display:flex;align-items:center;gap:8px}.server-pill span{width:9px;height:9px;border-radius:999px;background:#31d47d;box-shadow:0 0 0 4px rgba(49,212,125,.18)}.main{min-width:0;padding:22px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.eyebrow{color:var(--brand);text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:1000;margin-bottom:5px}.topbar h2{font-size:30px;letter-spacing:-.04em}.topbar p,.card p,#supplierHint{color:var(--muted);font-size:13px;line-height:1.45}.toolbar{display:grid;grid-template-columns:150px repeat(5,minmax(76px,auto));gap:8px}.btn,input,select{min-height:42px;border-radius:10px;border:1px solid var(--line);background:white;color:var(--ink);padding:0 11px;font-weight:850}.btn{border:0;cursor:pointer;padding:0 14px}.btn.primary{background:linear-gradient(135deg,var(--brand),var(--blue));color:white}.btn.subtle{border:1px solid var(--line);background:white}.btn.danger{background:#fff1f2;color:var(--danger);border:1px solid #fecdd3}.compact{max-width:180px}.hidden{display:none!important}.login{min-height:430px;display:grid;grid-template-columns:1.1fr .9fr;gap:22px;align-items:center;background:linear-gradient(135deg,#fff,#eef9f8);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow);padding:34px}.login-copy h2{font-size:44px;line-height:1.04;letter-spacing:-.05em;margin-bottom:12px}.login-copy p{color:var(--muted);font-size:16px;line-height:1.55}.login-form{display:grid;gap:12px;background:white;border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:var(--shadow)}label{display:grid;gap:6px;color:var(--muted);font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.06em}.view{display:grid;gap:14px}.hero-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(320px,.75fr);gap:14px}.hero,.card,.metric{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}.hero{min-height:235px;padding:24px;background:linear-gradient(135deg,#073f3c,#0d5a84);color:white;position:relative;overflow:hidden}.hero:after{content:"";position:absolute;right:-90px;bottom:-120px;width:300px;height:300px;border-radius:50%;border:58px solid rgba(255,255,255,.08)}.hero .eyebrow,.hero p{color:#c9fbf4}.hero strong{display:block;font-size:56px;line-height:1;font-weight:1000;letter-spacing:-.06em;margin:10px 0;position:relative;z-index:1}.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;position:relative;z-index:1}.chips span,.badge{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:999px;font-size:12px;font-weight:900;background:rgba(255,255,255,.16)}.badge{background:#f6fafb;color:var(--muted);border:1px solid var(--line)}.badge.good{color:var(--good);background:#ecfdf3;border-color:#bbf7d0}.badge.warn{color:var(--warn);background:#fffbeb;border-color:#fde68a}.card{padding:16px}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}.card h3{font-size:18px}.big{display:block;font-size:36px;letter-spacing:-.04em;margin-bottom:8px}.row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}.row:last-child{border-bottom:0}.row strong{text-align:right}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.metric{padding:15px}.metric-title{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:1000}.metric-value{display:block;font-size:27px;font-weight:1000;letter-spacing:-.04em;margin-top:8px}.metric-note{margin-top:5px;color:var(--muted);font-size:12px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.wide{grid-column:span 2}.chart{min-height:270px;border-radius:14px;background:#f8fbfc;border:1px solid var(--line);overflow:hidden}svg{display:block;width:100%;height:100%}.mix-row{display:grid;grid-template-columns:74px 1fr 88px;gap:10px;align-items:center;padding:8px 0;font-size:13px}.track{height:12px;border-radius:999px;background:#edf3f5;overflow:hidden}.fill{height:100%;border-radius:999px}.cash{background:var(--brand)}.online-bg{background:var(--blue)}.khata-bg{background:#d89523}.supplier-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#102026;color:white;padding:12px 14px;border-radius:12px;box-shadow:var(--shadow);max-width:92vw}.error{color:var(--danger);background:#fff1f2;border:1px solid #fecdd3;border-radius:10px;padding:10px;margin-top:10px}.success{color:var(--good);background:#ecfdf3;border:1px solid #bbf7d0;border-radius:10px;padding:10px;margin-top:10px}
+@media(max-width:1050px){.shell{grid-template-columns:1fr}.sidebar{position:static;height:auto}.nav{grid-template-columns:repeat(4,minmax(0,1fr))}.topbar{flex-direction:column}.toolbar{width:100%;grid-template-columns:repeat(3,minmax(0,1fr))}.toolbar input{grid-column:1/-1}.hero-grid,.grid{grid-template-columns:1fr}.wide{grid-column:auto}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){.main{padding:12px}.sidebar{padding:14px}.nav{grid-template-columns:repeat(2,minmax(0,1fr))}.topbar h2{font-size:24px}.toolbar,.kpis,.supplier-form{grid-template-columns:1fr}.login{grid-template-columns:1fr;padding:18px}.login-copy h2{font-size:32px}.hero strong{font-size:40px}.mix-row{grid-template-columns:64px 1fr 74px}}
+`;
+}
+
+function ownerDashboardJs() {
+  return `
+(function () {
+  var token = localStorage.getItem('ownerAccessToken') || '';
+  var suppliers = [];
+  var activeView = 'overview';
+  var timer = null;
+  var $ = function (id) { return document.getElementById(id); };
+  var money = function (n) { return 'Rs. ' + Math.round(Number(n || 0)).toLocaleString('en-PK'); };
+  var qty = function (n) { return Number(n || 0).toLocaleString('en-PK', { maximumFractionDigits: 2 }); };
+  var safe = function (text) { return String(text == null ? '' : text).replace(/[&<>"']/g, function (ch) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]; }); };
+  var todayIso = function () { return new Date().toISOString().slice(0, 10); };
+  function toast(text) { $('toast').textContent = text; $('toast').classList.remove('hidden'); clearTimeout(window.toastTimer); window.toastTimer = setTimeout(function () { $('toast').classList.add('hidden'); }, 2800); }
+  function setLoading(value) { $('refreshBtn').disabled = value; $('refreshBtn').textContent = value ? 'Loading...' : 'Refresh'; }
+  function row(left, right, note) { return '<div class="row"><span>' + left + (note ? '<br><small>' + note + '</small>' : '') + '</span><strong>' + right + '</strong></div>'; }
+  function showView(view) {
+    activeView = view;
+    ['overview', 'sales', 'operations', 'supplier'].forEach(function (id) { $(id).classList.add('hidden'); });
+    $(view).classList.remove('hidden');
+    document.querySelectorAll('.nav-btn').forEach(function (btn) { btn.classList.toggle('active', btn.dataset.view === view); });
+    $('pageTitle').textContent = { overview: 'Business Overview', sales: 'Sales and Money', operations: 'Operations Health', supplier: 'Supplier Milk Entry' }[view] || 'Dashboard';
+    if (view === 'supplier') loadSuppliers();
+  }
+  function boot() {
+    if (!token) return;
+    $('loginView').classList.add('hidden'); $('nav').classList.remove('hidden'); $('toolbar').classList.remove('hidden');
+    showView(activeView); loadSummary(); loadSuppliers(); timer = setInterval(loadSummary, 60000);
+  }
+  async function doLogin(event) {
+    event.preventDefault(); $('loginError').innerHTML = '';
+    try {
+      var res = await fetch('auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: $('username').value, password: $('password').value }) });
+      if (!res.ok) { $('loginError').innerHTML = '<div class="error">Login failed. Use admin or manager login.</div>'; return; }
+      var data = await res.json(); token = data.accessToken; localStorage.setItem('ownerAccessToken', token); boot();
+    } catch (err) { $('loginError').innerHTML = '<div class="error">Network error. Check VPS connection.</div>'; }
+  }
+  function logout() { localStorage.removeItem('ownerAccessToken'); clearInterval(timer); location.reload(); }
+  async function loadSummary() {
+    if (!token) return; setLoading(true);
+    try {
+      var query = $('datePicker').value ? '?date=' + encodeURIComponent($('datePicker').value) : '';
+      var res = await fetch('owner-dashboard/summary' + query, { headers: { Authorization: 'Bearer ' + token } });
+      if (res.status === 401 || res.status === 403) { localStorage.removeItem('ownerAccessToken'); location.reload(); return; }
+      if (!res.ok) throw new Error('summary failed');
+      renderSummary(await res.json());
+    } catch (err) { toast('Could not refresh dashboard.'); } finally { setLoading(false); }
+  }
+  function renderSummary(d) {
+    $('datePicker').value = d.date;
+    $('stamp').textContent = 'Date ' + d.date + ' | Updated ' + new Date(d.generatedAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' });
+    $('heroNet').textContent = money(d.sales.netSales); $('heroBills').textContent = d.sales.billCount + ' bills'; $('heroAvg').textContent = 'Avg ' + money(d.sales.avgBill);
+    $('heroShift').textContent = d.shift ? 'Shift open ' + Math.floor(d.shift.minutesOpen / 60) + 'h ' + (d.shift.minutesOpen % 60) + 'm' : 'No open shift';
+    $('heroSync').textContent = (d.devices || []).some(function (x) { return x.health === 'online'; }) ? 'POS online' : 'No live POS';
+    $('cashState').textContent = d.register && d.register.isClosed ? 'Closed register' : 'Open register';
+    $('registerBadge').textContent = d.register && d.register.isClosed ? 'Closed' : 'Open'; $('registerBadge').className = 'badge ' + (d.register && d.register.isClosed ? 'warn' : 'good');
+    $('heroCash').textContent = money(d.register && d.register.expectedCash);
+    $('registerLines').innerHTML = row('Opening cash', money(d.register && d.register.openingCash)) + row('Cash in', money(d.register && d.register.cashIn)) + row('Cash out', money(d.register && d.register.cashOut)) + row('Online expected', money(d.register && d.register.expectedOnline));
+    var kpis = [['Gross Sales', money(d.sales.grossSales), d.sales.billCount + ' bills'], ['Real Refunds', money(d.sales.refunds), 'corrections separate'], ['Online Sales', money(d.sales.onlineSales), 'expected ' + money(d.register && d.register.expectedOnline)], ['Khata Sales', money(d.sales.khataSales), d.khata.customersOwing + ' owing customers'], ['Milk Bought', qty(d.suppliers.milkKgToday) + ' kg', money(d.suppliers.milkPurchaseToday)], ['Supplier Payable', money(d.suppliers.payableToSuppliers), d.suppliers.activeSuppliers + ' suppliers'], ['Expenses', money(d.expenses.today), 'selected date'], ['Stock Value', money(d.inventory.stockValue), 'Milk ' + qty(d.inventory.milkKg) + ' kg, yogurt ' + qty(d.inventory.yogurtKg) + ' kg']];
+    $('kpis').innerHTML = kpis.map(function (k) { return '<article class="metric"><p class="metric-title">' + k[0] + '</p><span class="metric-value">' + k[1] + '</span><p class="metric-note">' + k[2] + '</p></article>'; }).join('');
+    renderSalesChart(d.charts.salesTrend || []); renderPaymentMix(d.charts.paymentMix || []);
+    renderRows('topProducts', d.charts.topProducts || [], function (x) { return row(safe(x.name), money(x.revenue), qty(x.quantity) + ' ' + safe(x.unit)); }, 'No product sales.');
+    renderRows('expenseCategories', d.charts.expenseByCategory || [], function (x) { return row(safe(x.category).replaceAll('_', ' '), money(x.amount)); }, 'No expenses.');
+    renderRows('recentSales', d.recentSales || [], function (x) { return row('<b>' + safe(x.billNumber) + '</b>', money(x.grandTotal), safe(x.paymentType) + ' / ' + safe(x.customerName)); }, 'No sales for this date.');
+    $('moneyRows').innerHTML = row('Customer khata due', money(d.khata.totalDue), d.khata.customersOwing + ' customers') + row('Supplier payable', money(d.suppliers.payableToSuppliers), d.suppliers.activeSuppliers + ' suppliers') + row('Supplier paid today', money(d.suppliers.supplierPaymentsToday), 'cash out') + row('Correction returns', money(d.sales.correctionReturns.amount), d.sales.correctionReturns.count + ' entries');
+    renderRows('devices', d.devices || [], function (x) { return row(safe(x.deviceName), '<span class="badge ' + (x.health === 'online' ? 'good' : 'warn') + '">' + safe(x.health) + ' ' + (x.minutesSinceSeen == null ? '-' : x.minutesSinceSeen) + 'm</span>'); }, 'No registered devices.');
+    renderRows('inventoryAlerts', d.inventory.alerts || [], function (x) { return row(safe(x.name), qty(x.stock) + ' ' + safe(x.unit), 'threshold ' + qty(x.threshold)); }, 'No low stock alerts.');
+    renderRows('supplierBalances', d.charts.supplierBalances || [], function (x) { var rate = x.mode === 'SEPARATE' ? 'Cow ' + money(x.cowRate) + ' / Buffalo ' + money(x.buffaloRate) : 'Mixed ' + money(x.defaultRate); return row(safe(x.name), money(x.balance), rate); }, 'No active suppliers.');
+    renderRows('volumeTrend', d.charts.salesTrend || [], function (x) { return row(x.date, 'Milk ' + qty(x.milkKg) + ' kg / Yogurt ' + qty(x.yogurtKg) + ' kg'); }, 'No volume data.');
+  }
+  function renderRows(id, rows, renderer, empty) { $(id).innerHTML = rows.length ? rows.map(renderer).join('') : '<p>' + empty + '</p>'; }
+  function renderPaymentMix(rows) {
+    var total = rows.reduce(function (s, x) { return s + Number(x.value || 0); }, 0) || 1; var cls = ['cash', 'online-bg', 'khata-bg'];
+    $('paymentMix').innerHTML = rows.map(function (x, i) { var pct = Math.round(Number(x.value || 0) / total * 100); return '<div class="mix-row"><b>' + safe(x.name) + '</b><div class="track"><div class="fill ' + cls[i] + '" style="width:' + pct + '%"></div></div><span>' + money(x.value) + '</span></div>'; }).join('');
+  }
+  function renderSalesChart(rows) {
+    if (!rows.length) { $('salesChart').innerHTML = '<p style="padding:16px">No sales trend yet.</p>'; return; }
+    var w = 820, h = 270, p = 34, max = Math.max(1, ...rows.map(function (x) { return Number(x.netSales || 0); }));
+    var pts = rows.map(function (x, i) { return { x: p + i * (w - p * 2) / Math.max(1, rows.length - 1), y: h - p - (Number(x.netSales || 0) / max) * (h - p * 2), row: x }; });
+    var line = pts.map(function (v) { return v.x.toFixed(1) + ',' + v.y.toFixed(1); }).join(' '); var area = p + ',' + (h - p) + ' ' + line + ' ' + (w - p) + ',' + (h - p);
+    $('salesChart').innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '"><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#047d75" stop-opacity=".26"/><stop offset="100%" stop-color="#047d75" stop-opacity="0"/></linearGradient></defs><rect width="' + w + '" height="' + h + '" fill="#f8fbfc"/>' + [0,1,2,3].map(function(i){var y=p+i*((h-p*2)/3);return '<line x1="'+p+'" y1="'+y+'" x2="'+(w-p)+'" y2="'+y+'" stroke="#d9e3e7"/>';}).join('') + '<polygon points="' + area + '" fill="url(#fill)"/><polyline points="' + line + '" fill="none" stroke="#047d75" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>' + pts.map(function(v){return '<circle cx="'+v.x+'" cy="'+v.y+'" r="6" fill="#fff" stroke="#047d75" stroke-width="4"><title>'+v.row.date+' '+money(v.row.netSales)+'</title></circle>';}).join('') + pts.map(function(v){return '<text x="'+v.x+'" y="'+(h-10)+'" text-anchor="middle" fill="#637780" font-size="12" font-weight="800">'+v.row.date.slice(5)+'</text>';}).join('') + '</svg>';
+  }
+  async function loadSuppliers() { if (!token) return; var res = await fetch('owner-dashboard/supplier-entry-data', { headers: { Authorization: 'Bearer ' + token } }); if (!res.ok) return; var data = await res.json(); suppliers = data.suppliers || []; $('entryDate').value = data.date || todayIso(); $('supplierId').innerHTML = suppliers.map(function (s) { return '<option value="' + safe(s.id) + '">' + safe(s.name) + ' (' + safe(s.milkSupplyMode) + ')</option>'; }).join(''); supplierChanged(); }
+  function supplierChanged() { var s = suppliers.find(function (x) { return x.id === $('supplierId').value; }); if (!s) { $('supplierHint').textContent = ''; return; } $('entryMilkType').value = s.milkSupplyMode === 'SEPARATE' ? 'COW' : 'MIXED'; $('entryMilkType').disabled = s.milkSupplyMode !== 'SEPARATE'; $('supplierHint').textContent = s.milkSupplyMode === 'SEPARATE' ? 'Separate supplier: cow Rs.' + s.cowRate + ', buffalo Rs.' + s.buffaloRate + '. Balance ' + money(s.currentBalance) : 'Mixed supplier: rate Rs.' + s.defaultRate + '. Balance ' + money(s.currentBalance); }
+  async function saveSupplier(event) { event.preventDefault(); $('entryMessage').innerHTML = ''; var payload = { supplierId: $('supplierId').value, date: $('entryDate').value, shift: $('entryShift').value, milkType: $('entryMilkType').value, quantity: Number($('entryQuantity').value || 0), notes: $('entryNotes').value }; var res = await fetch('owner-dashboard/supplier-entries', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(payload) }); var data = await res.json().catch(function () { return {}; }); if (!res.ok || !data.success) { $('entryMessage').innerHTML = '<div class="error">' + safe(data.message || data.error || 'Could not save entry') + '</div>'; return; } $('entryMessage').innerHTML = '<div class="success">Saved ' + safe(data.supplierName) + ': ' + qty(data.quantity) + ' kg @ Rs.' + qty(data.rate) + ' = ' + money(data.totalAmount) + '</div>'; $('entryQuantity').value = ''; $('entryNotes').value = ''; loadSummary(); loadSuppliers(); }
+  document.querySelectorAll('.nav-btn').forEach(function (btn) { btn.addEventListener('click', function () { showView(btn.dataset.view); }); }); $('loginForm').addEventListener('submit', doLogin); $('logoutBtn').addEventListener('click', logout); $('refreshBtn').addEventListener('click', loadSummary); $('prevDate').addEventListener('click', function () { var d = $('datePicker').value ? new Date($('datePicker').value + 'T00:00:00') : new Date(); d.setDate(d.getDate() - 1); $('datePicker').value = d.toISOString().slice(0, 10); loadSummary(); }); $('nextDate').addEventListener('click', function () { var d = $('datePicker').value ? new Date($('datePicker').value + 'T00:00:00') : new Date(); d.setDate(d.getDate() + 1); $('datePicker').value = d.toISOString().slice(0, 10); loadSummary(); }); $('todayDate').addEventListener('click', function () { $('datePicker').value = todayIso(); loadSummary(); }); $('datePicker').addEventListener('change', loadSummary); $('reloadSuppliers').addEventListener('click', loadSuppliers); $('supplierId').addEventListener('change', supplierChanged); $('supplierForm').addEventListener('submit', saveSupplier); boot();
+})();
+`;
+}
+
 @ApiTags('owner-dashboard')
 @Controller('owner-dashboard')
 export class OwnerDashboardController {
@@ -604,7 +764,7 @@ export class OwnerDashboardController {
   @Header('Content-Type', 'text/html; charset=utf-8')
   page() {
     return ownerDashboardHtml();
-    return `<!doctype html>
+    /* return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -979,7 +1139,19 @@ export class OwnerDashboardController {
     }
   </script>
 </body>
-</html>`;
+</html>`; */
+  }
+
+  @Get('assets/styles.css')
+  @Header('Content-Type', 'text/css; charset=utf-8')
+  styles() {
+    return ownerDashboardCss();
+  }
+
+  @Get('assets/app.js')
+  @Header('Content-Type', 'application/javascript; charset=utf-8')
+  script() {
+    return ownerDashboardJs();
   }
 
   @Get('summary')
